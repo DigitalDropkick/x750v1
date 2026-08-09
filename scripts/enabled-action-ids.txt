@@ -1,2 +1,3 @@
 # Exact ACTION IDs approved after code, hardware-gate, and operational review.
+camera.still_snapshot
 radio.rtl433_snapshot

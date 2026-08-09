@@ -127,7 +127,7 @@ if rg -n -- '(^|[[:space:]])-(A|X|XX|w|W|C|G)([[:space:]]|$)|-i[[:space:]]+any' 
 	fail 'capture worker contains a payload dump, PCAP writer, rotation, or all-interface flag'
 fi
 
-radio_worker_section="$(sed -n '/elif \[ "$task" = "rtl433_snapshot" \]/,/^else$/p' "$capture_worker")"
+radio_worker_section="$(sed -n '/elif \[ "$task" = "rtl433_snapshot" \]/,/elif \[ "$task" = "camera_snapshot" \]/p' "$capture_worker")"
 radio_command_section="$(printf '%s\n' "$radio_worker_section" | sed -n '/exec \/usr\/bin\/rtl_433/,/-T 20/p')"
 [[ "$(printf '%s\n' "$radio_worker_section" | rg -c '/usr/bin/rtl_433 -c /dev/null')" -eq 1 ]] || fail 'reviewed rtl_433 command is missing or duplicated'
 for radio_guard in \
@@ -148,6 +148,35 @@ if printf '%s\n' "$radio_worker_section" | rg -n -- '/usr/bin/rtl_tcp|/etc/init\
 	printf '%s\n' "$radio_command_section" | rg -n -- '(^|[[:space:]])-(a|A|r|w|W|X)([[:space:]]|$)|-F[[:space:]]+(mqtt|influx|syslog)|-S[[:space:]]+(all|known|unknown)'; then
 	fail 'RTL-433 worker contains a listener, analyzer, custom/file input, network output, or raw-save option'
 fi
+
+camera_worker_section="$(sed -n '/elif \[ "$task" = "camera_snapshot" \]/,/^else$/p' "$capture_worker")"
+camera_command_section="$(printf '%s\n' "$camera_worker_section" | sed -n '/exec \/usr\/bin\/fswebcam/,/snapshot_next"/p')"
+[[ "$(printf '%s\n' "$camera_worker_section" | rg -c 'exec /usr/bin/fswebcam')" -eq 1 ]] || fail 'reviewed fswebcam command is missing or duplicated'
+for camera_guard in \
+	'camera_driver" = '\''uvcvideo'\''' \
+	'bInterfaceClass' \
+	'camera_primary_count" -eq 1' \
+	'camera_number="${camera_device#/dev/video}"' \
+	'*[!0-9]*) task_fail' \
+	'/proc/[0-9]*/fd/*' \
+	'timeout 5 /usr/bin/v4l2-ctl --device "$camera_device" --info' \
+	'ulimit -f 512' \
+	'--quiet --device "$camera_device" --resolution 640x480' \
+	'--fps 10 --skip 5 --frames 1 --no-banner --jpeg 85 "$snapshot_next"' \
+	'deadline_epoch=$(( $(date +%s) + 20 ))' \
+	'snapshot_size" -gt 262144' \
+	'snapshot_magic" != '\''ffd8ff'\''' \
+	'chmod 600 "$snapshot_path"'
+do
+	rg -F -- "$camera_guard" "$capture_worker" >/dev/null || fail "camera safety guard is missing: $camera_guard"
+done
+if printf '%s\n' "$camera_command_section" | rg -n -- '(^|[[:space:]])(-l|--loop|-b|--background|-o|--output|--exec|--save)([[:space:]]|$)' ||
+	printf '%s\n' "$camera_worker_section" | rg -n -- '/etc/init\.d/(mjpg-streamer|motion)[[:space:]]+(start|enable|restart)|/usr/bin/(mjpg_streamer|motion|v4l2rtspserver)'; then
+	fail 'camera worker contains a loop, background mode, command hook, stream, daemon, or service activation'
+fi
+rg -F '"cgi-io": [ "exec", "download" ]' files/usr/share/rpcd/acl.d/ddk-field-console.json >/dev/null || fail 'camera artifact download permission is missing'
+rg -F '"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/snapshot.jpg": [ "read" ]' files/usr/share/rpcd/acl.d/ddk-field-console.json >/dev/null || fail 'camera artifact ACL is missing or broader than reviewed'
+rg -F "path = '/tmp/ddk/jobs/' + job.id + '/snapshot.jpg'" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'camera client does not derive the fixed artifact path from a validated job ID'
 
 while IFS= read -r file; do
 	size="$(wc -c < "$file")"

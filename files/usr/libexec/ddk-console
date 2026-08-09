@@ -12,6 +12,7 @@ local JOB_ROOT = "/tmp/ddk/jobs"
 local REPORT_ROOT = "/tmp/ddk/reports"
 local MAX_CAPTURE = 131072
 local MAX_STDERR = 32768
+local MAX_CAMERA_ARTIFACT = 262144
 local MAX_ACTIVE_JOBS = 2
 local MAX_RETAINED_JOBS = 20
 local JOB_MAX_AGE = 4 * 60 * 60
@@ -304,6 +305,79 @@ local function rtl_sdr_probe()
 	return probe
 end
 
+local function camera_probe()
+	local probe = {
+		ready = false,
+		reason = "REVIEWED UVC CAMERA NOT DETECTED",
+		reviewed_device_count = 0,
+		reviewed_node_count = 0,
+		primary_node_count = 0,
+		nodes = {}
+	}
+	local usb_devices = {}
+	local primary_nodes = {}
+	local iterator = fs.dir("/sys/class/video4linux")
+	if iterator then
+		for name in iterator do
+			if name:match("^video%d+$") then
+				local node = "/dev/" .. name
+				local node_stat = fs.stat(node)
+				local class_base = "/sys/class/video4linux/" .. name
+				local device_path = fs.realpath(class_base .. "/device") or ""
+				local usb_parent = device_path ~= "" and (fs.realpath(device_path .. "/..") or "") or ""
+				local driver_link = device_path ~= "" and (fs.readlink(device_path .. "/driver") or "") or ""
+				local driver = driver_link:match("([^/]+)$") or ""
+				local interface_class = trim(fs.readfile(device_path .. "/bInterfaceClass")):lower()
+				local vendor_id = trim(fs.readfile(usb_parent .. "/idVendor")):lower()
+				local product_id = trim(fs.readfile(usb_parent .. "/idProduct")):lower()
+				local index = trim(fs.readfile(class_base .. "/index"))
+				local reviewed = node_stat and node_stat.type == "chr" and
+					device_path:match("^/sys/devices/") ~= nil and usb_parent:match("^/sys/devices/") ~= nil and
+					driver == "uvcvideo" and interface_class == "0e" and
+					vendor_id:match("^[0-9a-f][0-9a-f][0-9a-f][0-9a-f]$") ~= nil and
+					product_id:match("^[0-9a-f][0-9a-f][0-9a-f][0-9a-f]$") ~= nil
+
+				if reviewed then
+					probe.reviewed_node_count = probe.reviewed_node_count + 1
+					usb_devices[usb_parent] = true
+					local candidate = {
+						node = node,
+						name = trim(fs.readfile(class_base .. "/name")),
+						index = index,
+						usb_id = vendor_id .. ":" .. product_id,
+						interface_number = trim(fs.readfile(device_path .. "/bInterfaceNumber")),
+						driver = driver
+					}
+					probe.nodes[#probe.nodes + 1] = candidate
+					if index == "0" then primary_nodes[#primary_nodes + 1] = candidate end
+				end
+			end
+		end
+	end
+
+	for _ in pairs(usb_devices) do probe.reviewed_device_count = probe.reviewed_device_count + 1 end
+	probe.primary_node_count = #primary_nodes
+	table.sort(probe.nodes, function(a, b) return a.node < b.node end)
+	table.sort(primary_nodes, function(a, b) return a.node < b.node end)
+
+	if probe.reviewed_device_count > 1 then
+		probe.reason = "MULTIPLE REVIEWED UVC CAMERAS DETECTED"
+	elseif probe.reviewed_device_count == 1 and probe.reviewed_node_count > 0 then
+		if #primary_nodes == 0 then
+			probe.reason = "UVC PRIMARY CAPTURE NODE NOT DETECTED"
+		elseif #primary_nodes > 1 then
+			probe.reason = "MULTIPLE UVC PRIMARY NODES DETECTED"
+		else
+			probe.ready = true
+			probe.reason = "READY - ONE REVIEWED UVC CAMERA"
+			probe.device = primary_nodes[1].node
+			probe.usb_id = primary_nodes[1].usb_id
+			probe.name = primary_nodes[1].name
+		end
+	end
+	return probe
+end
+
 local function serial_attribution()
 	local nodes = list_device_nodes("^ttyUSB%d+$")
 	for _, node in ipairs(list_device_nodes("^ttyACM%d+$")) do
@@ -415,6 +489,7 @@ end
 local function hardware_snapshot()
 	local usb, usb_text = usb_lines()
 	local rtl_sdr = rtl_sdr_probe()
+	local camera = camera_probe()
 	local serial, serial_summary = serial_attribution()
 	local serial_nodes = {}
 	for _, device in ipairs(serial) do serial_nodes[#serial_nodes + 1] = device.node end
@@ -433,7 +508,7 @@ local function hardware_snapshot()
 		serial = serial_summary.reviewed_general_purpose > 0,
 		serial_detected = serial_summary.total > 0,
 		cellular_modem = usb_text:match("quectel") ~= nil or usb_text:match("2c7c:") ~= nil,
-		video = #video > 0,
+		video = camera.ready,
 		rtl_sdr = rtl_sdr.ready,
 		can = #can > 0,
 		bluetooth = has_dir_entry("/sys/class/bluetooth", "^hci%d+$"),
@@ -453,6 +528,7 @@ local function hardware_snapshot()
 		serial_attribution = serial,
 		serial_summary = serial_summary,
 		video_devices = video,
+		camera = camera,
 		can_interfaces = can,
 		i2c_devices = i2c,
 		spi_devices = spi,
@@ -691,11 +767,32 @@ local function job_state(job_id)
 	if status == "" then return nil end
 	local stdout, stdout_truncated = read_limited(base .. "/stdout", MAX_CAPTURE)
 	local stderr, stderr_truncated = read_limited(base .. "/stderr", MAX_STDERR)
+	local metadata = parse_json(fs.readfile(base .. "/metadata.json")) or {}
+	local artifact
+	if status == "complete" and metadata.action_id == "camera.still_snapshot" then
+		local artifact_path = base .. "/snapshot.jpg"
+		local artifact_stat = fs.lstat(artifact_path)
+		if artifact_stat and artifact_stat.type == "reg" and artifact_stat.size > 0 and
+		   artifact_stat.size <= MAX_CAMERA_ARTIFACT then
+			local handle = io.open(artifact_path, "rb")
+			local magic = handle and handle:read(3) or ""
+			if handle then handle:close() end
+			if magic == string.char(255, 216, 255) then
+				artifact = {
+					kind = "camera_snapshot",
+					filename = "ddk-camera-" .. job_id .. ".jpg",
+					content_type = "image/jpeg",
+					size = artifact_stat.size
+				}
+			end
+		end
+	end
 	return {
 		id = job_id,
 		status = status,
 		pid = tonumber(trim(fs.readfile(base .. "/pid"))),
-		metadata = parse_json(fs.readfile(base .. "/metadata.json")) or {},
+		metadata = metadata,
+		artifact = artifact,
 		stdout = stdout or "",
 		stderr = stderr or "",
 		stdout_truncated = stdout_truncated,
@@ -769,6 +866,14 @@ local job_actions = {
 		singleton = true,
 		required_hardware = "rtl_sdr",
 		resource = "rtl_sdr"
+	},
+	["camera.still_snapshot"] = {
+		worker = "camera_snapshot",
+		label = "Camera Still Snapshot",
+		class = "ACTION",
+		singleton = true,
+		required_hardware = "camera",
+		resource = "camera"
 	}
 }
 
@@ -826,6 +931,16 @@ local function start_job(action_id)
 	if spec.required_hardware == "rtl_sdr" then
 		local probe = rtl_sdr_probe()
 		if not probe.ready then return nil, "Reviewed RTL-SDR hardware is not ready: " .. probe.reason end
+	elseif spec.required_hardware == "camera" then
+		local probe = camera_probe()
+		if not probe.ready then return nil, "Reviewed UVC camera hardware is not ready: " .. probe.reason end
+		if trim(capture("uci -q get mjpg-streamer.core.enabled")) ~= "0" or
+		   trim(capture("uci -q get motion.general.enabled")) ~= "0" then
+			return nil, "Existing camera services are not explicitly disabled"
+		end
+		if trim(capture("pidof fswebcam mjpg_streamer motion v4l2rtspserver")) ~= "" then
+			return nil, "A camera client or service is already active"
+		end
 	end
 	fs.mkdirr(JOB_ROOT)
 	fs.mkdirr(REPORT_ROOT)

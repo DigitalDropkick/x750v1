@@ -65,6 +65,14 @@ The hardware-gated RTL-433 release was deployed on 2026-08-09 with pre-change ba
 
 The acceptance snapshot reported 44,468 KiB available RAM, load averages 1.66 / 1.41 / 1.26, 27,695,868 KiB free on extroot, and the 262,140 KiB swapfile active with 3,104 KiB used at priority `-2`. Tailscale remained running; GL.iNet UI returned HTTP 200; LuCI retained HTTP 403 for unauthenticated access; and no DDK listener, DDK worker, or radio client remained. Live RTL-433 decode, stop, and resource profiling remain explicitly unverified until approved hardware is attached.
 
+### Version 1.7 live acceptance
+
+The hardware-gated camera-still release was deployed on 2026-08-09. The true pre-release v1.6 rollback backup is `/root/ddk-backups/20260809T233913Z-field-console-v1`; a second timestamped backup at `/root/ddk-backups/20260809T234128Z-field-console-v1` records the narrow ACL correction deployment. The default DDK rollback pointer was deliberately restored to the pre-release backup after verifying its backed version.
+
+With no camera attached, the production suite passed 31 checks with no warnings. Both backend and worker refused before capture, no JPEG or camera process remained, `mjpg-streamer` and Motion stayed UCI/init-disabled, their configurations remained byte-identical, and listener state matched the final pre-deployment snapshot. The authenticated artifact proof downloaded only the exact transient job JPEG and denied `/etc/shadow`. Browser checks passed at 320 px, 390 px, and desktop widths with the camera module visibly `HARDWARE REQUIRED`, ACTION controls disabled, local brand assets loaded, and no external request, runtime error, or horizontal overflow. Visual screenshot review found the desktop and mobile layouts coherent and readable.
+
+All 39 deployed project files matched source byte for byte. The final acceptance snapshot reported 44,804 KiB available RAM, load averages 1.51 / 1.45 / 1.27, 27,694,860 KiB free on extroot, and the 262,140 KiB swapfile active with 4,128 KiB used at priority `-2`. Tailscale remained running and GL.iNet UI/LuCI authentication remained healthy. Live still capture, cancellation during capture, image-quality judgment, and measured capture CPU/RAM remain explicitly unverified until one approved UVC camera is attached and the operator confirms authorization and consent.
+
 ## Native LuCI conventions
 
 This firmware contains both generations of LuCI application structure:
@@ -110,6 +118,15 @@ Relevant confirmed paths:
 - BusyBox `ulimit -f` was verified in `/tmp` to enforce POSIX 512-byte block limits; the disposable probe was removed immediately.
 - No tuner was opened, driver detached, module changed, service started, or package installed during discovery.
 
+## UVC camera capability
+
+- `fswebcam` 20140113-2, `mjpg-streamer` 1.0.0-5, Motion 4.3.2-1, `v4l-utils` 1.20.0-4, `v4l2tools` 0.1.8-1, and `v4l2rtspserver` 0.2.3-5 were already installed.
+- `/usr/bin/fswebcam`, `/usr/bin/v4l2-ctl`, `/usr/bin/file`, `hexdump`, and `timeout` provide the required bounded still-capture and validation primitives; no package is needed.
+- The `uvcvideo`, `videodev`, and videobuf2 kernel modules were already loaded, but no `/dev/video*` node or `/sys/class/video4linux` entry existed during Phase 3C discovery.
+- `fswebcam`, `mjpg_streamer`, Motion, and `v4l2rtspserver` were stopped. Both the `mjpg-streamer` and Motion init services and their UCI enable flags were disabled. No camera port was listening.
+- The native authenticated `/cgi-bin/cgi-download` endpoint is already present through `cgi-io`; version 1.7 grants only a strict DDK-job JPEG read pattern instead of adding a CGI or listener.
+- No camera was opened, image captured, service started, listener created, config value revealed, or package installed during discovery.
+
 ## Network and remote-access baseline
 
 - LAN: `br-lan`, `192.168.8.1/24`, up.
@@ -148,6 +165,9 @@ The following SHA-256 values are verification evidence, not files this project m
 | `/etc/config/wireless` | `59f540ed2424a5a9805a09876c22a0d3504ee110897887b596cb35793e90e5fa` |
 | `/etc/config/uhttpd` | `bc654f394ab804a78ffe3c143b309f00b8abdf6090162060f555e905868bba18` |
 | `/etc/config/rpcd` | `1a40da0ebe45b1afd131dfc4650592913e38445e7fe42f96d3b95ad5151ac0e6` |
+| `/etc/config/rtl_tcp` | `500d071555f688b493b2937f8ef1edf7f56dfddd3888aa584e8b572d5db3f2ad` |
+| `/etc/config/mjpg-streamer` | `00f24dd633bac043f1063b36ae60bef53659c52237e3cfefc27a611b4806944f` |
+| `/etc/config/motion` | `574743e3859793b10328389d2f1a37e4dce88f0e753029a102a43d073b6ca22f` |
 
 ## Pre-existing exposure note
 

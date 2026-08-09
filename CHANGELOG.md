@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.7.0 — 2026-08-09
+
+### Added
+
+- Phase 3C `camera.still_snapshot` ACTION workflow using the already-installed `fswebcam` 20140113, `v4l-utils` 1.20.0, and `file` 5.41 tools.
+- Conservative sysfs UVC attribution, exactly-one-device/primary-node gates, V4L2 capture-capability confirmation, existing-device-use refusal, and a shared `camera` job resource.
+- Fixed one-frame 640×480 JPEG profile with explicit privacy/consent confirmation, an independent 20-second wall limit, a 256 KiB file ceiling, and JPEG type/magic validation.
+- Authenticated native LuCI camera-artifact view/download with an exact job-path ACL and no file below `/www`.
+- Camera-specific operating, privacy, service-isolation, and pending-hardware acceptance documentation.
+
+### Safety and current scope
+
+- The browser cannot choose a camera, node, path, resolution, quality, duration, command hook, output, or destination; the backend and worker independently derive and validate hardware.
+- Stopped, failed, and rejected jobs retain no image. A completed mode-0600 JPEG remains only in the mode-0700 transient job directory and follows its four-hour/20-job cleanup boundary.
+- `mjpg-streamer`, Motion, and RTSP remain disabled and untouched. No stream, daemon, listener, upload, audio capture, package, service change, or network exposure is added.
+- No UVC camera was attached during development. The no-device path and artifact ACL are testable now; live image, cancellation, and capture resource acceptance remain deliberately pending hardware and consent.
+
+### Verification
+
+- Production verification passed 31 checks with 0 warnings, including malformed/extra-argument rejection, backend pre-job refusal, independent worker refusal, disabled/unchanged camera services and configurations, absence of JPEG/process/listener residue, and all prior workflows.
+- Authenticated browser verification passed at 320 px, 390 px, and desktop widths. A transient allowlisted artifact downloaded successfully, `/etc/shadow` was denied, camera controls remained visibly hardware-gated, and no external request, runtime error, or horizontal overflow occurred.
+- All 39 deployed project files matched source byte for byte; listener state matched the final pre-deployment backup and GL.iNet UI, LuCI, Tailscale, extroot, swap, and protected configuration remained healthy.
+
 ## 1.6.0 — 2026-08-09
 
 ### Added

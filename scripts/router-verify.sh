@@ -28,8 +28,8 @@ model="$(ubus call system board | jsonfilter -e '@.model')"
 [ "$model" = 'GL.iNet GL-X750' ] || fail "target identity changed: $model"
 pass 'GL-X750 target identity'
 
-[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.6.0' ] || fail 'Field Console version is not 1.6.0'
-pass 'Field Console version 1.6.0'
+[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.7.0' ] || fail 'Field Console version is not 1.7.0'
+pass 'Field Console version 1.7.0'
 
 mount | grep -q '^/dev/sda1 on /overlay type ext4 ' || fail 'extroot is not active on /dev/sda1'
 pass 'extroot remains active'
@@ -387,6 +387,72 @@ else
 	pass 'RTL-433 backend/worker hardware gates and no-device refusal path'
 fi
 
+camera_manifest=/usr/share/ddk-field-console/tools/camera.json
+[ "$(jsonfilter -i "$camera_manifest" -e '@.enabled')" = 'true' ] || fail 'camera module is not enabled'
+[ "$(jsonfilter -i "$camera_manifest" -e '@.actions[0].id')" = 'camera.still_snapshot' ] || fail 'camera still action ID is incorrect'
+[ "$(jsonfilter -i "$camera_manifest" -e '@.actions[0].class')" = 'ACTION' ] || fail 'camera still action lost its ACTION classification'
+[ "$(jsonfilter -i "$camera_manifest" -e '@.actions[0].execution')" = 'job' ] || fail 'camera still action execution mode is incorrect'
+[ "$(jsonfilter -i "$camera_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'camera still action is not explicitly enabled'
+[ "$(jsonfilter -i "$camera_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'camera streaming was unexpectedly enabled'
+[ -x /usr/bin/fswebcam ] || fail 'the reviewed fswebcam executable is unavailable'
+[ -x /usr/bin/v4l2-ctl ] || fail 'the reviewed v4l2-ctl executable is unavailable'
+[ "$(uci -q get mjpg-streamer.core.enabled)" = '0' ] || fail 'mjpg-streamer is not explicitly UCI-disabled'
+[ "$(uci -q get motion.general.enabled)" = '0' ] || fail 'Motion is not explicitly UCI-disabled'
+if /etc/init.d/mjpg-streamer enabled >/dev/null 2>&1 || /etc/init.d/motion enabled >/dev/null 2>&1; then fail 'a camera service is enabled at boot'; fi
+if pidof fswebcam mjpg_streamer motion v4l2rtspserver >/dev/null 2>&1; then fail 'a camera client or service was active before hardware-gate verification'; fi
+grep -Fq '"cgi-io": [ "exec", "download" ]' /usr/share/rpcd/acl.d/ddk-field-console.json || fail 'authenticated artifact download permission is missing'
+grep -Fq '"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/snapshot.jpg": [ "read" ]' /usr/share/rpcd/acl.d/ddk-field-console.json || fail 'camera artifact path ACL is missing or too broad'
+pass 'reviewed camera manifest, installed tools, disabled services, and artifact ACL'
+
+if /usr/libexec/ddk-console job start 'camera.still_snapshot;touch' 2>/dev/null | json_ok; then
+	fail 'malformed camera action ID was accepted'
+fi
+if /usr/libexec/ddk-console job start camera.still_snapshot /dev/video0 2>/dev/null | json_ok; then
+	fail 'a browser-supplied camera device was accepted'
+fi
+
+camera_capabilities="$(/usr/libexec/ddk-console capabilities)"
+camera_ready="$(printf '%s' "$camera_capabilities" | jsonfilter -e '@.data[@.id="camera"].hardware.present')"
+camera_state="$(printf '%s' "$camera_capabilities" | jsonfilter -e '@.data[@.id="camera"].state')"
+[ "$(printf '%s' "$camera_capabilities" | jsonfilter -e '@.data[@.id="camera"].console_enabled')" = 'true' ] || fail 'camera console module is not enabled'
+if [ "$camera_ready" = 'true' ]; then
+	[ "$camera_state" = 'READY' ] || fail "reviewed UVC hardware has inconsistent capability state: $camera_state"
+	warn 'reviewed UVC camera hardware is attached; capture requires explicit privacy confirmation in the UI'
+else
+	[ "$camera_state" = 'HARDWARE REQUIRED' ] || fail "absent/unready UVC camera has incorrect capability state: $camera_state"
+	camera_jobs_before="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
+	camera_rejection="$(/usr/libexec/ddk-console job start camera.still_snapshot 2>/dev/null || true)"
+	[ "$(printf '%s' "$camera_rejection" | jsonfilter -e '@.ok')" = 'false' ] || fail 'hardware-gated camera start was not rejected'
+	printf '%s' "$camera_rejection" | jsonfilter -e '@.message' | grep -Fq 'Reviewed UVC camera hardware is not ready' || fail 'camera hardware rejection message is missing'
+	camera_jobs_after="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
+	[ "$camera_jobs_before" = "$camera_jobs_after" ] || fail 'rejected camera start created a transient job'
+	if pidof fswebcam mjpg_streamer motion v4l2rtspserver >/dev/null 2>&1; then fail 'camera hardware rejection started a process'; fi
+
+	camera_worker_probe_id="job-$(date +%s)-$$"
+	camera_worker_probe_dir="/tmp/ddk/jobs/$camera_worker_probe_id"
+	[ ! -e "$camera_worker_probe_dir" ] || fail 'generated camera worker-probe ID collided'
+	mkdir "$camera_worker_probe_dir"
+	chmod 700 "$camera_worker_probe_dir"
+	printf '%s\n' queued > "$camera_worker_probe_dir/status"
+	printf '%s\n' '{}' > "$camera_worker_probe_dir/metadata.json"
+	: > "$camera_worker_probe_dir/stdout"
+	: > "$camera_worker_probe_dir/stderr"
+	camera_worker_result=0
+	/usr/libexec/ddk-job-worker "$camera_worker_probe_id" camera_snapshot >/dev/null 2>&1 || camera_worker_result=$?
+	camera_worker_status="$(cat "$camera_worker_probe_dir/status" 2>/dev/null || true)"
+	camera_worker_error="$(cat "$camera_worker_probe_dir/stderr" 2>/dev/null || true)"
+	rm -f "$camera_worker_probe_dir/pid" "$camera_worker_probe_dir/status" "$camera_worker_probe_dir/metadata.json" \
+		"$camera_worker_probe_dir/stdout" "$camera_worker_probe_dir/stderr" "$camera_worker_probe_dir/camera.info" \
+		"$camera_worker_probe_dir/camera.stderr" "$camera_worker_probe_dir/snapshot.jpg" "$camera_worker_probe_dir/snapshot.jpg.next"
+	rmdir "$camera_worker_probe_dir"
+	[ "$camera_worker_result" -eq 65 ] || fail "independent camera worker gate returned $camera_worker_result instead of 65"
+	[ "$camera_worker_status" = 'failed' ] || fail "independent camera worker gate ended in state: $camera_worker_status"
+	printf '%s' "$camera_worker_error" | grep -Fq 'Exactly one reviewed USB UVC camera is required.' || fail 'independent camera worker rejection evidence is missing'
+	if pidof fswebcam mjpg_streamer motion v4l2rtspserver >/dev/null 2>&1; then fail 'independent camera rejection started a process'; fi
+	if find /tmp/ddk/jobs -maxdepth 2 -type f -name 'snapshot.jpg*' | grep -q .; then fail 'camera no-device verification left an image artifact'; fi
+	pass 'camera backend/worker hardware gates and no-device refusal path'
+fi
+
 report_payload="$(/usr/libexec/ddk-console job start report.system)"
 printf '%s' "$report_payload" | json_ok || fail 'system report job did not start'
 report_job="$(printf '%s' "$report_payload" | jsonfilter -e '@.data.id')"
@@ -428,15 +494,17 @@ printf '%s  %s\n' \
 	59f540ed2424a5a9805a09876c22a0d3504ee110897887b596cb35793e90e5fa /etc/config/wireless \
 	bc654f394ab804a78ffe3c143b309f00b8abdf6090162060f555e905868bba18 /etc/config/uhttpd \
 	1a40da0ebe45b1afd131dfc4650592913e38445e7fe42f96d3b95ad5151ac0e6 /etc/config/rpcd \
-	500d071555f688b493b2937f8ef1edf7f56dfddd3888aa584e8b572d5db3f2ad /etc/config/rtl_tcp |
+	500d071555f688b493b2937f8ef1edf7f56dfddd3888aa584e8b572d5db3f2ad /etc/config/rtl_tcp \
+	00f24dd633bac043f1063b36ae60bef53659c52237e3cfefc27a611b4806944f /etc/config/mjpg-streamer \
+	574743e3859793b10328389d2f1a37e4dce88f0e753029a102a43d073b6ca22f /etc/config/motion |
 	sha256sum -c - >/dev/null || fail 'a protected configuration hash changed'
-pass 'network, firewall, wireless, uhttpd, rpcd, and rtl_tcp are untouched'
+pass 'network, firewall, wireless, uhttpd, rpcd, rtl_tcp, and camera configurations are untouched'
 
 if netstat -lntup 2>/dev/null | grep -q 'ddk'; then fail 'a DDK listener exists'; fi
 # BusyBox on this target has no standalone pgrep.
 # shellcheck disable=SC2009
 if ps w | grep '[d]dk-job-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
-if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
+if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
 pass 'no DDK listener or idle operation worker exists'
 
 available_kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"

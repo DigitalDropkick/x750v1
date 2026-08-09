@@ -8,6 +8,7 @@ target="${DDK_TARGET:-root@192.168.8.1}"
 control_path="${DDK_SSH_CONTROL_PATH:-}"
 session=''
 csrf_token=''
+artifact_probe_id=''
 
 if [[ "$target" != "root@192.168.8.1" ]]; then
 	printf 'Refusing unexpected target: %s\n' "$target" >&2
@@ -22,6 +23,21 @@ fi
 ssh_args=(-o ConnectTimeout=10 -o StrictHostKeyChecking=yes -S "$control_path")
 
 destroy_session() {
+	if [[ "$artifact_probe_id" =~ ^job-[0-9]+-[0-9]+$ ]]; then
+		local ending_probe="$artifact_probe_id"
+		artifact_probe_id=''
+		if ! ssh "${ssh_args[@]}" "$target" sh -s -- "$ending_probe" <<'ROUTER_CLEANUP'
+set -eu
+probe_id="$1"
+case "$probe_id" in job-[0-9]*-[0-9]*) ;; *) exit 64 ;; esac
+probe_dir="/tmp/ddk/jobs/$probe_id"
+rm -f "$probe_dir/snapshot.jpg"
+rmdir "$probe_dir" 2>/dev/null || true
+ROUTER_CLEANUP
+		then
+			printf '%s\n' 'WARNING: transient camera-artifact ACL probe cleanup failed' >&2
+		fi
+	fi
 	if [[ "$session" =~ ^[a-fA-F0-9]{32}$ ]]; then
 		local ending_session="$session"
 		session=''
@@ -44,7 +60,7 @@ jq -nc --arg session "$session" --arg token "$csrf_token" '{ ubus_rpc_session: $
 unset csrf_token
 jq -nc --arg session "$session" '{ ubus_rpc_session: $session, scope: "access-group", objects: [ [ "ddk-field-console", "read" ] ] }' |
 	ssh "${ssh_args[@]}" "$target" 'payload="$(read -r line; printf "%s" "$line")"; ubus call session grant "$payload" >/dev/null'
-jq -nc --arg session "$session" '{ ubus_rpc_session: $session, scope: "cgi-io", objects: [ [ "exec", "read" ] ] }' |
+jq -nc --arg session "$session" '{ ubus_rpc_session: $session, scope: "cgi-io", objects: [ [ "exec", "read" ], [ "download", "read" ] ] }' |
 	ssh "${ssh_args[@]}" "$target" 'payload="$(read -r line; printf "%s" "$line")"; ubus call session grant "$payload" >/dev/null'
 jq -nc --arg session "$session" '{
 	ubus_rpc_session: $session,
@@ -55,7 +71,8 @@ jq -nc --arg session "$session" '{
 		[ "/usr/libexec/ddk-console packages", "exec" ],
 		[ "/usr/libexec/ddk-console info *", "exec" ],
 		[ "/usr/libexec/ddk-console job *", "exec" ],
-		[ "/usr/libexec/ddk-console report *", "exec" ]
+		[ "/usr/libexec/ddk-console report *", "exec" ],
+		[ "/tmp/ddk/jobs/job-[0-9]*-[0-9]*/snapshot.jpg", "read" ]
 	]
 }' | ssh "${ssh_args[@]}" "$target" 'payload="$(read -r line; printf "%s" "$line")"; ubus call session grant "$payload" >/dev/null'
 
@@ -64,6 +81,39 @@ auth_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 --cookie "sysa
 	printf 'Transient LuCI session preflight returned HTTP %s.\n' "$auth_http" >&2
 	exit 1
 }
+
+artifact_probe_id="job-$(date +%s)-$$"
+ssh "${ssh_args[@]}" "$target" sh -s -- "$artifact_probe_id" <<'ROUTER_PROBE'
+set -eu
+probe_id="$1"
+case "$probe_id" in job-[0-9]*-[0-9]*) ;; *) exit 64 ;; esac
+probe_dir="/tmp/ddk/jobs/$probe_id"
+mkdir "$probe_dir"
+chmod 700 "$probe_dir"
+printf '%s' DDK_CAMERA_ARTIFACT_ACL_PROOF > "$probe_dir/snapshot.jpg"
+chmod 600 "$probe_dir/snapshot.jpg"
+ROUTER_PROBE
+artifact_reply="$(curl -sS --max-time 8 --cookie "sysauth_http=$session" \
+	--data-urlencode "sessionid=$session" \
+	--data-urlencode "path=/tmp/ddk/jobs/$artifact_probe_id/snapshot.jpg" \
+	--data-urlencode "filename=ddk-camera-$artifact_probe_id.jpg" \
+	--write-out $'\nDDK_HTTP_STATUS:%{http_code}' \
+	http://192.168.8.1/cgi-bin/cgi-download)"
+artifact_http="${artifact_reply##*DDK_HTTP_STATUS:}"
+artifact_payload="${artifact_reply%$'\n'DDK_HTTP_STATUS:*}"
+unset artifact_reply
+[[ "$artifact_http" == '200' && "$artifact_payload" == 'DDK_CAMERA_ARTIFACT_ACL_PROOF' ]] || {
+	printf 'Authenticated camera-artifact download proof failed: HTTP %s, %s response bytes.\n' "$artifact_http" "${#artifact_payload}" >&2
+	exit 1
+}
+outside_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 --cookie "sysauth_http=$session" \
+	--data-urlencode "sessionid=$session" --data-urlencode 'path=/etc/shadow' \
+	http://192.168.8.1/cgi-bin/cgi-download || true)"
+[[ "$outside_http" != '200' ]] || {
+	printf '%s\n' 'Camera-artifact ACL unexpectedly permitted an outside path.' >&2
+	exit 1
+}
+printf '%s\n' 'Authenticated camera-artifact ACL proof passed; an outside path was denied.'
 
 DDK_BROWSER_SESSION="$session" node "$project_root/scripts/verify-browser.mjs"
 destroy_session

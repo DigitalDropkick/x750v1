@@ -22,8 +22,8 @@ fail() {
 
 model="$(ubus call system board | jsonfilter -e '@.model')"
 [ "$model" = 'GL.iNet GL-X750' ] || fail "target identity changed: $model"
-[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.6.0' ] || fail 'Field Console version is not 1.6.0'
-pass 'GL-X750 identity and Field Console 1.6.0'
+[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.7.0' ] || fail 'Field Console version is not 1.7.0'
+pass 'GL-X750 identity and Field Console 1.7.0'
 
 mount | grep -q '^/dev/sda1 on /overlay type ext4 ' || fail 'extroot is not active on /dev/sda1'
 pass 'extroot mounted from /dev/sda1'
@@ -55,6 +55,12 @@ pass 'dashboard backend and EC25-safe serial attribution'
 if netstat -lntup 2>/dev/null | grep -Eq '(^|[.:])1234[[:space:]]'; then fail 'the rtl_tcp default listener port is active'; fi
 pass 'rtl_tcp remains disabled with no default-port listener'
 
+[ "$(uci -q get mjpg-streamer.core.enabled)" = '0' ] || fail 'mjpg-streamer is not explicitly UCI-disabled'
+[ "$(uci -q get motion.general.enabled)" = '0' ] || fail 'Motion is not explicitly UCI-disabled'
+if /etc/init.d/mjpg-streamer enabled >/dev/null 2>&1 || /etc/init.d/motion enabled >/dev/null 2>&1; then fail 'a camera service is enabled at boot'; fi
+if pidof fswebcam mjpg_streamer motion v4l2rtspserver >/dev/null 2>&1; then fail 'a camera client or service is active after boot'; fi
+pass 'camera services remain disabled with no camera process'
+
 pidof tailscaled >/dev/null 2>&1 || fail 'tailscaled is not running'
 tailscale_ip="$(tailscale ip -4 2>/dev/null || true)"
 [ -n "$tailscale_ip" ] || fail 'Tailscale IPv4 address is unavailable'
@@ -66,15 +72,17 @@ printf '%s  %s\n' \
 	59f540ed2424a5a9805a09876c22a0d3504ee110897887b596cb35793e90e5fa /etc/config/wireless \
 	bc654f394ab804a78ffe3c143b309f00b8abdf6090162060f555e905868bba18 /etc/config/uhttpd \
 	1a40da0ebe45b1afd131dfc4650592913e38445e7fe42f96d3b95ad5151ac0e6 /etc/config/rpcd \
-	500d071555f688b493b2937f8ef1edf7f56dfddd3888aa584e8b572d5db3f2ad /etc/config/rtl_tcp |
+	500d071555f688b493b2937f8ef1edf7f56dfddd3888aa584e8b572d5db3f2ad /etc/config/rtl_tcp \
+	00f24dd633bac043f1063b36ae60bef53659c52237e3cfefc27a611b4806944f /etc/config/mjpg-streamer \
+	574743e3859793b10328389d2f1a37e4dce88f0e753029a102a43d073b6ca22f /etc/config/motion |
 	sha256sum -c - >/dev/null || fail 'a protected configuration hash changed'
-pass 'network, firewall, wireless, uhttpd, rpcd, and rtl_tcp remain untouched'
+pass 'network, firewall, wireless, uhttpd, rpcd, rtl_tcp, and camera configurations remain untouched'
 
 if netstat -lntup 2>/dev/null | grep -q 'ddk'; then fail 'a DDK listener exists'; fi
 # BusyBox on this target has no standalone pgrep.
 # shellcheck disable=SC2009
 if ps w | grep '[d]dk-job-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
-if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
+if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
 pass 'no DDK listener or idle operation worker exists'
 
 available_kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"

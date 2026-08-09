@@ -2,7 +2,7 @@
 
 ## Trust boundary
 
-The Field Console is mounted below LuCI's authenticated `admin` tree. Live data calls use the existing `cgi-io` session boundary. There is no unauthenticated DDK CGI, web root, API port, or reverse-proxy rule.
+The Field Console is mounted below LuCI's authenticated `admin` tree. Live data calls and transient camera downloads use the existing `cgi-io` session boundary. There is no unauthenticated DDK CGI, API port, or reverse-proxy rule. The public `/ddk` web-root file is a content-free redirect only.
 
 LuCI static JavaScript, CSS, and non-secret module descriptions may be web-readable like other LuCI assets. They contain no credentials and cannot execute actions without an authenticated `cgi-io` call.
 
@@ -21,11 +21,11 @@ The browser cannot submit:
 - an executable path;
 - a shell command or fragment;
 - arbitrary flags;
-- an output path;
+- an action output path;
 - a generic PID;
 - a report filesystem path.
 
-The backend's `capture()` receives only source-code constants. A request value selects a table record but is never concatenated into a command. Serial attribution bypasses the shell entirely and reads fixed sysfs locations with Lua filesystem APIs.
+The backend's `capture()` receives only source-code constants. A request value selects a table record but is never concatenated into a command. Serial, radio, and camera attribution read fixed procfs/sysfs locations. Camera artifact download is separate from execution: the client accepts only a generated job ID, derives one fixed path, and native `cgi-download` independently enforces the exact rpcd file ACL.
 
 ## Registry isolation
 
@@ -40,7 +40,7 @@ The current release accepts:
 - job IDs matching `job-<digits>-<digits>`;
 - report IDs matching `report-<digits>-<digits>`.
 
-There are no browser-provided network targets, interfaces, filters, filenames, device nodes, PIDs, package names, durations, radio parameters, output protocols, or flags. For `network.nmap_lan_discovery`, the worker independently requires the native LAN device to equal `br-lan`, reads its IPv4 CIDR from the kernel, validates RFC1918 scope and a `/24`-or-smaller prefix, and then invokes one fixed host-discovery profile. For `capture.lan_metadata_snapshot`, the worker independently requires an up native LAN on exactly `br-lan` and invokes one fixed non-promiscuous ARP/ICMP/DHCP metadata profile. For `radio.rtl433_snapshot`, the backend and worker require one exact reviewed tuner and a safe sysfs serial; frequency, sample rate, gain, decoders, configuration, duration, and output are fixed. For `cellular.snapshot`, the worker requires the exact EC25-AF VID:PID, `qmi_wwan`, `/dev/cdc-wdm0`, and its attributed `wwan0`; browser input cannot select a modem or QMI action.
+There are no browser-provided network targets, interfaces, filters, action-output filenames, device nodes, PIDs, package names, durations, camera/radio parameters, output protocols, or flags. For `network.nmap_lan_discovery`, the worker independently requires the native LAN device to equal `br-lan`, reads its IPv4 CIDR from the kernel, validates RFC1918 scope and a `/24`-or-smaller prefix, and then invokes one fixed host-discovery profile. For `capture.lan_metadata_snapshot`, the worker independently requires an up native LAN on exactly `br-lan` and invokes one fixed non-promiscuous ARP/ICMP/DHCP metadata profile. For `radio.rtl433_snapshot`, the backend and worker require one exact reviewed tuner and a safe sysfs serial; frequency, sample rate, gain, decoders, configuration, duration, and output are fixed. For `camera.still_snapshot`, both layers require one sysfs-attributed UVC camera and primary node; resolution, frame count, warm-up, quality, banner, duration, artifact name, and destination are fixed. For `cellular.snapshot`, the worker requires the exact EC25-AF VID:PID, `qmi_wwan`, `/dev/cdc-wdm0`, and its attributed `wwan0`; browser input cannot select a modem or QMI action.
 
 ## Job controls
 
@@ -50,6 +50,7 @@ There are no browser-provided network targets, interfaces, filters, filenames, d
 - At most one Nmap LAN discovery job may be active.
 - At most one LAN metadata capture may be active.
 - At most one RTL-433 workflow and one shared `rtl_sdr` resource may be active.
+- At most one camera workflow and one shared `camera` resource may be active.
 - At most one cellular snapshot may be active.
 - A stop request supplies a generated job ID, not a PID.
 - Before `TERM`, the helper reads its own PID file and confirms `/proc/<pid>/cmdline` contains both the DDK worker path and exact job ID.
@@ -59,6 +60,7 @@ There are no browser-provided network targets, interfaces, filters, filenames, d
 - The Nmap worker tracks its direct child and terminates that child when an authenticated stop request terminates the worker.
 - The capture worker tracks its direct `tcpdump` child, terminates it on authenticated stop, and checks that `br-lan` flags are unchanged after normal completion.
 - The RTL-433 worker tracks its direct receiver child, applies a 20-second client limit, a 25-second independent wall limit, 56 KiB child-file limits, and a 64 KiB final-output limit.
+- The camera worker tracks its direct `fswebcam` child, applies a 20-second independent wall limit, a 256 KiB file limit, and removes partial/failed/stopped artifacts.
 - Each cellular query has a five-second client timeout, a seven-second worker wall limit, and direct-child cancellation.
 
 ## Packet-capture privacy boundary
@@ -76,6 +78,12 @@ Decoded nearby transmissions can expose sensor identifiers and measurements. The
 ## Cellular privacy boundary
 
 The snapshot permits only operating mode, data-session state, radio signal, and serving-system queries. Output is rebuilt from an explicit field whitelist and never returns raw modem JSON. IMEI, IMSI, ICCID, MSISDN, SIM contents, APN/current settings, credentials, PIN/PUK state, cell location, operator-description bytes, network scans, registration changes, resets, and raw AT/QMI input are excluded.
+
+## Camera privacy and file boundary
+
+The camera action creates one local still only after an explicit consent/authorization warning. A frame can contain people, customer property, documents, screens, or location details. It is not copied into a report, persistent directory, website path, stream, network destination, or log.
+
+The worker writes a mode-0600 temporary file below its mode-0700 DDK job, validates size/type/JPEG magic, and atomically renames only a successful result. The backend exposes metadata only for that completed fixed file. Native authenticated `cgi-download` has read permission only for `/tmp/ddk/jobs/job-[0-9]*-[0-9]*/snapshot.jpg`. The browser checks the job grammar, derives that path rather than accepting text input, checks the returned byte length, and creates an in-memory object URL only on operator request. See [CAMERA-SNAPSHOT.md](CAMERA-SNAPSHOT.md).
 
 ## Reports and sensitive information
 
@@ -113,6 +121,6 @@ Local validation checks enabled-action consistency and forbidden mutation patter
 - a generic numeric PID stop;
 - report path traversal.
 
-The production suite also attempts malformed capture IDs and an extra browser-supplied interface, proves singleton enforcement and DDK-owned cancellation, checks `br-lan` flags before/during/after, compiles the fixed BPF expression, enforces the 64 KiB output ceiling, rejects PCAP artifacts, and requires no `tcpdump` process to remain.
+The production suite also attempts malformed operation IDs and extra browser-supplied interface/device/parameter values, proves singleton enforcement and DDK-owned cancellation where hardware is available, checks `br-lan` flags before/during/after, compiles the fixed BPF expression, enforces output ceilings, rejects PCAP/failed-camera artifacts, and requires no bounded-operation process to remain. Authenticated browser verification downloads an allowlisted transient artifact and proves an outside path is denied.
 
 It requires rejection and confirms the injection marker was not created.

@@ -64,22 +64,24 @@ The sysfs-only inspector maps each serial node to VID:PID, parent, interface, an
 
 The no-device acceptance gate passed on 2026-08-09: 29 production checks completed with no warnings, both backend and worker hardware gates failed closed without starting a receiver, `rtl_tcp` remained unchanged and disabled, port 1234 remained closed, authenticated desktop/mobile UI correctly disabled the ACTION control, and all 39 deployed files matched source. Live receive and cancellation acceptance remain pending hardware.
 
-## 2. Camera snapshot
+### Phase 3C — Hardware-gated camera still (implemented in 1.7.0)
 
-Enable only for an existing `/dev/videoN` node validated against sysfs. Start with one bounded still capture. Streaming remains later because it creates network-exposure and resource questions.
+`camera.still_snapshot` requires exactly one sysfs-attributed USB UVC camera and primary video node, confirms V4L2 capture capability and exclusive availability, then creates one fixed 640×480 JPEG under the existing transient job boundary. The browser receives no device/profile controls and uses native authenticated LuCI download with an exact artifact ACL. `mjpg-streamer`, Motion, RTSP, audio, uploads, and all streaming remain disabled.
 
-## 3. GPS snapshot
+No camera was attached during development, so acceptance is limited to the no-device refusal, service/configuration isolation, and authenticated artifact ACL until approved UVC hardware and privacy consent are available. The no-device gate passed on 2026-08-09: 31 production checks completed with no warnings, the authenticated artifact proof allowed only the exact transient JPEG path and denied `/etc/shadow`, responsive browser checks passed, and all 39 deployed files matched source.
+
+## 2. GPS snapshot
 
 Add exact GNSS hardware attribution, then an on-demand position snapshot. Do not start gpsd automatically or include precise location in reports without an explicit privacy decision.
 
-## 4. CAN read-only capture
+## 3. CAN read-only capture
 
 Require an existing CAN interface and expose only bounded `candump`. Interface configuration and transmit remain DISRUPTIVE and disabled.
 
-## 5. Android and Apple identification
+## 4. Android and Apple identification
 
 Add device-presence and identity operations before any shell, recovery, restore, or filesystem action. Treat customer device identifiers as private and transient.
 
-## 6. Firmware-programmer identification
+## 5. Firmware-programmer identification
 
 Identify attached programmers without writing. Per-tool flash/read/erase workflows require separate manifests, confirmation, device targeting, power/voltage guidance, image hashing, and recovery procedures.

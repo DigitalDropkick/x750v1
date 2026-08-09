@@ -169,7 +169,7 @@ try {
 	await waitUntil(async () => evaluate(pageSession, '!!document.querySelector("#ddk-app .ddk-brand") && !document.querySelector("#ddk-app .ddk-loading")'), 15000, 'Timed out rendering the shortcut destination.');
 	const shortcut = await evaluate(pageSession, `({
 		path: location.pathname,
-		version: document.body.textContent.includes('X750 / v1.6.0'),
+		version: document.body.textContent.includes('X750 / v1.7.0'),
 		serial: document.body.textContent.includes('4 nodes · 4 MODEM RESERVED · 0 GENERAL'),
 		overflow: document.documentElement.scrollWidth > window.innerWidth,
 		login: document.body.textContent.includes('Authorization Required')
@@ -197,7 +197,7 @@ try {
 		throw new Error(`Compact Overview validation failed: ${JSON.stringify(compactOverview)}`);
 	}
 	await validateBrand(pageSession, 'overview');
-	const overviewPath = await screenshot(pageSession, 'ddk-v160-overview-320.png');
+	const overviewPath = await screenshot(pageSession, 'ddk-v170-overview-320.png');
 
 	await openPage(pageSession, 'jobs', 1440, 1000);
 	await waitForJobs(pageSession);
@@ -206,28 +206,32 @@ try {
 		const cellularButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Cellular Snapshot');
 		const captureButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Capture LAN Metadata');
 		const radioButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'RTL-433 Sensor Snapshot');
+		const cameraButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Camera Still Snapshot');
 		return {
 			login: document.body.textContent.includes('Authorization Required'),
-			version: document.body.textContent.includes('X750 / v1.6.0'),
+			version: document.body.textContent.includes('X750 / v1.7.0'),
 			button: !!button,
 			enabled: !!button && !button.disabled,
 			cellular: !!cellularButton && !cellularButton.disabled,
 			capture: !!captureButton && !captureButton.disabled,
 			radioHardwareRequired: document.body.textContent.includes('RTL-433 receiver state: HARDWARE REQUIRED'),
 			radioDisabled: !!radioButton && radioButton.disabled,
+			cameraHardwareRequired: document.body.textContent.includes('Camera state: HARDWARE REQUIRED'),
+			cameraDisabled: !!cameraButton && cameraButton.disabled,
 			securityStyle: !!button && button.classList.contains('ddk-button-security'),
 			captureSecurityStyle: !!captureButton && captureButton.classList.contains('ddk-button-security'),
 			radioActionStyle: !!radioButton && radioButton.classList.contains('ddk-button-action'),
+			cameraActionStyle: !!cameraButton && cameraButton.classList.contains('ddk-button-action'),
 			overflow: document.documentElement.scrollWidth > window.innerWidth,
 			buttons: Array.from(document.querySelectorAll('button')).map(node => node.textContent.trim()),
 			heading: document.querySelector('.ddk-brand h2')?.textContent || ''
 		};
 	})()`);
-	if (desktop.login || !desktop.version || !desktop.button || !desktop.enabled || !desktop.cellular || !desktop.capture || !desktop.radioHardwareRequired || !desktop.radioDisabled || !desktop.securityStyle || !desktop.captureSecurityStyle || !desktop.radioActionStyle || desktop.overflow) {
+	if (desktop.login || !desktop.version || !desktop.button || !desktop.enabled || !desktop.cellular || !desktop.capture || !desktop.radioHardwareRequired || !desktop.radioDisabled || !desktop.cameraHardwareRequired || !desktop.cameraDisabled || !desktop.securityStyle || !desktop.captureSecurityStyle || !desktop.radioActionStyle || !desktop.cameraActionStyle || desktop.overflow) {
 		throw new Error(`Desktop Jobs validation failed: ${JSON.stringify(desktop)}`);
 	}
 	await validateBrand(pageSession, 'jobs');
-	const desktopPath = await screenshot(pageSession, 'ddk-v160-jobs-desktop.png');
+	const desktopPath = await screenshot(pageSession, 'ddk-v170-jobs-desktop.png');
 
 	await openPage(pageSession, 'tools', 1440, 1000);
 	const tools = await evaluate(pageSession, `(() => {
@@ -241,9 +245,11 @@ try {
 		const captureButton = captureCard && Array.from(captureCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'capture.lan_metadata_snapshot');
 		const radioCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('SDR / Radio') && node.textContent.includes('radio.rtl433_snapshot'));
 		const radioButton = radioCard && Array.from(radioCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'radio.rtl433_snapshot');
-		return { card: !!card, ready: !!card && card.textContent.includes('READY'), button: !!button, enabled: !!button && !button.disabled, cellularCard: !!cellularCard, cellularReady: !!cellularCard && cellularCard.textContent.includes('READY'), cellularButton: !!cellularButton && !cellularButton.disabled, serialCard: !!serialCard, serialReady: !!serialCard && serialCard.textContent.includes('READY'), serialButton: !!serialButton && !serialButton.disabled, captureCard: !!captureCard, captureReady: !!captureCard && captureCard.textContent.includes('READY'), captureButton: !!captureButton && !captureButton.disabled && captureButton.classList.contains('ddk-button-security'), radioCard: !!radioCard, radioHardwareRequired: !!radioCard && radioCard.textContent.includes('HARDWARE REQUIRED'), radioButtonDisabled: !!radioButton && radioButton.disabled && radioButton.classList.contains('ddk-button-action') };
+		const cameraCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Camera / Video') && node.textContent.includes('camera.still_snapshot'));
+		const cameraButton = cameraCard && Array.from(cameraCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'camera.still_snapshot');
+		return { card: !!card, ready: !!card && card.textContent.includes('READY'), button: !!button, enabled: !!button && !button.disabled, cellularCard: !!cellularCard, cellularReady: !!cellularCard && cellularCard.textContent.includes('READY'), cellularButton: !!cellularButton && !cellularButton.disabled, serialCard: !!serialCard, serialReady: !!serialCard && serialCard.textContent.includes('READY'), serialButton: !!serialButton && !serialButton.disabled, captureCard: !!captureCard, captureReady: !!captureCard && captureCard.textContent.includes('READY'), captureButton: !!captureButton && !captureButton.disabled && captureButton.classList.contains('ddk-button-security'), radioCard: !!radioCard, radioHardwareRequired: !!radioCard && radioCard.textContent.includes('HARDWARE REQUIRED'), radioButtonDisabled: !!radioButton && radioButton.disabled && radioButton.classList.contains('ddk-button-action'), cameraCard: !!cameraCard, cameraHardwareRequired: !!cameraCard && cameraCard.textContent.includes('HARDWARE REQUIRED'), cameraButtonDisabled: !!cameraButton && cameraButton.disabled && cameraButton.classList.contains('ddk-button-action') };
 	})()`);
-	if (!tools.card || !tools.ready || !tools.button || !tools.enabled || !tools.cellularCard || !tools.cellularReady || !tools.cellularButton || !tools.serialCard || !tools.serialReady || !tools.serialButton || !tools.captureCard || !tools.captureReady || !tools.captureButton || !tools.radioCard || !tools.radioHardwareRequired || !tools.radioButtonDisabled) {
+	if (!tools.card || !tools.ready || !tools.button || !tools.enabled || !tools.cellularCard || !tools.cellularReady || !tools.cellularButton || !tools.serialCard || !tools.serialReady || !tools.serialButton || !tools.captureCard || !tools.captureReady || !tools.captureButton || !tools.radioCard || !tools.radioHardwareRequired || !tools.radioButtonDisabled || !tools.cameraCard || !tools.cameraHardwareRequired || !tools.cameraButtonDisabled) {
 		throw new Error(`Tool Registry validation failed: ${JSON.stringify(tools)}`);
 	}
 	await validateBrand(pageSession, 'tools');
@@ -253,7 +259,7 @@ try {
 		return true;
 	})()`);
 	await new Promise(resolve => setTimeout(resolve, 200));
-	const toolsPath = await screenshot(pageSession, 'ddk-v160-tools-desktop.png');
+	const toolsPath = await screenshot(pageSession, 'ddk-v170-tools-desktop.png');
 
 	for (const page of [ 'packages', 'settings' ]) {
 		await openPage(pageSession, page, 1440, 900);
@@ -270,17 +276,18 @@ try {
 		cellular: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Cellular Snapshot' && !node.disabled),
 		capture: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Capture LAN Metadata' && !node.disabled),
 		radioDisabled: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'RTL-433 Sensor Snapshot' && node.disabled),
+		cameraDisabled: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Camera Still Snapshot' && node.disabled),
 		width: window.innerWidth
 	}))()`);
-	if (mobile.overflow || !mobile.button || !mobile.cellular || !mobile.capture || !mobile.radioDisabled || mobile.width !== 390) {
+	if (mobile.overflow || !mobile.button || !mobile.cellular || !mobile.capture || !mobile.radioDisabled || !mobile.cameraDisabled || mobile.width !== 390) {
 		throw new Error(`Mobile Jobs validation failed: ${JSON.stringify(mobile)}`);
 	}
 	await validateBrand(pageSession, 'jobs');
-	const mobilePath = await screenshot(pageSession, 'ddk-v160-jobs-mobile.png');
+	const mobilePath = await screenshot(pageSession, 'ddk-v170-jobs-mobile.png');
 
 	if (browserErrors.length) throw new Error(`Browser errors: ${browserErrors.join(' | ')}`);
 	if (externalRequests.length) throw new Error(`External browser requests were made: ${[ ...new Set(externalRequests) ].join(' | ')}`);
-	console.log('Browser verification passed: /ddk shortcut, five local branded headers and logos, serial-aware Overview at 320px, authenticated Nmap/capture controls and hardware-gated RTL-433 controls at 1440px and 390px, no external requests, horizontal overflow, or runtime errors.');
+	console.log('Browser verification passed: /ddk shortcut, five local branded headers and logos, serial-aware Overview at 320px, authenticated Nmap/capture controls and hardware-gated RTL-433/camera controls at 1440px and 390px, no external requests, horizontal overflow, or runtime errors.');
 	console.log(`DDK_BROWSER_OVERVIEW=${overviewPath}`);
 	console.log(`DDK_BROWSER_DESKTOP=${desktopPath}`);
 	console.log(`DDK_BROWSER_TOOLS=${toolsPath}`);

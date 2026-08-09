@@ -74,10 +74,20 @@ available_kb="$(df -Pk /overlay | awk 'NR == 2 {print $4}')"
 [ -x /usr/bin/nmap ] || fail 'the already-installed nmap-full executable is missing; no package will be installed'
 [ -x /usr/sbin/tcpdump ] || fail 'the already-installed tcpdump executable is missing; no package will be installed'
 [ -x /usr/bin/rtl_433 ] || fail 'the already-installed rtl_433 executable is missing; no package will be installed'
+[ -x /usr/bin/fswebcam ] || fail 'the already-installed fswebcam executable is missing; no package will be installed'
+[ -x /usr/bin/v4l2-ctl ] || fail 'the already-installed v4l2-ctl executable is missing; no package will be installed'
+[ -x /usr/bin/file ] || fail 'the already-installed file executable is missing; no package will be installed'
 [ -x /sbin/uqmi ] || fail 'the already-installed uqmi executable is missing; no package will be installed'
 /usr/bin/rtl_433 -c /dev/null -V >/dev/null 2>&1 || fail 'rtl_433 rejected the reviewed empty-config invocation'
 [ "$(uci -q get rtl_tcp.main.disabled)" = '1' ] || fail 'the existing rtl_tcp network service is not explicitly disabled'
+[ "$(uci -q get mjpg-streamer.core.enabled)" = '0' ] || fail 'the existing mjpg-streamer service is not explicitly UCI-disabled'
+[ "$(uci -q get motion.general.enabled)" = '0' ] || fail 'the existing Motion service is not explicitly UCI-disabled'
+if /etc/init.d/mjpg-streamer enabled >/dev/null 2>&1 || /etc/init.d/motion enabled >/dev/null 2>&1; then
+	fail 'an existing camera service is enabled at boot'
+fi
+if pidof fswebcam mjpg_streamer motion v4l2rtspserver >/dev/null 2>&1; then fail 'a camera client or service is already active'; fi
 command -v timeout >/dev/null 2>&1 || fail 'timeout is missing'
+command -v hexdump >/dev/null 2>&1 || fail 'hexdump is missing'
 [ -x /usr/libexec/cgi-io ] || [ -x /usr/libexec/cgi-io/capture ] || command -v cgi-io >/dev/null 2>&1 || fail 'cgi-io execution support is missing'
 
 root_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1/ || true)"
@@ -91,7 +101,9 @@ printf '%s  %s\n' \
 	59f540ed2424a5a9805a09876c22a0d3504ee110897887b596cb35793e90e5fa /etc/config/wireless \
 	bc654f394ab804a78ffe3c143b309f00b8abdf6090162060f555e905868bba18 /etc/config/uhttpd \
 	1a40da0ebe45b1afd131dfc4650592913e38445e7fe42f96d3b95ad5151ac0e6 /etc/config/rpcd \
-	500d071555f688b493b2937f8ef1edf7f56dfddd3888aa584e8b572d5db3f2ad /etc/config/rtl_tcp |
+	500d071555f688b493b2937f8ef1edf7f56dfddd3888aa584e8b572d5db3f2ad /etc/config/rtl_tcp \
+	00f24dd633bac043f1063b36ae60bef53659c52237e3cfefc27a611b4806944f /etc/config/mjpg-streamer \
+	574743e3859793b10328389d2f1a37e4dce88f0e753029a102a43d073b6ca22f /etc/config/motion |
 	sha256sum -c - >/dev/null || fail 'protected configuration drifted since discovery'
 
 DDK_LUA_FILE="$source_root/usr/libexec/ddk-console" lua -e 'assert(loadfile(os.getenv("DDK_LUA_FILE")))'
@@ -123,7 +135,8 @@ mkdir -p "$backup_path/files"
 	printf 'source_version=%s\n' "$(cat "$source_root/usr/share/ddk-field-console/VERSION")"
 } > "$backup_path/metadata"
 
-sha256sum /etc/config/network /etc/config/firewall /etc/config/wireless /etc/config/uhttpd /etc/config/rpcd /etc/config/rtl_tcp > "$backup_path/protected-config.sha256"
+sha256sum /etc/config/network /etc/config/firewall /etc/config/wireless /etc/config/uhttpd /etc/config/rpcd \
+	/etc/config/rtl_tcp /etc/config/mjpg-streamer /etc/config/motion > "$backup_path/protected-config.sha256"
 netstat -lntup 2>/dev/null | awk 'NR > 2 {program=$7; sub(/^[0-9]+\//, "", program); print $1, $4, program}' | sort > "$backup_path/listeners.before"
 
 find "$source_root" -type f | sort | while IFS= read -r source_file; do

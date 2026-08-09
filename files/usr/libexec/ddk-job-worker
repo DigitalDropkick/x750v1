@@ -16,7 +16,7 @@ job_pid="${job_numbers#*-}"
 case "$job_epoch" in ''|*[!0-9]*) exit 64 ;; esac
 case "$job_pid" in ''|*[!0-9]*) exit 64 ;; esac
 case "$task" in
-	demo|system_report|nmap_lan_discovery|cellular_snapshot|tcpdump_lan_metadata|rtl433_snapshot) ;;
+	demo|system_report|nmap_lan_discovery|cellular_snapshot|tcpdump_lan_metadata|rtl433_snapshot|camera_snapshot) ;;
 	*) exit 64 ;;
 esac
 
@@ -50,7 +50,9 @@ stop_job() {
 		fi
 		# shellcheck disable=SC2317
 		rm -f "$job_dir"/cellular-*.json "$job_dir"/cellular-*.json.err \
-			"$job_dir"/tcpdump.stderr "$job_dir"/rtl433.output "$job_dir"/rtl433.stderr
+			"$job_dir"/tcpdump.stderr "$job_dir"/rtl433.output "$job_dir"/rtl433.stderr \
+			"$job_dir"/camera.info "$job_dir"/camera.stderr \
+			"$job_dir"/snapshot.jpg "$job_dir"/snapshot.jpg.next
 		# shellcheck disable=SC2317
 		status_set stopped
 	# shellcheck disable=SC2317
@@ -226,7 +228,8 @@ elif [ "$task" = "system_report" ]; then
 		printf '\n[INSTALLED PACKAGE NAMES]\n'
 		opkg list-installed | awk '{print $1}' | sort
 		printf '\n[PROTECTED CONFIGURATION HASHES — CONTENTS NOT INCLUDED]\n'
-		sha256sum /etc/config/network /etc/config/firewall /etc/config/wireless /etc/config/uhttpd /etc/config/rpcd /etc/config/rtl_tcp 2>/dev/null || true
+		sha256sum /etc/config/network /etc/config/firewall /etc/config/wireless /etc/config/uhttpd /etc/config/rpcd \
+			/etc/config/rtl_tcp /etc/config/mjpg-streamer /etc/config/motion 2>/dev/null || true
 	} > "$report_tmp" 2> "$job_dir/stderr" || result=$?
 	head -c 131072 "$report_tmp" > "$report_path"
 	rm -f "$report_tmp"
@@ -464,6 +467,155 @@ elif [ "$task" = "rtl433_snapshot" ]; then
 	fi
 	rm -f "$radio_output" "$radio_error"
 	head -c 65536 "$job_dir/stdout" > "$job_dir/stdout.next"
+	mv "$job_dir/stdout.next" "$job_dir/stdout"
+elif [ "$task" = "camera_snapshot" ]; then
+	[ -x /usr/bin/fswebcam ] || task_fail 'fswebcam is not installed at the reviewed path; the console did not attempt installation.'
+	[ -x /usr/bin/v4l2-ctl ] || task_fail 'v4l2-ctl is not installed at the reviewed path; the console did not attempt installation.'
+	[ -x /usr/bin/file ] || task_fail 'file is not installed at the reviewed path; the console did not attempt installation.'
+	[ "$(uci -q get mjpg-streamer.core.enabled)" = '0' ] || task_fail 'mjpg-streamer is not explicitly UCI-disabled; the console refused camera access.'
+	[ "$(uci -q get motion.general.enabled)" = '0' ] || task_fail 'Motion is not explicitly UCI-disabled; the console refused camera access.'
+	if pidof fswebcam mjpg_streamer motion v4l2rtspserver >/dev/null 2>&1; then
+		task_fail 'A camera client or service is already active; the console did not stop or replace it.'
+	fi
+
+	camera_usb_parent=""
+	camera_usb_id=""
+	camera_device=""
+	camera_name=""
+	camera_device_count=0
+	camera_node_count=0
+	camera_primary_count=0
+	for camera_class in /sys/class/video4linux/video[0-9]*; do
+		[ -e "$camera_class" ] || continue
+		camera_node="/dev/$(basename "$camera_class")"
+		[ -c "$camera_node" ] || continue
+		camera_device_path="$(readlink -f "$camera_class/device" 2>/dev/null)" || continue
+		camera_parent="$(readlink -f "$camera_device_path/.." 2>/dev/null)" || continue
+		case "$camera_device_path" in /sys/devices/*) ;; *) continue ;; esac
+		case "$camera_parent" in /sys/devices/*) ;; *) continue ;; esac
+		camera_driver="$(basename "$(readlink -f "$camera_device_path/driver" 2>/dev/null || true)")"
+		[ "$camera_driver" = 'uvcvideo' ] || continue
+		[ "$(cat "$camera_device_path/bInterfaceClass" 2>/dev/null || true)" = '0e' ] || continue
+		camera_vendor="$(cat "$camera_parent/idVendor" 2>/dev/null || true)"
+		camera_product="$(cat "$camera_parent/idProduct" 2>/dev/null || true)"
+		case "$camera_vendor:$camera_product" in
+			[0-9a-f][0-9a-f][0-9a-f][0-9a-f]:[0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+			*) continue ;;
+		esac
+		camera_node_count=$((camera_node_count + 1))
+		if [ -z "$camera_usb_parent" ]; then
+			camera_usb_parent="$camera_parent"
+			camera_usb_id="$camera_vendor:$camera_product"
+			camera_device_count=1
+		elif [ "$camera_usb_parent" != "$camera_parent" ]; then
+			camera_device_count=2
+		fi
+		if [ "$(cat "$camera_class/index" 2>/dev/null || true)" = '0' ]; then
+			camera_primary_count=$((camera_primary_count + 1))
+			camera_device="$camera_node"
+			camera_name="$(cat "$camera_class/name" 2>/dev/null || true)"
+		fi
+	done
+	[ "$camera_device_count" -eq 1 ] || task_fail 'Exactly one reviewed USB UVC camera is required.'
+	[ "$camera_node_count" -ge 1 ] || task_fail 'The reviewed UVC camera exposes no video nodes.'
+	[ "$camera_primary_count" -eq 1 ] || task_fail 'Exactly one primary UVC video node (sysfs index 0) is required.'
+	camera_number="${camera_device#/dev/video}"
+	case "$camera_number" in ''|*[!0-9]*) task_fail 'The server-derived camera node failed its strict path check.' ;; esac
+	[ "$camera_device" = "/dev/video$camera_number" ] || task_fail 'The server-derived camera node failed its strict path check.'
+
+	for camera_fd in /proc/[0-9]*/fd/*; do
+		[ -L "$camera_fd" ] || continue
+		if [ "$(readlink "$camera_fd" 2>/dev/null || true)" = "$camera_device" ]; then
+			task_fail 'The reviewed camera node is already open by another process; the console did not interfere.'
+		fi
+	done
+
+	camera_info="$job_dir/camera.info"
+	camera_error="$job_dir/camera.stderr"
+	snapshot_path="$job_dir/snapshot.jpg"
+	snapshot_next="$job_dir/snapshot.jpg.next"
+	rm -f "$camera_info" "$camera_error" "$snapshot_path" "$snapshot_next"
+	if ! timeout 5 /usr/bin/v4l2-ctl --device "$camera_device" --info > "$camera_info" 2> "$camera_error"; then
+		head -c 4096 "$camera_error" >> "$job_dir/stderr"
+		rm -f "$camera_info" "$camera_error"
+		task_fail 'The server-selected UVC node did not pass the bounded V4L2 capability query.'
+	fi
+	if ! grep -Fq 'Video Capture' "$camera_info"; then
+		rm -f "$camera_info" "$camera_error"
+		task_fail 'The server-selected primary UVC node is not a V4L2 video-capture device.'
+	fi
+	if ! grep -Fq 'uvcvideo' "$camera_info"; then
+		rm -f "$camera_info" "$camera_error"
+		task_fail 'The V4L2 capability response did not confirm the uvcvideo driver.'
+	fi
+
+	{
+		printf '%s\n' 'DIGITAL DROPKICK - BOUNDED CAMERA STILL SNAPSHOT'
+		printf 'Hardware: %s via %s (%s)\n' "$camera_name" "$camera_device" "$camera_usb_id"
+		printf '%s\n' 'Profile: one 640x480 JPEG, quality 85, five warm-up frames, no banner'
+		printf '%s\n' 'Privacy: the frame can contain people, customer property, documents, or location details'
+		printf '%s\n' 'Safety: local still only; no stream, listener, daemon, upload, audio, or persistent copy'
+		printf '%s\n' 'Limits: one camera job, 20-second wall limit, 256 KiB artifact ceiling, four-hour job retention'
+		printf 'Started (UTC): '
+		date -u
+	} > "$job_dir/stdout"
+
+	(
+		# POSIX file-size units are 512-byte blocks: 512 blocks bound the JPEG at 256 KiB.
+		ulimit -f 512
+		exec /usr/bin/fswebcam --quiet --device "$camera_device" --resolution 640x480 \
+			--fps 10 --skip 5 --frames 1 --no-banner --jpeg 85 "$snapshot_next"
+	) >/dev/null 2> "$camera_error" &
+	child_pid=$!
+	deadline_epoch=$(( $(date +%s) + 20 ))
+	camera_timed_out=0
+	while kill -0 "$child_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$deadline_epoch" ]; then
+			camera_timed_out=1
+			kill -TERM "$child_pid" 2>/dev/null || true
+			sleep 1
+			if kill -0 "$child_pid" 2>/dev/null; then
+				kill -KILL "$child_pid" 2>/dev/null || true
+			fi
+			break
+		fi
+		sleep 1
+	done
+	camera_result=0
+	wait "$child_pid" 2>/dev/null || camera_result=$?
+	child_pid=""
+	if [ "$camera_timed_out" -eq 1 ]; then
+		printf '%s\n' 'Camera capture exceeded the independent 20-second wall limit.' >> "$job_dir/stderr"
+		result=124
+	elif [ "$camera_result" -ne 0 ]; then
+		result="$camera_result"
+	fi
+	if [ "$result" -ne 0 ]; then
+		head -c 4096 "$camera_error" >> "$job_dir/stderr"
+		rm -f "$snapshot_next" "$snapshot_path"
+	else
+		snapshot_size="$(wc -c < "$snapshot_next" 2>/dev/null || printf 0)"
+		case "$snapshot_size" in ''|*[!0-9]*) snapshot_size=0 ;; esac
+		snapshot_magic="$(head -c 3 "$snapshot_next" 2>/dev/null | hexdump -v -e '3/1 "%02x"' || true)"
+		snapshot_type="$(file -b "$snapshot_next" 2>/dev/null || true)"
+		if [ "$snapshot_size" -le 1024 ] || [ "$snapshot_size" -gt 262144 ] || \
+		   [ "$snapshot_magic" != 'ffd8ff' ] || ! printf '%s' "$snapshot_type" | grep -Fq 'JPEG image data'; then
+			printf '%s\n' 'Camera output failed the fixed JPEG magic, type, or size validation.' >> "$job_dir/stderr"
+			rm -f "$snapshot_next" "$snapshot_path"
+			result=65
+		else
+			mv "$snapshot_next" "$snapshot_path"
+			chmod 600 "$snapshot_path"
+			{
+				printf '\nSnapshot bytes: %s\n' "$snapshot_size"
+				printf '%s\n' 'Artifact: authenticated view/download is available from Jobs & Reports.'
+				printf 'Completed (UTC): '
+				date -u
+			} >> "$job_dir/stdout"
+		fi
+	fi
+	rm -f "$camera_info" "$camera_error" "$snapshot_next"
+	head -c 32768 "$job_dir/stdout" > "$job_dir/stdout.next"
 	mv "$job_dir/stdout.next" "$job_dir/stdout"
 else
 	command -v uqmi >/dev/null 2>&1 || task_fail 'UQMI is not installed; the console did not attempt installation.'

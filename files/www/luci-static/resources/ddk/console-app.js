@@ -9,6 +9,7 @@
 		page: app.dataset.page || 'overview',
 		session: app.dataset.session || '',
 		cgi: app.dataset.cgi || '/cgi-bin/cgi-exec',
+		download: app.dataset.download || '/cgi-bin/cgi-download',
 		base: app.dataset.base || '/cgi-bin/luci/admin/ddk'
 	};
 	app.removeAttribute('data-session');
@@ -153,7 +154,7 @@
 				h('span', { class: 'ddk-eyebrow' }, 'LOCAL REPAIR · SERIOUS SYSTEMS'),
 				h('h2', {}, section || 'FIELD CONSOLE'),
 				h('p', {}, description || 'GL-X750 field appliance control surface')),
-			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v1.6.0')));
+			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v1.7.0')));
 	}
 
 	function sectionHeading(title, detail) {
@@ -168,13 +169,13 @@
 		);
 	}
 
-	function showModal(title, content, actions) {
+	function showModal(title, content, actions, onClose) {
 		var overlay = h('div', { class: 'ddk-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
 			h('div', { class: 'ddk-modal-panel' },
 				h('div', { class: 'ddk-modal-head' }, h('h3', {}, title), button('Close', 'ddk-button-secondary', close)),
 				content,
 				actions || null));
-		function close() { overlay.remove(); }
+		function close() { overlay.remove(); if (onClose) onClose(); }
 		overlay.addEventListener('click', function(event) { if (event.target === overlay) close(); });
 		document.body.appendChild(overlay);
 	}
@@ -244,6 +245,23 @@
 		return exec([ 'job', 'start', 'radio.rtl433_snapshot' ]);
 	}
 
+	function confirmCameraSnapshot() {
+		return window.confirm(
+			'Capture one still frame from the attached UVC camera?\n\n' +
+			'Privacy: the frame can contain people, customer property, documents, or location details; confirm authorization and consent first\n' +
+			'Hardware: exactly one sysfs-attributed USB UVC camera and one primary capture node, selected by the router\n' +
+			'Profile: one 640x480 JPEG, no banner or audio\n' +
+			'Safety: no stream, listener, daemon, upload, Motion, RTSP, or persistent copy\n' +
+			'Limits: 20 seconds, one camera job, 256 KiB artifact, transient four-hour job retention'
+		);
+	}
+
+	async function startCameraSnapshot() {
+		if (!confirmCameraSnapshot())
+			return null;
+		return exec([ 'job', 'start', 'camera.still_snapshot' ]);
+	}
+
 	async function startToolJob(actionId) {
 		if (actionId !== 'cellular.snapshot')
 			throw new Error('The requested tool job did not match the DDK client allowlist.');
@@ -286,7 +304,7 @@
 				card('Memory & Storage', 'RESOURCES', [ row('Physical memory', formatBytes(system.memory.total)), row('Available memory', formatBytes(system.memory.available)), meter('Memory pressure', memoryUsed, system.memory.total, formatBytes(memoryUsed) + ' used'), row('Swap total / used', formatBytes(system.swap.total) + ' / ' + formatBytes(system.swap.used)), row('Root free', formatBytes(system.storage.available)), meter('Root storage', system.storage.used, system.storage.total, system.storage.percent + '% used') ]),
 				card('Network', 'CONNECTIVITY', [ row('LAN IP', network.lan_ip), row('WAN state', network.wan_up ? 'UP' : 'DOWN'), row('WAN interface', network.wan_interface), row('WAN IP', network.wan_ip), row('Default route', network.default_route), row('DNS', network.dns.join(', ')), row('Attached interfaces', network.interfaces.length) ]),
 				card('Remote Access', 'TAILSCALE', [ row('Installed', remote.tailscale_installed ? 'YES' : 'NO'), row('Process', remote.tailscale_running ? 'RUNNING' : 'NOT RUNNING'), row('Tailscale IP', remote.tailscale_ip), row('Version', remote.tailscale_version), h('div', { class: 'ddk-alert ddk-alert-info' }, 'Observation only — no Tailscale setting is read or modified.') ], 'ddk-card-wide'),
-				card('Hardware Presence', 'LIVE PROBES', [ row('USB devices', hardware.usb_devices.length), row('Serial attribution', serialText), row('Serial nodes', hardware.serial_devices.length ? hardware.serial_devices.join(', ') : 'NONE'), row('Video devices', hardware.video_devices.length ? hardware.video_devices.join(', ') : 'NONE'), row('RTL-SDR', hardware.rtl_sdr ? hardware.rtl_sdr.reason : hardware.classes.rtl_sdr ? 'READY' : 'NOT DETECTED'), row('CAN interfaces', hardware.can_interfaces.length ? hardware.can_interfaces.join(', ') : 'NONE'), row('Bluetooth controller', hardware.classes.bluetooth ? 'DETECTED' : 'NOT DETECTED'), row('I2C / SPI', hardware.i2c_devices.length + ' / ' + hardware.spi_devices.length) ], 'ddk-card-wide')),
+				card('Hardware Presence', 'LIVE PROBES', [ row('USB devices', hardware.usb_devices.length), row('Serial attribution', serialText), row('Serial nodes', hardware.serial_devices.length ? hardware.serial_devices.join(', ') : 'NONE'), row('Video nodes', hardware.video_devices.length ? hardware.video_devices.join(', ') : 'NONE'), row('UVC camera', hardware.camera ? hardware.camera.reason : 'NOT DETECTED'), row('RTL-SDR', hardware.rtl_sdr ? hardware.rtl_sdr.reason : hardware.classes.rtl_sdr ? 'READY' : 'NOT DETECTED'), row('CAN interfaces', hardware.can_interfaces.length ? hardware.can_interfaces.join(', ') : 'NONE'), row('Bluetooth controller', hardware.classes.bluetooth ? 'DETECTED' : 'NOT DETECTED'), row('I2C / SPI', hardware.i2c_devices.length + ' / ' + hardware.spi_devices.length) ], 'ddk-card-wide')),
 			sectionHeading('Capability Matrix', modules.length + ' modular tool groups'),
 			h('div', { class: 'ddk-cap-grid' }, capabilitySummary(modules)),
 			sectionHeading('Safe Phase-One Actions', 'Fixed INFO allowlist only'),
@@ -305,6 +323,8 @@
 			var captureEnabled = module.console_enabled && action.enabled && action.class === 'SECURITY' && action.execution === 'job' && action.id === 'capture.lan_metadata_snapshot';
 			var rtl433Action = module.console_enabled && action.enabled && action.class === 'ACTION' && action.execution === 'job' && action.id === 'radio.rtl433_snapshot';
 			var rtl433Enabled = rtl433Action && module.hardware.present;
+			var cameraAction = module.console_enabled && action.enabled && action.class === 'ACTION' && action.execution === 'job' && action.id === 'camera.still_snapshot';
+			var cameraEnabled = cameraAction && module.hardware.present;
 			var handler = infoEnabled ? function() { runInfo(action.id, output); } : jobEnabled ? async function() {
 				try {
 					var job = await startToolJob(action.id);
@@ -329,8 +349,14 @@
 					if (job) showModal('RTL-433 Snapshot Started', h('div', {}, h('p', {}, 'The bounded receive-only job is running as ' + job.id + '.'), h('p', {}, h('a', { class: 'ddk-button', href: config.base + '/jobs' }, 'Open Jobs & Reports'))));
 				}
 				catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); }
+			} : cameraEnabled ? async function() {
+				try {
+					var job = await startCameraSnapshot();
+					if (job) showModal('Camera Snapshot Started', h('div', {}, h('p', {}, 'The bounded still-capture job is running as ' + job.id + '.'), h('p', {}, h('a', { class: 'ddk-button', href: config.base + '/jobs' }, 'Open Jobs & Reports'))));
+				}
+				catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); }
 			} : null;
-			return button(action.id, discoveryEnabled || captureEnabled ? 'ddk-button-security' : rtl433Action ? 'ddk-button-action' : 'ddk-button-secondary', handler, !infoEnabled && !jobEnabled && !discoveryEnabled && !captureEnabled && !rtl433Enabled);
+			return button(action.id, discoveryEnabled || captureEnabled ? 'ddk-button-security' : rtl433Action || cameraAction ? 'ddk-button-action' : 'ddk-button-secondary', handler, !infoEnabled && !jobEnabled && !discoveryEnabled && !captureEnabled && !rtl433Enabled && !cameraEnabled);
 		});
 		return h('article', { class: 'ddk-tool' },
 			h('div', { class: 'ddk-tool-head' }, h('div', {}, h('span', { class: 'ddk-card-kicker' }, module.category), h('h3', {}, module.name)), statePill(module.state)),
@@ -360,7 +386,7 @@
 			count.textContent = visible + ' of ' + cards.length + ' modules';
 		}
 		search.addEventListener('input', filter); category.addEventListener('change', filter); state.addEventListener('change', filter);
-		app.replaceChildren(brand('TOOL REGISTRY', 'Software inventory separated from live hardware presence'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'A manifest can describe a future action, but only the backend allowlist can execute one. Cellular is fixed and read-only; Nmap and LAN capture require confirmation; RTL-433 also requires reviewed live hardware before its control is enabled.'), h('div', { class: 'ddk-toolbar' }, search, category, state), h('div', { class: 'ddk-table-meta' }, count, h('span', {}, 'Hardware probes are read-only')), grid, output);
+		app.replaceChildren(brand('TOOL REGISTRY', 'Software inventory separated from live hardware presence'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'A manifest can describe a future action, but only the backend allowlist can execute one. Cellular is fixed and read-only; Nmap and LAN capture require confirmation; RTL-433 and camera still capture also require reviewed live hardware before their controls are enabled.'), h('div', { class: 'ddk-toolbar' }, search, category, state), h('div', { class: 'ddk-table-meta' }, count, h('span', {}, 'Hardware probes are read-only')), grid, output);
 	}
 
 	async function renderPackages() {
@@ -394,11 +420,64 @@
 		var rtlModule = modules.find(function(module) { return module.id === 'sdr-radio'; });
 		var rtlReady = !!(rtlModule && rtlModule.console_enabled && rtlModule.hardware.present);
 		var rtlReason = rtlModule && rtlModule.state ? rtlModule.state : 'UNAVAILABLE';
+		var cameraModule = modules.find(function(module) { return module.id === 'camera'; });
+		var cameraReady = !!(cameraModule && cameraModule.console_enabled && cameraModule.hardware.present);
+		var cameraReason = cameraModule && cameraModule.state ? cameraModule.state : 'UNAVAILABLE';
+		function saveBlob(blob, filename) {
+			var url = URL.createObjectURL(blob);
+			var link = h('a', { href: url, download: filename });
+			document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+		}
+		async function loadSnapshot(job) {
+			if (!job || !/^job-\d+-\d+$/.test(job.id) || !job.artifact || job.artifact.kind !== 'camera_snapshot')
+				throw new Error('The requested camera artifact did not match the DDK client allowlist.');
+			var expectedSize = Number(job.artifact.size || 0);
+			if (!Number.isInteger(expectedSize) || expectedSize <= 1024 || expectedSize > 262144)
+				throw new Error('The camera artifact metadata failed its size boundary.');
+			var filename = 'ddk-camera-' + job.id + '.jpg';
+			var path = '/tmp/ddk/jobs/' + job.id + '/snapshot.jpg';
+			var body = new URLSearchParams({ sessionid: config.session, path: path, filename: filename });
+			var response = await fetch(config.download, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+				body: body.toString()
+			});
+			if (!response.ok)
+				throw new Error(response.status === 403 ? 'LuCI session or camera-artifact ACL rejected the request.' : 'Camera artifact request failed with HTTP ' + response.status + '.');
+			var blob = await response.blob();
+			if (blob.size !== expectedSize || blob.size > 262144)
+				throw new Error('The downloaded camera artifact did not match its authenticated metadata.');
+			return { blob: new Blob([ blob ], { type: 'image/jpeg' }), filename: filename };
+		}
+		async function viewSnapshot(job, shouldDownload) {
+			try {
+				var snapshot = await loadSnapshot(job);
+				if (shouldDownload) {
+					saveBlob(snapshot.blob, snapshot.filename);
+					return;
+				}
+				var url = URL.createObjectURL(snapshot.blob);
+				showModal('Camera Still — ' + job.id,
+					h('div', { class: 'ddk-snapshot' },
+						h('img', { src: url, alt: 'Transient camera still captured by the field console' }),
+						h('p', {}, 'Transient /tmp artifact · ' + formatBytes(snapshot.blob.size) + ' · review for private information before sharing.')),
+					h('div', { class: 'ddk-action-row ddk-actions-end' }, button('Download JPEG', '', function() { saveBlob(snapshot.blob, snapshot.filename); })),
+					function() { URL.revokeObjectURL(url); });
+			}
+			catch (error) { showModal('Camera Artifact Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); }
+		}
 		function renderJobList(jobs) {
 			if (!jobs.length) { jobsNode.replaceChildren(h('div', { class: 'ddk-empty' }, 'No DDK jobs have run since the last reboot or cleanup.')); return; }
 			jobsNode.replaceChildren(h('div', { class: 'ddk-job-list' }, jobs.map(function(job) {
 				var active = [ 'queued', 'running', 'stopping' ].indexOf(job.status) >= 0, output = job.stdout || job.stderr;
-				return h('article', { class: 'ddk-job' }, h('div', { class: 'ddk-job-head' }, h('h4', {}, job.metadata.label || job.metadata.action_id || job.id), statePill(job.status)), h('p', { class: 'ddk-job-meta' }, job.id + ' · PID ' + (job.pid || 'pending') + ' · ' + (job.metadata.class || 'INFO')), output ? h('pre', { class: 'ddk-job-output' }, output) : null, active ? h('div', { class: 'ddk-action-row' }, button('Stop DDK Job', 'ddk-button-secondary', function() { stopJob(job.id); })) : null);
+				var actions = [];
+				if (active) actions.push(button('Stop DDK Job', 'ddk-button-secondary', function() { stopJob(job.id); }));
+				if (job.artifact && job.artifact.kind === 'camera_snapshot') {
+					actions.push(button('View Snapshot', 'ddk-button-secondary', function() { viewSnapshot(job, false); }));
+					actions.push(button('Download JPEG', 'ddk-button-secondary', function() { viewSnapshot(job, true); }));
+				}
+				return h('article', { class: 'ddk-job' }, h('div', { class: 'ddk-job-head' }, h('h4', {}, job.metadata.label || job.metadata.action_id || job.id), statePill(job.status)), h('p', { class: 'ddk-job-meta' }, job.id + ' · PID ' + (job.pid || 'pending') + ' · ' + (job.metadata.class || 'INFO')), output ? h('pre', { class: 'ddk-job-output' }, output) : null, actions.length ? h('div', { class: 'ddk-action-row' }, actions) : null);
 			})));
 		}
 		function download(report) {
@@ -415,9 +494,9 @@
 		}
 		async function refresh() { var jobs = await exec([ 'job', 'list' ]); var reports = await exec([ 'report', 'list' ]); renderJobList(jobs); renderReportList(reports); return jobs; }
 		function poll(id) { if (pollers[id]) return; pollers[id] = setTimeout(async function tick() { try { var job = await exec([ 'job', 'status', id ]); await refresh(); if ([ 'queued', 'running', 'stopping' ].indexOf(job.status) >= 0) pollers[id] = setTimeout(tick, 1200); else delete pollers[id]; } catch (_) { delete pollers[id]; } }, 1200); }
-		async function start(action) { try { var job = action === 'network.nmap_lan_discovery' ? await startLanDiscovery() : action === 'capture.lan_metadata_snapshot' ? await startLanMetadataCapture() : action === 'radio.rtl433_snapshot' ? await startRtl433Snapshot() : await exec([ 'job', 'start', action ]); if (!job) return; await refresh(); poll(job.id); } catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); } }
+		async function start(action) { try { var job = action === 'network.nmap_lan_discovery' ? await startLanDiscovery() : action === 'capture.lan_metadata_snapshot' ? await startLanMetadataCapture() : action === 'radio.rtl433_snapshot' ? await startRtl433Snapshot() : action === 'camera.still_snapshot' ? await startCameraSnapshot() : await exec([ 'job', 'start', action ]); if (!job) return; await refresh(); poll(job.id); } catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); } }
 		async function stopJob(id) { try { await exec([ 'job', 'stop', id ]); await refresh(); poll(id); } catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); } }
-		app.replaceChildren(brand('JOBS & REPORTS', 'Bounded asynchronous work without blocking LuCI'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'Only two DDK jobs may run at once. Outputs are bounded, stored in /tmp, and removed by age/retention cleanup.'), h('div', { class: 'ddk-alert' + (rtlReady ? ' ddk-alert-info' : '') }, 'RTL-433 receiver state: ' + rtlReason + '. The action remains disabled until one reviewed tuner is ready.'), sectionHeading('Start Bounded Job', 'Fixed server-side allowlist'), h('div', { class: 'ddk-action-row' }, button('Run Async Proof', '', function() { start('diagnostic.demo'); }), button('Generate DDK System Report', '', function() { start('report.system'); }), button('Cellular Snapshot', 'ddk-button-secondary', function() { start('cellular.snapshot'); }), button('Discover LAN Hosts', 'ddk-button-security', function() { start('network.nmap_lan_discovery'); }), button('Capture LAN Metadata', 'ddk-button-security', function() { start('capture.lan_metadata_snapshot'); }), button('RTL-433 Sensor Snapshot', 'ddk-button-action', function() { start('radio.rtl433_snapshot'); }, !rtlReady), button('Refresh', 'ddk-button-secondary', refresh)), sectionHeading('Jobs', 'Only DDK-owned worker PIDs can be stopped'), jobsNode, sectionHeading('Reports', 'Authenticated view/download · 24-hour retention'), reportsNode);
+		app.replaceChildren(brand('JOBS & REPORTS', 'Bounded asynchronous work without blocking LuCI'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'Only two DDK jobs may run at once. Outputs and camera artifacts are bounded, stored in /tmp, and removed by age/retention cleanup.'), h('div', { class: 'ddk-alert' + (rtlReady ? ' ddk-alert-info' : '') }, 'RTL-433 receiver state: ' + rtlReason + '. The action remains disabled until one reviewed tuner is ready.'), h('div', { class: 'ddk-alert' + (cameraReady ? ' ddk-alert-info' : '') }, 'Camera state: ' + cameraReason + '. Still capture remains disabled until one reviewed UVC camera is ready; streaming stays disabled.'), sectionHeading('Start Bounded Job', 'Fixed server-side allowlist'), h('div', { class: 'ddk-action-row' }, button('Run Async Proof', '', function() { start('diagnostic.demo'); }), button('Generate DDK System Report', '', function() { start('report.system'); }), button('Cellular Snapshot', 'ddk-button-secondary', function() { start('cellular.snapshot'); }), button('Discover LAN Hosts', 'ddk-button-security', function() { start('network.nmap_lan_discovery'); }), button('Capture LAN Metadata', 'ddk-button-security', function() { start('capture.lan_metadata_snapshot'); }), button('RTL-433 Sensor Snapshot', 'ddk-button-action', function() { start('radio.rtl433_snapshot'); }, !rtlReady), button('Camera Still Snapshot', 'ddk-button-action', function() { start('camera.still_snapshot'); }, !cameraReady), button('Refresh', 'ddk-button-secondary', refresh)), sectionHeading('Jobs', 'Only DDK-owned worker PIDs can be stopped · camera JPEGs require authenticated artifact access'), jobsNode, sectionHeading('Reports', 'Authenticated view/download · 24-hour retention'), reportsNode);
 		var jobs = await refresh(); jobs.forEach(function(job) { if ([ 'queued', 'running', 'stopping' ].indexOf(job.status) >= 0) poll(job.id); });
 	}
 
@@ -426,13 +505,14 @@
 			[ 'Authentication', 'Inherited from the existing LuCI sysauth session. No public DDK endpoint.' ],
 			[ 'Network exposure', 'No listener, nginx/uhttpd rule, firewall rule, or WAN binding is created.' ],
 			[ 'Action policy', 'Exact server-side action IDs only. Browser command strings and executable paths are rejected.' ],
-			[ 'Arguments', 'Only known action IDs and generated DDK job/report IDs are accepted. Nmap, packet, cellular, and RTL-433 device/profile parameters are server-derived or fixed.' ],
+			[ 'Arguments', 'Only known action IDs and generated DDK job/report IDs are accepted. Nmap, packet, cellular, RTL-433, and camera device/profile parameters are server-derived or fixed.' ],
 			[ 'Jobs', 'Maximum 2 active, 20 retained, 4-hour job cleanup, bounded stdout/stderr.' ],
+			[ 'Camera artifacts', 'One 256 KiB JPEG maximum, mode 0600 under its DDK job, authenticated native LuCI download only.' ],
 			[ 'Reports', 'Stored in /tmp, 128 KiB maximum view, 24-hour cleanup, no secret configuration dumps.' ],
 			[ 'Idle footprint', 'No DDK daemon, database, timer, analytics, or background poller runs on the router.' ],
 			[ 'Configuration', 'This page is deliberately read-only in phase one.' ]
 		];
-		app.replaceChildren(brand('SETTINGS', 'Production safety posture and operating limits'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'There are no mutable web settings in version 1.6. The approved swap boot entry is managed only by guarded command-line tooling.'), h('div', { class: 'ddk-posture' }, posture.map(function(item) { return h('div', { class: 'ddk-posture-item' }, h('strong', {}, item[0]), h('span', {}, item[1])); })), sectionHeading('Explicitly Disabled', 'Requires future deliberate wiring'), card('Operating Boundaries', 'LOCKED', [ row('DISRUPTIVE actions', 'DISABLED'), row('SECURITY actions', 'BOUNDED LAN DISCOVERY + METADATA CAPTURE'), row('ACTION workflows', 'HARDWARE-GATED RTL-433 SNAPSHOT'), row('Cellular mutations / identifiers', 'NOT IMPLEMENTED'), row('Arbitrary targets / filters / flags', 'REJECTED'), row('Raw I/Q / PCAP / packet replay', 'NOT IMPLEMENTED'), row('Network radio output / rtl_tcp start', 'NOT IMPLEMENTED'), row('Generic PID stop', 'NOT IMPLEMENTED'), row('Persistent logs', 'NOT IMPLEMENTED'), row('WAN service exposure', 'NOT IMPLEMENTED') ], 'ddk-card-full'));
+		app.replaceChildren(brand('SETTINGS', 'Production safety posture and operating limits'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'There are no mutable web settings in version 1.7. The approved swap boot entry is managed only by guarded command-line tooling.'), h('div', { class: 'ddk-posture' }, posture.map(function(item) { return h('div', { class: 'ddk-posture-item' }, h('strong', {}, item[0]), h('span', {}, item[1])); })), sectionHeading('Explicitly Disabled', 'Requires future deliberate wiring'), card('Operating Boundaries', 'LOCKED', [ row('DISRUPTIVE actions', 'DISABLED'), row('SECURITY actions', 'BOUNDED LAN DISCOVERY + METADATA CAPTURE'), row('ACTION workflows', 'HARDWARE-GATED RTL-433 + CAMERA STILLS'), row('Camera streaming / Motion / RTSP', 'NOT IMPLEMENTED'), row('Cellular mutations / identifiers', 'NOT IMPLEMENTED'), row('Arbitrary targets / filters / flags', 'REJECTED'), row('Raw I/Q / PCAP / packet replay', 'NOT IMPLEMENTED'), row('Network radio output / rtl_tcp start', 'NOT IMPLEMENTED'), row('Generic PID stop', 'NOT IMPLEMENTED'), row('Persistent logs', 'NOT IMPLEMENTED'), row('WAN service exposure', 'NOT IMPLEMENTED') ], 'ddk-card-full'));
 	}
 
 	var renderers = { overview: renderOverview, tools: renderTools, packages: renderPackages, jobs: renderJobs, settings: renderSettings };

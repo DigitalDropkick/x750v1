@@ -366,6 +366,9 @@ body.ddk-page {
 }
 .ddk-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .ddk-modal-head h3 { margin: 0; font-size: .9rem; letter-spacing: .05em; }
+.ddk-snapshot { display: grid; gap: 9px; }
+.ddk-snapshot img { display: block; width: auto; max-width: 100%; max-height: 65vh; margin: 0 auto; background: #050505; border: 1px solid var(--ddk-line); object-fit: contain; }
+.ddk-snapshot p { margin: 0; color: var(--ddk-muted); font-size: .7rem; text-align: center; }
 
 .ddk-posture { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .ddk-posture-item { padding: 12px; background: var(--ddk-panel); border: 1px solid var(--ddk-line); }

@@ -2,14 +2,15 @@
 	"ddk-field-console": {
 		"description": "Authenticated access to the allowlisted Digital Dropkick Field Console helper",
 		"read": {
-			"cgi-io": [ "exec" ],
+			"cgi-io": [ "exec", "download" ],
 			"file": {
 				"/usr/libexec/ddk-console status": [ "exec" ],
 				"/usr/libexec/ddk-console capabilities": [ "exec" ],
 				"/usr/libexec/ddk-console packages": [ "exec" ],
 				"/usr/libexec/ddk-console info *": [ "exec" ],
 				"/usr/libexec/ddk-console job *": [ "exec" ],
-				"/usr/libexec/ddk-console report *": [ "exec" ]
+				"/usr/libexec/ddk-console report *": [ "exec" ],
+				"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/snapshot.jpg": [ "read" ]
 			}
 		}
 	}

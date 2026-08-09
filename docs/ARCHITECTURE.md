@@ -11,7 +11,7 @@ The target's installed LuCI 23.119 applications establish the native pattern:
 1. `/usr/share/luci/menu.d/ddk-field-console.json` creates `Digital Dropkick` below the authenticated `admin` tree.
 2. The menu renders `/usr/lib/lua/luci/view/ddk/shell.htm`, a standalone authenticated template that avoids this firmware's broken nginx `/ubus/` route.
 3. Shared dependency-free JavaScript and namespaced CSS live in `/www/luci-static/resources/ddk/`.
-4. `/usr/share/rpcd/acl.d/ddk-field-console.json` permits execution only of the fixed DDK helper through the already-installed authenticated LuCI `cgi-io` path.
+4. `/usr/share/rpcd/acl.d/ddk-field-console.json` permits execution only of the fixed DDK helper and read access only to validated camera artifacts through the already-installed authenticated LuCI `cgi-io` paths.
 
 Static LuCI assets contain no secrets. All live information and executable behavior remain behind the existing LuCI session boundary. `/www/ddk/gl_home.html` is a content-free static redirect to the authenticated overview, providing the memorable `/ddk` path without a CGI handler, port, nginx rule, uhttpd rule, or firewall rule.
 
@@ -40,7 +40,7 @@ The helper uses fixed command strings from server-side tables. Browser values ca
 - **Overview:** system, network, Tailscale, hardware, safe INFO actions, and capability summary.
 - **Tool Registry:** hardware-aware modules and disabled future actions.
 - **Package Inventory:** all installed packages with search, type filters, and bounded rendering controls.
-- **Jobs & Reports:** asynchronous proof, system report, bounded Nmap discovery, cellular snapshot, polling, stop, view, and browser-side download.
+- **Jobs & Reports:** asynchronous proof, system report, bounded Nmap discovery, cellular/radio/camera snapshots, polling, DDK-owned stop, report view/download, and authenticated camera-artifact view/download.
 - **Settings:** read-only security posture and operating limits. It intentionally changes no configuration.
 
 ## Tool registry
@@ -90,7 +90,11 @@ Limits:
 - transient output only under `/tmp/ddk/`;
 - only `TERM` may be sent, and only after PID, job directory, and worker command line all match.
 
-The system includes an asynchronous read-only demo, a sanitized system-report task, bounded Nmap discovery, a non-promiscuous LAN metadata snapshot, a hardware-gated RTL-433 sensor snapshot, and a cellular snapshot. The Nmap task accepts no browser target or flags, permits one active scan, and tracks its child process for safe cancellation. The packet task accepts no browser arguments, requires server-derived `br-lan`, uses one fixed BPF profile, permits one active capture, compares interface flags before/after, emits only decoded text, and tracks its child for cancellation. The RTL-433 task requires exactly one reviewed VID:PID and safe sysfs serial, selects that serial directly, refuses a claimed driver or existing receiver, holds the shared `rtl_sdr` resource, and uses fixed receive/time/file/output controls. The cellular task is fixed to the verified EC25-AF management node and four read-only UQMI actions; it parses only approved identity, registration, and signal fields into output.
+The system includes an asynchronous read-only demo, a sanitized system-report task, bounded Nmap discovery, a non-promiscuous LAN metadata snapshot, hardware-gated RTL-433 and UVC-camera snapshots, and a cellular snapshot. The Nmap task accepts no browser target or flags, permits one active scan, and tracks its child process for safe cancellation. The packet task accepts no browser arguments, requires server-derived `br-lan`, uses one fixed BPF profile, permits one active capture, compares interface flags before/after, emits only decoded text, and tracks its child for cancellation. The RTL-433 task requires exactly one reviewed VID:PID and safe sysfs serial, selects that serial directly, refuses a claimed driver or existing receiver, holds the shared `rtl_sdr` resource, and uses fixed receive/time/file/output controls. The camera task requires exactly one sysfs-attributed USB UVC camera and primary node, refuses an open device or enabled/running camera service, confirms V4L2 capture capability, holds the shared `camera` resource, and creates one bounded validated JPEG. The cellular task is fixed to the verified EC25-AF management node and four read-only UQMI actions; it parses only approved identity, registration, and signal fields into output.
+
+## Camera artifact handling
+
+A completed camera job may contain one mode-0600 `snapshot.jpg` below its mode-0700 job directory. The backend advertises the artifact only when the action ID, completed state, regular-file type, JPEG magic, and 256 KiB limit all match. The browser validates the generated job ID, derives the fixed path, and requests it from the existing authenticated `/cgi-bin/cgi-download` endpoint. The rpcd ACL matches only `/tmp/ddk/jobs/job-[0-9]*-[0-9]*/snapshot.jpg`; no generic `/tmp` or arbitrary file read is granted. The file never enters `/www`, JSON, a report, or a network listener. See [CAMERA-SNAPSHOT.md](CAMERA-SNAPSHOT.md).
 
 ## Report handling
 
