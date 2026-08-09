@@ -40,7 +40,7 @@ The current release accepts:
 - job IDs matching `job-<digits>-<digits>`;
 - report IDs matching `report-<digits>-<digits>`.
 
-There are no browser-provided network targets, interfaces, filenames, device nodes, PIDs, package names, or flags. For `network.nmap_lan_discovery`, the worker independently requires the native LAN device to equal `br-lan`, reads its IPv4 CIDR from the kernel, validates RFC1918 scope and a `/24`-or-smaller prefix, and then invokes one fixed host-discovery profile. For `cellular.snapshot`, the worker requires the exact EC25-AF VID:PID, `qmi_wwan`, `/dev/cdc-wdm0`, and its attributed `wwan0`; browser input cannot select a modem or QMI action.
+There are no browser-provided network targets, interfaces, filters, filenames, device nodes, PIDs, package names, durations, or flags. For `network.nmap_lan_discovery`, the worker independently requires the native LAN device to equal `br-lan`, reads its IPv4 CIDR from the kernel, validates RFC1918 scope and a `/24`-or-smaller prefix, and then invokes one fixed host-discovery profile. For `capture.lan_metadata_snapshot`, the worker independently requires an up native LAN on exactly `br-lan` and invokes one fixed non-promiscuous ARP/ICMP/DHCP metadata profile. For `cellular.snapshot`, the worker requires the exact EC25-AF VID:PID, `qmi_wwan`, `/dev/cdc-wdm0`, and its attributed `wwan0`; browser input cannot select a modem or QMI action.
 
 ## Job controls
 
@@ -48,6 +48,7 @@ There are no browser-provided network targets, interfaces, filenames, device nod
 - Detached workers receive stdin from `/dev/null`; browser or caller input cannot reach an interactive child.
 - At most two jobs may be active.
 - At most one Nmap LAN discovery job may be active.
+- At most one LAN metadata capture may be active.
 - At most one cellular snapshot may be active.
 - A stop request supplies a generated job ID, not a PID.
 - Before `TERM`, the helper reads its own PID file and confirms `/proc/<pid>/cmdline` contains both the DDK worker path and exact job ID.
@@ -55,7 +56,14 @@ There are no browser-provided network targets, interfaces, filenames, device nod
 - stdout is limited to 128 KiB and stderr to 32 KiB.
 - Cleanup traverses only validated DDK-owned `/tmp/ddk/jobs/job-*` directories and report names.
 - The Nmap worker tracks its direct child and terminates that child when an authenticated stop request terminates the worker.
+- The capture worker tracks its direct `tcpdump` child, terminates it on authenticated stop, and checks that `br-lan` flags are unchanged after normal completion.
 - Each cellular query has a five-second client timeout, a seven-second worker wall limit, and direct-child cancellation.
+
+## Packet-capture privacy boundary
+
+The enabled capture is not a general sniffer. It uses `-i br-lan -p -n -q -e -l -tttt -s 96 -c 128` and one literal BPF expression for ARP, ICMP, and IPv4 DHCP. It runs for at most 20 seconds, writes decoded text only, and caps that text at 64 KiB. No PCAP, payload hex/ASCII dump, DNS lookup, TCP/application session, WAN interface, all-interface mode, monitor mode, replay, or persistent capture is available.
+
+An authenticated operator may see timestamps, local MAC addresses, local IP addresses, and brief DHCP/ICMP metadata. The UI discloses this before confirmation. Output uses the existing mode-0700 transient job directory, four-hour age cleanup, and 20-job retention ceiling. See [PACKET-CAPTURE.md](PACKET-CAPTURE.md).
 
 ## Cellular privacy boundary
 
@@ -96,5 +104,7 @@ Local validation checks enabled-action consistency and forbidden mutation patter
 - shell metacharacters inside an action ID;
 - a generic numeric PID stop;
 - report path traversal.
+
+The production suite also attempts malformed capture IDs and an extra browser-supplied interface, proves singleton enforcement and DDK-owned cancellation, checks `br-lan` flags before/during/after, compiles the fixed BPF expression, enforces the 64 KiB output ceiling, rejects PCAP artifacts, and requires no `tcpdump` process to remain.
 
 It requires rejection and confirms the injection marker was not created.

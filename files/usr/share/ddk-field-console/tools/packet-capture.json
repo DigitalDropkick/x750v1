@@ -2,16 +2,16 @@
   "id": "packet-capture",
   "name": "Capture & Traffic",
   "category": "Packet Capture",
-  "description": "Packet capture, replay, flow export, and traffic-analysis utilities.",
+  "description": "Bounded LAN metadata snapshots plus installed capture, replay, flow-export, and traffic-analysis utilities.",
   "package_names": ["tcpdump", "tcpreplay", "netsniff-ng", "dnstop", "nfdump", "softflowd", "hping3"],
   "expected_binaries": ["tcpdump", "tcpreplay", "netsniff-ng", "dnstop"],
   "required_hardware": [],
   "status_probe": "software",
   "risk_level": "SECURITY",
-  "enabled": false,
+  "enabled": true,
   "actions": [
-    {"id": "capture.start", "class": "SECURITY", "enabled": false},
+    {"id": "capture.lan_metadata_snapshot", "class": "SECURITY", "execution": "job", "enabled": true},
     {"id": "capture.replay", "class": "DISRUPTIVE", "enabled": false}
   ],
-  "help_text": "Capture interfaces, filters, duration, size, and retention must be deliberately bounded before activation."
+  "help_text": "The enabled profile observes only ARP, ICMP, and DHCP metadata on server-derived br-lan for 20 seconds in non-promiscuous mode. It creates decoded transient text, never a PCAP file. Replay and general capture remain disabled."
 }

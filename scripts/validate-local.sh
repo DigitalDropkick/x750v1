@@ -102,6 +102,21 @@ while IFS= read -r action || [[ -n "$action" ]]; do
 	[[ "$enabled_count" -eq 1 ]] || fail "reviewed SECURITY action is missing or duplicated: $action"
 done < scripts/enabled-security-actions.txt
 
+capture_worker=files/usr/libexec/ddk-job-worker
+[[ "$(rg -c '/usr/sbin/tcpdump -i br-lan' "$capture_worker")" -eq 1 ]] || fail 'reviewed tcpdump command is missing or duplicated'
+for capture_guard in \
+	'-p -n -q -e -l -tttt -s 96 -c 128' \
+	"'arp or icmp or (ip and udp and (port 67 or port 68))'" \
+	'deadline_epoch=$(( $(date +%s) + 20 ))' \
+	'/sys/class/net/br-lan/flags' \
+	'head -c 65536 "$job_dir/stdout"'
+do
+	rg -F -- "$capture_guard" "$capture_worker" >/dev/null || fail "capture safety guard is missing: $capture_guard"
+done
+if rg -n -- '(^|[[:space:]])-(A|X|XX|w|W|C|G)([[:space:]]|$)|-i[[:space:]]+any' "$capture_worker"; then
+	fail 'capture worker contains a payload dump, PCAP writer, rotation, or all-interface flag'
+fi
+
 while IFS= read -r file; do
 	size="$(wc -c < "$file")"
 	[[ "$size" -le 131072 ]] || fail "oversized router asset: $file ($size bytes)"

@@ -1,6 +1,6 @@
 # Next Modules
 
-The first reviewed SECURITY module and the cellular INFO snapshot are now wired. The remaining order balances field value, implementation risk, and the GL-X750's resource constraints.
+Two reviewed SECURITY modules and the cellular INFO snapshot are now wired. The remaining order balances field value, implementation risk, and the GL-X750's resource constraints.
 
 ## Release phases
 
@@ -38,7 +38,13 @@ The acceptance gate passed on 2026-08-09: 24 production checks completed with no
 
 ### Phase 3 — Bounded field operations
 
-After the hardware map and visual system are stable, add packet capture first, then hardware-dependent receive/identify modules in the order below. Each executable workflow remains individually allowlisted, bounded, and tested.
+With the hardware map, visual system, and bounded metadata capture in place, add hardware-dependent receive/identify modules in the order below. Each executable workflow remains individually allowlisted, bounded, and tested.
+
+### Phase 3A — Bounded LAN metadata capture (implemented in 1.5.0)
+
+`capture.lan_metadata_snapshot` uses the already-installed `tcpdump` on server-derived `br-lan` with one fixed ARP/ICMP/IPv4-DHCP BPF profile. It is non-promiscuous, accepts no browser arguments, stops after 20 seconds or 128 packets, emits at most 64 KiB of decoded transient text, and never creates a PCAP. General capture and packet replay remain disabled.
+
+The acceptance gate passed on 2026-08-09: 27 production checks completed with no warnings, including stop and full-window capture proofs. Authenticated browser checks passed at 320 px, 390 px, and desktop widths, all 39 deployed files matched source, protected configuration remained unchanged, and no capture process, DDK worker, or DDK listener remained.
 
 ## Completed: Nmap LAN host discovery
 
@@ -52,30 +58,26 @@ After the hardware map and visual system are stable, add packet capture first, t
 
 The sysfs-only inspector maps each serial node to VID:PID, parent, interface, and driver. It marks the verified EC25-AF ports modem-reserved and makes no unverified interface-role claims.
 
-## 2. Bounded tcpdump capture
-
-Allowlist interfaces from the current link list, validate a small filter grammar or fixed presets, enforce duration and byte limits, save only in `/tmp/ddk/jobs/`, and never enable promiscuous mode persistently.
-
-## 3. RTL-SDR / rtl_433 receive job
+## 2. RTL-SDR / rtl_433 receive job
 
 Enable only when a reviewed RTL-SDR VID:PID is present. Add duration, frequency range, output, concurrency, and worker-stop limits. Do not start a persistent rtl_tcp listener.
 
-## 4. Camera snapshot
+## 3. Camera snapshot
 
 Enable only for an existing `/dev/videoN` node validated against sysfs. Start with one bounded still capture. Streaming remains later because it creates network-exposure and resource questions.
 
-## 5. GPS snapshot
+## 4. GPS snapshot
 
 Add exact GNSS hardware attribution, then an on-demand position snapshot. Do not start gpsd automatically or include precise location in reports without an explicit privacy decision.
 
-## 6. CAN read-only capture
+## 5. CAN read-only capture
 
 Require an existing CAN interface and expose only bounded `candump`. Interface configuration and transmit remain DISRUPTIVE and disabled.
 
-## 7. Android and Apple identification
+## 6. Android and Apple identification
 
 Add device-presence and identity operations before any shell, recovery, restore, or filesystem action. Treat customer device identifiers as private and transient.
 
-## 8. Firmware-programmer identification
+## 7. Firmware-programmer identification
 
 Identify attached programmers without writing. Per-tool flash/read/erase workflows require separate manifests, confirmation, device targeting, power/voltage guidance, image hashing, and recovery procedures.

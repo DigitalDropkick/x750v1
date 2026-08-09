@@ -82,7 +82,7 @@ Before changing `enabled`:
 7. Add success, failure, injection, traversal, resource, and stop tests.
 8. Document operational impact and rollback.
 
-The shipped Nmap profile is still classified `SECURITY`. It uses `/usr/bin/nmap` with fixed host-discovery-only arguments, a server-derived `br-lan` CIDR, RFC1918 and `/24`-or-smaller checks, fixed retry/rate/host/wall-time limits, one-scan concurrency, bounded transient output, and explicit operator confirmation. It accepts no raw Nmap flags or free-form target.
+The shipped Nmap and LAN metadata profiles are both classified `SECURITY`. Nmap uses `/usr/bin/nmap` with fixed host-discovery-only arguments, a server-derived `br-lan` CIDR, RFC1918 and `/24`-or-smaller checks, fixed retry/rate/host/wall-time limits, one-scan concurrency, bounded transient output, and explicit operator confirmation. Capture uses `/usr/sbin/tcpdump` with a fixed non-promiscuous interface/filter/duration/count/snap-length profile, one-capture concurrency, decoded text only, and separate confirmation. Neither accepts a browser target, interface, filter, filename, duration, or raw flags.
 
 ## 4. Review state semantics
 

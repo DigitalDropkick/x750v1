@@ -1,2 +1,3 @@
 # Exact SECURITY action IDs approved after code and operational review.
+capture.lan_metadata_snapshot
 network.nmap_lan_discovery

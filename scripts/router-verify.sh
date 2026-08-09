@@ -28,8 +28,8 @@ model="$(ubus call system board | jsonfilter -e '@.model')"
 [ "$model" = 'GL.iNet GL-X750' ] || fail "target identity changed: $model"
 pass 'GL-X750 target identity'
 
-[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.4.0' ] || fail 'Field Console version is not 1.4.0'
-pass 'Field Console version 1.4.0'
+[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.5.0' ] || fail 'Field Console version is not 1.5.0'
+pass 'Field Console version 1.5.0'
 
 mount | grep -q '^/dev/sda1 on /overlay type ext4 ' || fail 'extroot is not active on /dev/sda1'
 pass 'extroot remains active'
@@ -243,6 +243,87 @@ printf '%s' "$scan_output" | grep -Fq 'Nmap done:' || fail 'Nmap completion summ
 [ "$(printf '%s' "$scan_output" | wc -c)" -le 131072 ] || fail 'Nmap stdout exceeded its bound'
 pass 'bounded server-derived Nmap LAN discovery'
 
+capture_manifest=/usr/share/ddk-field-console/tools/packet-capture.json
+[ "$(jsonfilter -i "$capture_manifest" -e '@.enabled')" = 'true' ] || fail 'packet-capture module is not enabled'
+[ "$(jsonfilter -i "$capture_manifest" -e '@.actions[0].id')" = 'capture.lan_metadata_snapshot' ] || fail 'LAN metadata capture action ID is incorrect'
+[ "$(jsonfilter -i "$capture_manifest" -e '@.actions[0].class')" = 'SECURITY' ] || fail 'LAN metadata capture lost its SECURITY classification'
+[ "$(jsonfilter -i "$capture_manifest" -e '@.actions[0].execution')" = 'job' ] || fail 'LAN metadata capture execution mode is incorrect'
+[ "$(jsonfilter -i "$capture_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'LAN metadata capture is not explicitly enabled'
+[ "$(jsonfilter -i "$capture_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'packet replay was unexpectedly enabled'
+[ -x /usr/sbin/tcpdump ] || fail 'the reviewed tcpdump executable is unavailable'
+/usr/sbin/tcpdump -i br-lan -p -n -q -s 96 -c 1 -d 'arp or icmp or (ip and udp and (port 67 or port 68))' >/dev/null 2>&1 || fail 'the fixed LAN metadata filter did not compile'
+pass 'reviewed LAN metadata manifest, tcpdump path, and fixed filter'
+
+if /usr/libexec/ddk-console job start 'capture.lan_metadata_snapshot;touch' 2>/dev/null | json_ok; then
+	fail 'malformed LAN metadata capture action ID was accepted'
+fi
+if /usr/libexec/ddk-console job start capture.lan_metadata_snapshot br-lan 2>/dev/null | json_ok; then
+	fail 'a browser-supplied capture interface was accepted'
+fi
+
+capture_flags_before="$(cat /sys/class/net/br-lan/flags)"
+stop_capture_payload="$(/usr/libexec/ddk-console job start capture.lan_metadata_snapshot)"
+printf '%s' "$stop_capture_payload" | json_ok || fail 'bounded capture stop proof did not start'
+stop_capture_id="$(printf '%s' "$stop_capture_payload" | jsonfilter -e '@.data.id')"
+if /usr/libexec/ddk-console job start capture.lan_metadata_snapshot 2>/dev/null | json_ok; then
+	fail 'a second concurrent LAN metadata capture was accepted'
+fi
+
+attempt=0
+stop_capture_status=''
+while [ "$attempt" -lt 8 ]; do
+	stop_capture_state="$(/usr/libexec/ddk-console job status "$stop_capture_id")"
+	stop_capture_status="$(printf '%s' "$stop_capture_state" | jsonfilter -e '@.data.status')"
+	stop_capture_pid="$(printf '%s' "$stop_capture_state" | jsonfilter -e '@.data.pid')"
+	[ "$stop_capture_status" = 'running' ] && [ -n "$stop_capture_pid" ] && break
+	case "$stop_capture_status" in complete|failed|stopped) break ;; esac
+	attempt=$((attempt + 1))
+	sleep 1
+done
+[ "$stop_capture_status" = 'running' ] || fail "capture stop proof was not active long enough to cancel: $stop_capture_status"
+[ "$(cat /sys/class/net/br-lan/flags)" = "$capture_flags_before" ] || fail 'br-lan flags changed while non-promiscuous capture was active'
+/usr/libexec/ddk-console job stop "$stop_capture_id" | json_ok || fail 'authenticated capture stop request failed'
+attempt=0
+while [ "$attempt" -lt 8 ]; do
+	stop_capture_state="$(/usr/libexec/ddk-console job status "$stop_capture_id")"
+	stop_capture_status="$(printf '%s' "$stop_capture_state" | jsonfilter -e '@.data.status')"
+	[ "$stop_capture_status" = 'stopped' ] && break
+	attempt=$((attempt + 1))
+	sleep 1
+done
+[ "$stop_capture_status" = 'stopped' ] || fail "capture stop proof ended in state: $stop_capture_status"
+printf '%s' "$stop_capture_state" | jsonfilter -e '@.data.stderr' | grep -q 'authenticated DDK request' || fail 'capture worker stop evidence is missing'
+[ "$(cat /sys/class/net/br-lan/flags)" = "$capture_flags_before" ] || fail 'br-lan flags changed after capture cancellation'
+if pidof tcpdump >/dev/null 2>&1; then fail 'tcpdump remained active after DDK capture cancellation'; fi
+pass 'capture singleton, non-promiscuous mode, and DDK-owned cancellation'
+
+capture_payload="$(/usr/libexec/ddk-console job start capture.lan_metadata_snapshot)"
+printf '%s' "$capture_payload" | json_ok || fail 'bounded LAN metadata snapshot did not start'
+capture_id="$(printf '%s' "$capture_payload" | jsonfilter -e '@.data.id')"
+attempt=0
+capture_status=''
+while [ "$attempt" -lt 30 ]; do
+	capture_state="$(/usr/libexec/ddk-console job status "$capture_id")"
+	capture_status="$(printf '%s' "$capture_state" | jsonfilter -e '@.data.status')"
+	case "$capture_status" in complete|failed|stopped) break ;; esac
+	attempt=$((attempt + 1))
+	sleep 1
+done
+[ "$capture_status" = 'complete' ] || fail "bounded LAN metadata snapshot ended in state: $capture_status"
+capture_output="$(printf '%s' "$capture_state" | jsonfilter -e '@.data.stdout')"
+printf '%s' "$capture_state" | jsonfilter -e '@.data.metadata.class' | grep -qx 'SECURITY' || fail 'capture job metadata class is incorrect'
+printf '%s' "$capture_output" | grep -Fq 'Scope source: network.interface.lan / br-lan (server-derived)' || fail 'capture scope evidence is missing'
+printf '%s' "$capture_output" | grep -Fq 'Profile: ARP, ICMP, and IPv4 DHCP metadata only; decoded text, no PCAP file' || fail 'capture fixed-profile evidence is missing'
+printf '%s' "$capture_output" | grep -Fq 'Safety: non-promiscuous (-p), no DNS (-n), quiet decode (-q), no payload dump' || fail 'capture safety declaration is missing'
+printf '%s' "$capture_output" | grep -Fq 'Limits: 20-second window, 128 packets, 96-byte snap length, 64 KiB text output' || fail 'capture limits declaration is missing'
+printf '%s' "$capture_output" | grep -Fq 'Stop condition:' || fail 'capture stop-condition evidence is missing'
+printf '%s' "$capture_output" | grep -Fq "Interface flags: $capture_flags_before before / $capture_flags_before after" || fail 'capture interface-flag evidence is missing'
+[ "$(printf '%s' "$capture_output" | wc -c)" -le 65536 ] || fail 'capture stdout exceeded its 64 KiB bound'
+if find "/tmp/ddk/jobs/$capture_id" -type f -name '*.pcap*' | grep -q .; then fail 'capture created a prohibited PCAP file'; fi
+if pidof tcpdump >/dev/null 2>&1; then fail 'tcpdump remained active after bounded capture completion'; fi
+[ "$(cat /sys/class/net/br-lan/flags)" = "$capture_flags_before" ] || fail 'br-lan flags changed after bounded capture completion'
+pass 'bounded transient LAN metadata snapshot'
+
 report_payload="$(/usr/libexec/ddk-console job start report.system)"
 printf '%s' "$report_payload" | json_ok || fail 'system report job did not start'
 report_job="$(printf '%s' "$report_payload" | jsonfilter -e '@.data.id')"
@@ -288,7 +369,11 @@ printf '%s  %s\n' \
 pass 'network, firewall, wireless, uhttpd, and rpcd are untouched'
 
 if netstat -lntup 2>/dev/null | grep -q 'ddk'; then fail 'a DDK listener exists'; fi
-pass 'no DDK network listener exists'
+# BusyBox on this target has no standalone pgrep.
+# shellcheck disable=SC2009
+if ps w | grep '[d]dk-job-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
+if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
+pass 'no DDK listener or idle operation worker exists'
 
 available_kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"
 [ "${available_kb:-0}" -ge 16384 ] || fail "available memory is low: ${available_kb:-0} KiB"

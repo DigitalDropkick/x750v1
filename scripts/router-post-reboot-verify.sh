@@ -22,8 +22,8 @@ fail() {
 
 model="$(ubus call system board | jsonfilter -e '@.model')"
 [ "$model" = 'GL.iNet GL-X750' ] || fail "target identity changed: $model"
-[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.4.0' ] || fail 'Field Console version is not 1.4.0'
-pass 'GL-X750 identity and Field Console 1.4.0'
+[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.5.0' ] || fail 'Field Console version is not 1.5.0'
+pass 'GL-X750 identity and Field Console 1.5.0'
 
 mount | grep -q '^/dev/sda1 on /overlay type ext4 ' || fail 'extroot is not active on /dev/sda1'
 pass 'extroot mounted from /dev/sda1'
@@ -69,7 +69,7 @@ if netstat -lntup 2>/dev/null | grep -q 'ddk'; then fail 'a DDK listener exists'
 # BusyBox on this target has no standalone pgrep.
 # shellcheck disable=SC2009
 if ps w | grep '[d]dk-job-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
-if pidof nmap uqmi qmicli qmi-proxy ModemManager >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
+if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
 pass 'no DDK listener or idle operation worker exists'
 
 available_kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"

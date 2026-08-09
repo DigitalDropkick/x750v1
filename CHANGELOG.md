@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.5.0 — 2026-08-09
+
+### Added
+
+- First Phase 3 field workflow: `capture.lan_metadata_snapshot`.
+- Fixed 20-second, 128-packet LAN metadata profile using the already-installed `tcpdump` 4.9.3.
+- Explicit capture confirmation and SECURITY-styled controls in Tool Registry and Jobs & Reports.
+- Capture-specific singleton, cancellation, interface-flag, output-size, and no-PCAP verification.
+- Dedicated packet-capture threat model and operating documentation.
+
+### Safety and privacy
+
+- The browser cannot choose an interface, filter, executable, flag, duration, packet count, snap length, or output path.
+- The worker independently requires the native LAN to be up on exactly `br-lan`.
+- Capture is non-promiscuous and limited to ARP, ICMP, and IPv4 DHCP metadata with DNS lookup and payload dumping disabled.
+- Output is decoded text under the existing mode-restricted `/tmp/ddk/jobs/` retention boundary; no PCAP is created.
+- Packet replay, general capture, WAN, cellular, Tailscale, and all configuration mutations remain disabled.
+
+### Verification
+
+- Production verification passed 27 checks with 0 warnings, including fixed-filter compilation, malformed/extra-argument rejection, singleton enforcement, authenticated cancellation, a complete bounded capture, unchanged interface flags, output bounds, no PCAP artifact, and no remaining worker or `tcpdump` process.
+- Authenticated browser verification passed at 320 px, 390 px, and desktop widths with both SECURITY controls enabled and styled, every local brand image loaded, no external request, no runtime error, and no horizontal overflow.
+- The browser validator now waits for asynchronously inserted local images to finish loading before checking their exact dimensions, eliminating a single-core timing race without relaxing the assertion.
+- All 39 deployed project files matched source byte for byte; GL.iNet UI, LuCI, Tailscale, extroot, swap, and protected configuration remained healthy.
+
 ## 1.4.0 — 2026-08-09
 
 ### Added

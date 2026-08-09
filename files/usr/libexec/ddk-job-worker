@@ -16,7 +16,7 @@ job_pid="${job_numbers#*-}"
 case "$job_epoch" in ''|*[!0-9]*) exit 64 ;; esac
 case "$job_pid" in ''|*[!0-9]*) exit 64 ;; esac
 case "$task" in
-	demo|system_report|nmap_lan_discovery|cellular_snapshot) ;;
+	demo|system_report|nmap_lan_discovery|cellular_snapshot|tcpdump_lan_metadata) ;;
 	*) exit 64 ;;
 esac
 
@@ -49,7 +49,7 @@ stop_job() {
 		esac
 		fi
 		# shellcheck disable=SC2317
-		rm -f "$job_dir"/cellular-*.json "$job_dir"/cellular-*.json.err
+		rm -f "$job_dir"/cellular-*.json "$job_dir"/cellular-*.json.err "$job_dir"/tcpdump.stderr
 		# shellcheck disable=SC2317
 		status_set stopped
 	# shellcheck disable=SC2317
@@ -295,6 +295,76 @@ elif [ "$task" = "nmap_lan_discovery" ]; then
 	printf '\nCompleted (UTC): ' >> "$job_dir/stdout"
 	date -u >> "$job_dir/stdout"
 	head -c 131072 "$job_dir/stdout" > "$job_dir/stdout.next"
+	mv "$job_dir/stdout.next" "$job_dir/stdout"
+elif [ "$task" = "tcpdump_lan_metadata" ]; then
+	[ -x /usr/sbin/tcpdump ] || task_fail 'Tcpdump is not installed at the reviewed path; the console did not attempt installation.'
+	command -v jsonfilter >/dev/null 2>&1 || task_fail 'The native jsonfilter helper is unavailable.'
+
+	lan_status="$(ubus call network.interface.lan status 2>/dev/null)" || task_fail 'Unable to read the native LAN status.'
+	lan_up="$(jsonfilter -s "$lan_status" -e '@.up' 2>/dev/null)" || task_fail 'Unable to derive the LAN state.'
+	lan_device="$(jsonfilter -s "$lan_status" -e '@.l3_device' 2>/dev/null)" || task_fail 'Unable to derive the LAN device.'
+	[ "$lan_up" = "true" ] || task_fail 'Safety policy rejected capture because the native LAN is not up.'
+	[ "$lan_device" = "br-lan" ] || task_fail 'Safety policy rejected capture because the native LAN device is not br-lan.'
+	[ -r /sys/class/net/br-lan/flags ] || task_fail 'Safety policy cannot read the br-lan interface flags.'
+	flags_before="$(cat /sys/class/net/br-lan/flags)"
+	capture_error="$job_dir/tcpdump.stderr"
+
+	{
+		printf '%s\n' 'DIGITAL DROPKICK — BOUNDED LAN METADATA SNAPSHOT'
+		printf '%s\n' 'Scope source: network.interface.lan / br-lan (server-derived)'
+		printf '%s\n' 'Profile: ARP, ICMP, and IPv4 DHCP metadata only; decoded text, no PCAP file'
+		printf '%s\n' 'Privacy: transient timestamps, MAC addresses, and IP addresses may appear'
+		printf '%s\n' 'Safety: non-promiscuous (-p), no DNS (-n), quiet decode (-q), no payload dump'
+		printf '%s\n' 'Limits: 20-second window, 128 packets, 96-byte snap length, 64 KiB text output'
+		printf 'Started (UTC): '
+		date -u
+		printf '\n[CAPTURE]\n'
+	} > "$job_dir/stdout"
+
+	/usr/sbin/tcpdump -i br-lan -p -n -q -e -l -tttt -s 96 -c 128 \
+		'arp or icmp or (ip and udp and (port 67 or port 68))' \
+		>> "$job_dir/stdout" 2> "$capture_error" &
+	child_pid=$!
+	deadline_epoch=$(( $(date +%s) + 20 ))
+	window_ended=0
+	while kill -0 "$child_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$deadline_epoch" ]; then
+			window_ended=1
+			kill -TERM "$child_pid" 2>/dev/null || true
+			sleep 1
+			if kill -0 "$child_pid" 2>/dev/null; then
+				kill -KILL "$child_pid" 2>/dev/null || true
+			fi
+			break
+		fi
+		sleep 1
+	done
+	child_result=0
+	wait "$child_pid" 2>/dev/null || child_result=$?
+	child_pid=""
+	flags_after="$(cat /sys/class/net/br-lan/flags)"
+	if [ "$flags_before" != "$flags_after" ]; then
+		rm -f "$capture_error"
+		task_fail 'Safety policy detected a br-lan interface-flag change during capture.'
+	fi
+
+	captured_packets="$(awk '$2 == "packets" && $3 == "captured" {print $1; exit}' "$capture_error" 2>/dev/null || true)"
+	case "$captured_packets" in ''|*[!0-9]*) captured_packets=UNKNOWN ;; esac
+	if [ "$window_ended" -eq 0 ] && [ "$child_result" -ne 0 ]; then
+		head -c 4096 "$capture_error" >> "$job_dir/stderr"
+		result="$child_result"
+	else
+		{
+			printf '\n[CAPTURE COMPLETE]\n'
+			printf 'Stop condition: %s\n' "$(if [ "$window_ended" -eq 1 ]; then printf '%s' 'fixed 20-second window'; else printf '%s' '128-packet ceiling'; fi)"
+			printf 'Packets captured: %s\n' "$captured_packets"
+			printf 'Interface flags: %s before / %s after\n' "$flags_before" "$flags_after"
+			printf 'Completed (UTC): '
+			date -u
+		} >> "$job_dir/stdout"
+	fi
+	rm -f "$capture_error"
+	head -c 65536 "$job_dir/stdout" > "$job_dir/stdout.next"
 	mv "$job_dir/stdout.next" "$job_dir/stdout"
 else
 	command -v uqmi >/dev/null 2>&1 || task_fail 'UQMI is not installed; the console did not attempt installation.'

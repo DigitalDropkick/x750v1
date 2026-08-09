@@ -698,6 +698,12 @@ local job_actions = {
 		label = "Nmap LAN Host Discovery",
 		class = "SECURITY",
 		singleton = true
+	},
+	["capture.lan_metadata_snapshot"] = {
+		worker = "tcpdump_lan_metadata",
+		label = "LAN Metadata Snapshot",
+		class = "SECURITY",
+		singleton = true
 	}
 }
 

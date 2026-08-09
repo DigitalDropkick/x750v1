@@ -53,6 +53,12 @@ The Digital Dropkick brand-alignment release was deployed on 2026-08-09 with pre
 
 The final snapshot reported 45,620 KiB available RAM, load averages 1.68 / 1.35 / 1.24, 27,696,828 KiB free on extroot, the 262,140 KiB swapfile active at priority `-2`, Tailscale running, and zero DDK listeners or workers. Protected configuration hashes remained unchanged. These resource values are point-in-time verification evidence, not permanent operating expectations.
 
+### Version 1.5 live acceptance
+
+The bounded LAN metadata release was deployed on 2026-08-09 with pre-change backup `/root/ddk-backups/20260809T224048Z-field-console-v1`. The production suite passed 27 checks with no warnings, including capture cancellation and complete-window proofs. Authenticated browser validation passed at 320 px, 390 px, and desktop widths with all local brand assets loaded, both SECURITY workflows available, and no external requests, runtime errors, or horizontal document overflow. SHA-256 comparison found exact source-to-router parity for all 39 project files.
+
+The final snapshot reported 45,336 KiB available RAM, load averages 1.32 / 1.28 / 1.19, 27,696,352 KiB free on extroot, and the 262,140 KiB swapfile active with 3,104 KiB used. Tailscale remained running; GL.iNet UI returned HTTP 200; LuCI retained its unauthenticated HTTP 403 boundary; and no DDK listener, DDK worker, or bounded-operation client remained. Protected configuration hashes remained unchanged. These resource values are point-in-time verification evidence, not permanent operating expectations.
+
 ## Native LuCI conventions
 
 This firmware contains both generations of LuCI application structure:
@@ -80,6 +86,14 @@ Relevant confirmed paths:
 - `luci-app-ser2net`
 - `luci-app-mjpg-streamer`
 - `luci-app-dump1090`
+
+## Packet-capture capability
+
+- `tcpdump` 4.9.3-4 is already installed at `/usr/sbin/tcpdump`; libpcap is 1.10.1 with TPACKET_V3.
+- The fixed `arp or icmp or (ip and udp and (port 67 or port 68))` expression compiled successfully against `br-lan`.
+- A three-second non-promiscuous capability trial left the interface flags exactly `0x1003` before, during, and after, exited at the deliberate timeout, and left no `tcpdump` process.
+- The native LAN was up on `br-lan` at `192.168.8.1/24` during inspection.
+- No package installation, interface mutation, PCAP file, or captured packet content was required for capability discovery.
 
 ## Network and remote-access baseline
 
