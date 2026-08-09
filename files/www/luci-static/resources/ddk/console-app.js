@@ -141,7 +141,7 @@
 				h('span', { class: 'ddk-eyebrow' }, 'DIGITAL DROPKICK'),
 				h('h2', {}, section || 'FIELD CONSOLE'),
 				h('p', {}, description || 'GL-X750 field appliance control surface')),
-			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v1.1')));
+			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v1.2')));
 	}
 
 	function sectionHeading(title, detail) {
@@ -197,6 +197,12 @@
 		return exec([ 'job', 'start', 'network.nmap_lan_discovery' ]);
 	}
 
+	async function startToolJob(actionId) {
+		if (actionId !== 'cellular.snapshot')
+			throw new Error('The requested tool job did not match the DDK client allowlist.');
+		return exec([ 'job', 'start', actionId ]);
+	}
+
 	function capabilitySummary(modules) {
 		var order = [ 'Network Diagnostics', 'Wi-Fi', 'Cellular', 'Packet Capture', 'Serial', 'Industrial', 'CAN', 'Bluetooth', 'SDR / Radio', 'GPS', 'Camera', 'Device Repair', 'Firmware Programming', 'Security / Authentication', 'Monitoring', 'Automation', 'Storage / Recovery', 'Hardware', 'USB & Serial' ];
 		var groups = {};
@@ -244,16 +250,23 @@
 		var packageText = module.software.matched_packages.length ? module.software.matched_packages.join(', ') : 'No matching package';
 		var hardwareText = !module.hardware.required ? 'Not required' : module.hardware.present ? module.hardware.detected.join(', ') : 'Missing: ' + module.hardware.missing.join(', ');
 		var actions = (module.actions || []).map(function(action) {
-			var infoEnabled = module.console_enabled && action.enabled && action.class === 'INFO';
+			var jobEnabled = module.console_enabled && action.enabled && action.class === 'INFO' && action.execution === 'job' && action.id === 'cellular.snapshot';
+			var infoEnabled = module.console_enabled && action.enabled && action.class === 'INFO' && action.execution !== 'job';
 			var discoveryEnabled = module.console_enabled && action.enabled && action.class === 'SECURITY' && action.id === 'network.nmap_lan_discovery';
-			var handler = infoEnabled ? function() { runInfo(action.id, output); } : discoveryEnabled ? async function() {
+			var handler = infoEnabled ? function() { runInfo(action.id, output); } : jobEnabled ? async function() {
+				try {
+					var job = await startToolJob(action.id);
+					if (job) showModal('Cellular Snapshot Started', h('div', {}, h('p', {}, 'The bounded read-only job is running as ' + job.id + '.'), h('p', {}, h('a', { class: 'ddk-button', href: config.base + '/jobs' }, 'Open Jobs & Reports'))));
+				}
+				catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); }
+			} : discoveryEnabled ? async function() {
 				try {
 					var job = await startLanDiscovery();
 					if (job) showModal('LAN Discovery Started', h('div', {}, h('p', {}, 'The bounded job is running as ' + job.id + '.'), h('p', {}, h('a', { class: 'ddk-button', href: config.base + '/jobs' }, 'Open Jobs & Reports'))));
 				}
 				catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); }
 			} : null;
-			return button(action.id, discoveryEnabled ? 'ddk-button-security' : 'ddk-button-secondary', handler, !infoEnabled && !discoveryEnabled);
+			return button(action.id, discoveryEnabled ? 'ddk-button-security' : 'ddk-button-secondary', handler, !infoEnabled && !jobEnabled && !discoveryEnabled);
 		});
 		return h('article', { class: 'ddk-tool' },
 			h('div', { class: 'ddk-tool-head' }, h('div', {}, h('span', { class: 'ddk-card-kicker' }, module.category), h('h3', {}, module.name)), statePill(module.state)),
@@ -283,7 +296,7 @@
 			count.textContent = visible + ' of ' + cards.length + ' modules';
 		}
 		search.addEventListener('input', filter); category.addEventListener('change', filter); state.addEventListener('change', filter);
-		app.replaceChildren(brand('TOOL REGISTRY', 'Software inventory separated from live hardware presence'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'A manifest can describe a future action, but only the backend allowlist can execute one. The reviewed Nmap LAN profile requires explicit confirmation; other SECURITY controls remain disabled.'), h('div', { class: 'ddk-toolbar' }, search, category, state), h('div', { class: 'ddk-table-meta' }, count, h('span', {}, 'Hardware probes are read-only')), grid, output);
+		app.replaceChildren(brand('TOOL REGISTRY', 'Software inventory separated from live hardware presence'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'A manifest can describe a future action, but only the backend allowlist can execute one. Cellular snapshot is fixed and read-only; Nmap LAN discovery requires explicit confirmation; other sensitive controls remain disabled.'), h('div', { class: 'ddk-toolbar' }, search, category, state), h('div', { class: 'ddk-table-meta' }, count, h('span', {}, 'Hardware probes are read-only')), grid, output);
 	}
 
 	async function renderPackages() {
@@ -336,7 +349,7 @@
 		function poll(id) { if (pollers[id]) return; pollers[id] = setTimeout(async function tick() { try { var job = await exec([ 'job', 'status', id ]); await refresh(); if ([ 'queued', 'running', 'stopping' ].indexOf(job.status) >= 0) pollers[id] = setTimeout(tick, 1200); else delete pollers[id]; } catch (_) { delete pollers[id]; } }, 1200); }
 		async function start(action, requiresDiscoveryConfirmation) { try { var job = requiresDiscoveryConfirmation ? await startLanDiscovery() : await exec([ 'job', 'start', action ]); if (!job) return; await refresh(); poll(job.id); } catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); } }
 		async function stopJob(id) { try { await exec([ 'job', 'stop', id ]); await refresh(); poll(id); } catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); } }
-		app.replaceChildren(brand('JOBS & REPORTS', 'Bounded asynchronous work without blocking LuCI'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'Only two DDK jobs may run at once. Outputs are bounded, stored in /tmp, and removed by age/retention cleanup.'), sectionHeading('Start Bounded Job', 'Fixed server-side allowlist'), h('div', { class: 'ddk-action-row' }, button('Run Async Proof', '', function() { start('diagnostic.demo'); }), button('Generate DDK System Report', '', function() { start('report.system'); }), button('Discover LAN Hosts', 'ddk-button-security', function() { start('network.nmap_lan_discovery', true); }), button('Refresh', 'ddk-button-secondary', refresh)), sectionHeading('Jobs', 'Only DDK-owned worker PIDs can be stopped'), jobsNode, sectionHeading('Reports', 'Authenticated view/download · 24-hour retention'), reportsNode);
+		app.replaceChildren(brand('JOBS & REPORTS', 'Bounded asynchronous work without blocking LuCI'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'Only two DDK jobs may run at once. Outputs are bounded, stored in /tmp, and removed by age/retention cleanup.'), sectionHeading('Start Bounded Job', 'Fixed server-side allowlist'), h('div', { class: 'ddk-action-row' }, button('Run Async Proof', '', function() { start('diagnostic.demo'); }), button('Generate DDK System Report', '', function() { start('report.system'); }), button('Cellular Snapshot', 'ddk-button-secondary', function() { start('cellular.snapshot'); }), button('Discover LAN Hosts', 'ddk-button-security', function() { start('network.nmap_lan_discovery', true); }), button('Refresh', 'ddk-button-secondary', refresh)), sectionHeading('Jobs', 'Only DDK-owned worker PIDs can be stopped'), jobsNode, sectionHeading('Reports', 'Authenticated view/download · 24-hour retention'), reportsNode);
 		var jobs = await refresh(); jobs.forEach(function(job) { if ([ 'queued', 'running', 'stopping' ].indexOf(job.status) >= 0) poll(job.id); });
 	}
 
@@ -345,13 +358,13 @@
 			[ 'Authentication', 'Inherited from the existing LuCI sysauth session. No public DDK endpoint.' ],
 			[ 'Network exposure', 'No listener, nginx/uhttpd rule, firewall rule, or WAN binding is created.' ],
 			[ 'Action policy', 'Exact server-side action IDs only. Browser command strings and executable paths are rejected.' ],
-			[ 'Arguments', 'Only known action IDs and generated DDK job/report IDs are accepted. Nmap target and interface are derived server-side.' ],
+			[ 'Arguments', 'Only known action IDs and generated DDK job/report IDs are accepted. Nmap scope and cellular device/profile are fixed server-side.' ],
 			[ 'Jobs', 'Maximum 2 active, 20 retained, 4-hour job cleanup, bounded stdout/stderr.' ],
 			[ 'Reports', 'Stored in /tmp, 128 KiB maximum view, 24-hour cleanup, no secret configuration dumps.' ],
 			[ 'Idle footprint', 'No DDK daemon, database, timer, analytics, or background poller runs on the router.' ],
 			[ 'Configuration', 'This page is deliberately read-only in phase one.' ]
 		];
-		app.replaceChildren(brand('SETTINGS', 'Production safety posture and operating limits'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'There are no mutable Field Console settings in version 1.1. This is intentional.'), h('div', { class: 'ddk-posture' }, posture.map(function(item) { return h('div', { class: 'ddk-posture-item' }, h('strong', {}, item[0]), h('span', {}, item[1])); })), sectionHeading('Explicitly Disabled', 'Requires future deliberate wiring'), card('Operating Boundaries', 'LOCKED', [ row('DISRUPTIVE actions', 'DISABLED'), row('SECURITY actions', 'ONLY BOUNDED LAN DISCOVERY ENABLED'), row('Arbitrary targets / flags', 'REJECTED'), row('Generic PID stop', 'NOT IMPLEMENTED'), row('Persistent logs', 'NOT IMPLEMENTED'), row('WAN service exposure', 'NOT IMPLEMENTED') ], 'ddk-card-full'));
+		app.replaceChildren(brand('SETTINGS', 'Production safety posture and operating limits'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'There are no mutable Field Console settings in version 1.2. This is intentional.'), h('div', { class: 'ddk-posture' }, posture.map(function(item) { return h('div', { class: 'ddk-posture-item' }, h('strong', {}, item[0]), h('span', {}, item[1])); })), sectionHeading('Explicitly Disabled', 'Requires future deliberate wiring'), card('Operating Boundaries', 'LOCKED', [ row('DISRUPTIVE actions', 'DISABLED'), row('SECURITY actions', 'ONLY BOUNDED LAN DISCOVERY ENABLED'), row('Cellular mutations / identifiers', 'NOT IMPLEMENTED'), row('Arbitrary targets / flags', 'REJECTED'), row('Generic PID stop', 'NOT IMPLEMENTED'), row('Persistent logs', 'NOT IMPLEMENTED'), row('WAN service exposure', 'NOT IMPLEMENTED') ], 'ddk-card-full'));
 	}
 
 	var renderers = { overview: renderOverview, tools: renderTools, packages: renderPackages, jobs: renderJobs, settings: renderSettings };

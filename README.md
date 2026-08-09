@@ -1,6 +1,6 @@
 # Digital Dropkick Field Console
 
-Production-oriented LuCI control dashboard for the GL.iNet GL-X750 field appliance. Version 1.0 provides live system health, hardware-aware capability state, searchable package inventory, strictly allowlisted INFO actions, and bounded asynchronous reports without adding a daemon or listener.
+Production-oriented LuCI control dashboard for the GL.iNet GL-X750 field appliance. Version 1.2 provides live system health, hardware-aware capability state, searchable package inventory, bounded Nmap LAN discovery, and a privacy-conscious cellular identity/signal snapshot without adding a daemon or listener.
 
 ## Safety status
 
@@ -80,7 +80,7 @@ The top-level LuCI entry is **Digital Dropkick**.
 ./verify.sh
 ```
 
-Verification covers identity, extroot, swap, installed files, Lua/shell/JSON syntax, live APIs, all INFO actions, injection rejection, generic-PID rejection, traversal rejection, asynchronous jobs, the Nmap singleton/cancellation/full-scan proofs, system reports, GL.iNet UI, LuCI, dashboard route, Tailscale, protected configuration hashes, listener absence, memory, disk, and recent errors.
+Verification covers identity, extroot, swap, installed files, Lua/shell/JSON syntax, live APIs, all INFO actions, injection rejection, generic-PID rejection, traversal rejection, asynchronous jobs, Nmap proofs, the cellular privacy/read-only snapshot, system reports, GL.iNet UI, LuCI, dashboard route, Tailscale, protected configuration hashes, listener absence, memory, disk, and recent errors.
 
 The authenticated visual page and mobile layout should also be opened after deployment. `scripts/verify-browser.mjs` performs dependency-free Chrome DevTools checks when supplied a transient session through `DDK_BROWSER_SESSION`; it never accepts or stores a password. Automated review must use a short-lived, narrowly scoped test session that is destroyed immediately; passwords, tokens, and persistent browser sessions must never be printed, persisted, or transmitted outside the workstation/router boundary.
 
@@ -108,6 +108,7 @@ See [docs/ADDING-A-TOOL.md](docs/ADDING-A-TOOL.md). Adding a manifest cannot ena
 
 - DISRUPTIVE actions and every SECURITY action except the reviewed, bounded `network.nmap_lan_discovery` profile are placeholders only.
 - Nmap discovery accepts no browser target or flags. It is limited to host discovery on the server-derived private `br-lan` `/24`-or-smaller subnet, one active scan, and a 75-second wall limit.
+- Cellular snapshot accepts no device, action, or argument. It is fixed to the verified EC25-AF on `/dev/cdc-wdm0`, uses four read-only UQMI queries, and excludes subscriber identifiers, phone number, SIM contents, APN, location, scans, and raw commands.
 - Tool hardware detection is conservative and documents ambiguity.
 - Reports are transient across reboot and have a 24-hour cleanup horizon.
 - The browser polls only active jobs; there is no router-side polling process.

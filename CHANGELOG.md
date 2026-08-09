@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0 — 2026-08-09
+
+### Added
+
+- Bounded `cellular.snapshot` INFO job for the verified Quectel EC25-AF.
+- Fixed read-only operating-mode, data-status, signal-info, and serving-system UQMI profile.
+- Whitelisted ASCII snapshot output for modem identity, registration, roaming, PLMN, radio type, RSSI, RSRQ, RSRP, and SNR.
+- Cellular action in the Tool Registry and Jobs & Reports page.
+
+### Safety
+
+- No browser-provided modem path, QMI action, flag, or argument.
+- No IMEI, IMSI, ICCID, phone number, SIM content, APN/current settings, PIN/PUK, cell location, network scan, reset, raw AT/QMI, or cellular configuration mutation.
+- No package, service, listener, network, firewall, GL.iNet UI, Tailscale, extroot, or swap change.
+
 ## 1.1.0 — 2026-08-09
 
 ### Added

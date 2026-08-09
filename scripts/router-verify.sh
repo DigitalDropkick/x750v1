@@ -91,6 +91,50 @@ done
 printf '%s' "$job_payload" | jsonfilter -e '@.data.stdout' | grep -q 'ASYNCHRONOUS READ-ONLY PROOF' || fail 'asynchronous proof output is missing'
 pass 'non-blocking job framework proof'
 
+cellular_manifest=/usr/share/ddk-field-console/tools/cellular.json
+[ "$(jsonfilter -i "$cellular_manifest" -e '@.enabled')" = 'true' ] || fail 'cellular module is not enabled'
+[ "$(jsonfilter -i "$cellular_manifest" -e '@.actions[0].id')" = 'cellular.snapshot' ] || fail 'cellular snapshot manifest ID is incorrect'
+[ "$(jsonfilter -i "$cellular_manifest" -e '@.actions[0].class')" = 'INFO' ] || fail 'cellular snapshot lost its INFO classification'
+[ "$(jsonfilter -i "$cellular_manifest" -e '@.actions[0].execution')" = 'job' ] || fail 'cellular snapshot execution mode is incorrect'
+[ "$(jsonfilter -i "$cellular_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'cellular snapshot is not explicitly enabled'
+[ -x /sbin/uqmi ] || fail 'already-installed UQMI executable is unavailable'
+[ -c /dev/cdc-wdm0 ] || fail 'expected QMI management device is unavailable'
+pass 'reviewed cellular manifest, UQMI, and QMI device'
+
+cellular_before="$(ubus call network.interface.wwan status | jsonfilter -e '@.up' -e '@.pending' -e '@.available' -e '@.l3_device')"
+cellular_payload="$(/usr/libexec/ddk-console job start cellular.snapshot)"
+printf '%s' "$cellular_payload" | json_ok || fail 'cellular snapshot did not start'
+cellular_job="$(printf '%s' "$cellular_payload" | jsonfilter -e '@.data.id')"
+if /usr/libexec/ddk-console job start cellular.snapshot 2>/dev/null | json_ok; then
+	fail 'a second concurrent cellular snapshot was accepted'
+fi
+attempt=0
+cellular_status=''
+while [ "$attempt" -lt 40 ]; do
+	cellular_state="$(/usr/libexec/ddk-console job status "$cellular_job")"
+	cellular_status="$(printf '%s' "$cellular_state" | jsonfilter -e '@.data.status')"
+	case "$cellular_status" in complete|failed|stopped) break ;; esac
+	attempt=$((attempt + 1))
+	sleep 1
+done
+[ "$cellular_status" = 'complete' ] || fail "cellular snapshot ended in state: $cellular_status"
+cellular_output="$(printf '%s' "$cellular_state" | jsonfilter -e '@.data.stdout')"
+printf '%s' "$cellular_state" | jsonfilter -e '@.data.metadata.class' | grep -qx 'INFO' || fail 'cellular job metadata class is incorrect'
+printf '%s' "$cellular_output" | grep -Fq 'Model: Quectel EC25-AF' || fail 'cellular modem identity is missing'
+printf '%s' "$cellular_output" | grep -Fq 'Management: /dev/cdc-wdm0 via qmi_wwan' || fail 'cellular management attribution is missing'
+printf '%s' "$cellular_output" | grep -Fq 'Operating mode:' || fail 'cellular operating mode is missing'
+printf '%s' "$cellular_output" | grep -Fq 'State:' || fail 'cellular registration state is missing'
+printf '%s' "$cellular_output" | grep -Fq 'Radio:' || fail 'cellular radio type is missing'
+printf '%s' "$cellular_output" | grep -Fq 'RSSI:' || fail 'cellular RSSI is missing'
+printf '%s' "$cellular_output" | grep -Fq 'Query status: 4/4 succeeded' || fail 'not all cellular read-only queries succeeded'
+if printf '%s' "$cellular_output" | grep -Eiq 'IMEI:|IMSI:|ICCID:|MSISDN:|phone number:|APN:|PIN:|PUK:|password:|username:|plmn_description'; then
+	fail 'cellular snapshot exposed an excluded sensitive field'
+fi
+cellular_after="$(ubus call network.interface.wwan status | jsonfilter -e '@.up' -e '@.pending' -e '@.available' -e '@.l3_device')"
+[ "$cellular_before" = "$cellular_after" ] || fail 'WWAN state changed during the cellular snapshot'
+if pidof uqmi qmicli qmi-proxy ModemManager >/dev/null 2>&1; then fail 'a cellular client or manager remained running'; fi
+pass 'bounded privacy-conscious cellular snapshot'
+
 nmap_manifest=/usr/share/ddk-field-console/tools/network-discovery.json
 [ "$(jsonfilter -i "$nmap_manifest" -e '@.enabled')" = 'true' ] || fail 'Nmap discovery module is not enabled'
 [ "$(jsonfilter -i "$nmap_manifest" -e '@.actions[0].id')" = 'network.nmap_lan_discovery' ] || fail 'Nmap action manifest ID is incorrect'

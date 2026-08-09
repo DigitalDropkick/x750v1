@@ -40,7 +40,7 @@ The current release accepts:
 - job IDs matching `job-<digits>-<digits>`;
 - report IDs matching `report-<digits>-<digits>`.
 
-There are no browser-provided network targets, interfaces, filenames, device nodes, PIDs, package names, or flags. For `network.nmap_lan_discovery`, the worker independently requires the native LAN device to equal `br-lan`, reads its IPv4 CIDR from the kernel, validates RFC1918 scope and a `/24`-or-smaller prefix, and then invokes one fixed host-discovery profile.
+There are no browser-provided network targets, interfaces, filenames, device nodes, PIDs, package names, or flags. For `network.nmap_lan_discovery`, the worker independently requires the native LAN device to equal `br-lan`, reads its IPv4 CIDR from the kernel, validates RFC1918 scope and a `/24`-or-smaller prefix, and then invokes one fixed host-discovery profile. For `cellular.snapshot`, the worker requires the exact EC25-AF VID:PID, `qmi_wwan`, `/dev/cdc-wdm0`, and its attributed `wwan0`; browser input cannot select a modem or QMI action.
 
 ## Job controls
 
@@ -48,12 +48,18 @@ There are no browser-provided network targets, interfaces, filenames, device nod
 - Detached workers receive stdin from `/dev/null`; browser or caller input cannot reach an interactive child.
 - At most two jobs may be active.
 - At most one Nmap LAN discovery job may be active.
+- At most one cellular snapshot may be active.
 - A stop request supplies a generated job ID, not a PID.
 - Before `TERM`, the helper reads its own PID file and confirms `/proc/<pid>/cmdline` contains both the DDK worker path and exact job ID.
 - No other signal or generic kill endpoint exists.
 - stdout is limited to 128 KiB and stderr to 32 KiB.
 - Cleanup traverses only validated DDK-owned `/tmp/ddk/jobs/job-*` directories and report names.
 - The Nmap worker tracks its direct child and terminates that child when an authenticated stop request terminates the worker.
+- Each cellular query has a five-second client timeout, a seven-second worker wall limit, and direct-child cancellation.
+
+## Cellular privacy boundary
+
+The snapshot permits only operating mode, data-session state, radio signal, and serving-system queries. Output is rebuilt from an explicit field whitelist and never returns raw modem JSON. IMEI, IMSI, ICCID, MSISDN, SIM contents, APN/current settings, credentials, PIN/PUK state, cell location, operator-description bytes, network scans, registration changes, resets, and raw AT/QMI input are excluded.
 
 ## Reports and sensitive information
 

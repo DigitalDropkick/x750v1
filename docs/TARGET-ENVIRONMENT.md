@@ -87,6 +87,16 @@ Relevant confirmed paths:
 - I2C/SPI: no `/dev/i2c-*` or `/dev/spidev*` node.
 - No RTL-SDR USB identifier was detected.
 
+### Cellular integration findings
+
+- Modem: Quectel EC25-AF, USB `2c7c:0125`.
+- Management: `/dev/cdc-wdm0`, driver `qmi_wwan`, attributed netdev `wwan0`.
+- Serial functions: `/dev/ttyUSB0` through `/dev/ttyUSB3`; the console does not open them.
+- Installed clients: `uqmi` 2022-05-04 and `qmi-utils`/`libqmi` 1.30.8.
+- Active manager: `netifd`; no ModemManager or QMI proxy daemon was running during inspection.
+- One-time read-only trials for operating mode, data status, signal information, and serving system completed while protected hashes and WWAN state remained unchanged.
+- Subscriber identifiers, SIM content, APN/current settings, cell location, network scans, resets, and raw AT/QMI commands were not queried.
+
 ## Protected configuration baseline
 
 The following SHA-256 values are verification evidence, not files this project may modify:

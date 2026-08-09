@@ -135,47 +135,60 @@ try {
 	await waitForJobs(pageSession);
 	const desktop = await evaluate(pageSession, `(() => {
 		const button = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Discover LAN Hosts');
+		const cellularButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Cellular Snapshot');
 		return {
 			login: document.body.textContent.includes('Authorization Required'),
-			version: document.body.textContent.includes('X750 / v1.1'),
+			version: document.body.textContent.includes('X750 / v1.2'),
 			button: !!button,
 			enabled: !!button && !button.disabled,
+			cellular: !!cellularButton && !cellularButton.disabled,
 			securityStyle: !!button && button.classList.contains('ddk-button-security'),
 			overflow: document.documentElement.scrollWidth > window.innerWidth,
 			buttons: Array.from(document.querySelectorAll('button')).map(node => node.textContent.trim()),
 			heading: document.querySelector('.ddk-brand h2')?.textContent || ''
 		};
 	})()`);
-	if (desktop.login || !desktop.version || !desktop.button || !desktop.enabled || !desktop.securityStyle || desktop.overflow) {
+	if (desktop.login || !desktop.version || !desktop.button || !desktop.enabled || !desktop.cellular || !desktop.securityStyle || desktop.overflow) {
 		throw new Error(`Desktop Jobs validation failed: ${JSON.stringify(desktop)}`);
 	}
-	const desktopPath = await screenshot(pageSession, 'ddk-v11-jobs-desktop.png');
+	const desktopPath = await screenshot(pageSession, 'ddk-v12-jobs-desktop.png');
 
 	await openPage(pageSession, 'tools', 1440, 1000);
 	const tools = await evaluate(pageSession, `(() => {
 		const card = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Network Discovery'));
 		const button = card && Array.from(card.querySelectorAll('button')).find(node => node.textContent.trim() === 'network.nmap_lan_discovery');
-		return { card: !!card, ready: !!card && card.textContent.includes('READY'), button: !!button, enabled: !!button && !button.disabled };
+		const cellularCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Cellular / Modem'));
+		const cellularButton = cellularCard && Array.from(cellularCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'cellular.snapshot');
+		return { card: !!card, ready: !!card && card.textContent.includes('READY'), button: !!button, enabled: !!button && !button.disabled, cellularCard: !!cellularCard, cellularReady: !!cellularCard && cellularCard.textContent.includes('READY'), cellularButton: !!cellularButton && !cellularButton.disabled };
 	})()`);
-	if (!tools.card || !tools.ready || !tools.button || !tools.enabled) {
+	if (!tools.card || !tools.ready || !tools.button || !tools.enabled || !tools.cellularCard || !tools.cellularReady || !tools.cellularButton) {
 		throw new Error(`Tool Registry validation failed: ${JSON.stringify(tools)}`);
 	}
+	await evaluate(pageSession, `(() => {
+		const cellularCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Cellular / Modem'));
+		cellularCard.scrollIntoView({ block: 'center' });
+		return true;
+	})()`);
+	await new Promise(resolve => setTimeout(resolve, 200));
+	const toolsPath = await screenshot(pageSession, 'ddk-v12-tools-desktop.png');
 
 	await openPage(pageSession, 'jobs', 390, 844);
 	await waitForJobs(pageSession);
 	const mobile = await evaluate(pageSession, `(() => ({
 		overflow: document.documentElement.scrollWidth > window.innerWidth,
 		button: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Discover LAN Hosts' && !node.disabled),
+		cellular: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Cellular Snapshot' && !node.disabled),
 		width: window.innerWidth
 	}))()`);
-	if (mobile.overflow || !mobile.button || mobile.width !== 390) {
+	if (mobile.overflow || !mobile.button || !mobile.cellular || mobile.width !== 390) {
 		throw new Error(`Mobile Jobs validation failed: ${JSON.stringify(mobile)}`);
 	}
-	const mobilePath = await screenshot(pageSession, 'ddk-v11-jobs-mobile.png');
+	const mobilePath = await screenshot(pageSession, 'ddk-v12-jobs-mobile.png');
 
 	if (browserErrors.length) throw new Error(`Browser errors: ${browserErrors.join(' | ')}`);
 	console.log('Browser verification passed: authenticated Jobs and Tool Registry at 1440px, Jobs at 390px, no horizontal overflow or runtime errors.');
 	console.log(`DDK_BROWSER_DESKTOP=${desktopPath}`);
+	console.log(`DDK_BROWSER_TOOLS=${toolsPath}`);
 	console.log(`DDK_BROWSER_MOBILE=${mobilePath}`);
 }
 finally {

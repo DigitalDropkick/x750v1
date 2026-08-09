@@ -71,6 +71,7 @@ available_kb="$(df -Pk /overlay | awk 'NR == 2 {print $4}')"
 [ -x /usr/bin/lua ] || fail 'Lua 5.1 runtime is missing'
 [ -x /usr/bin/jsonfilter ] || fail 'jsonfilter is missing'
 [ -x /usr/bin/nmap ] || fail 'the already-installed nmap-full executable is missing; no package will be installed'
+[ -x /sbin/uqmi ] || fail 'the already-installed uqmi executable is missing; no package will be installed'
 command -v timeout >/dev/null 2>&1 || fail 'timeout is missing'
 [ -x /usr/libexec/cgi-io ] || [ -x /usr/libexec/cgi-io/capture ] || command -v cgi-io >/dev/null 2>&1 || fail 'cgi-io execution support is missing'
 

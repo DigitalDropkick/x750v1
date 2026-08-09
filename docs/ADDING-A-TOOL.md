@@ -52,6 +52,7 @@ That manifest is only one gate. The action runs because the same exact ID is als
 | `risk_level` | `INFO`, `ACTION`, `DISRUPTIVE`, or `SECURITY`. |
 | `enabled` | Whether console behavior has been deliberately wired. Default false. |
 | `actions` | Descriptive action IDs with class and enabled state. Data alone cannot execute them. |
+| `actions[].execution` | Optional UI mode such as `job`; still requires an exact client and backend implementation. |
 | `help_text` | Operator-facing limitations or next-step guidance. |
 
 Supported phase-one hardware classes are:

@@ -34,7 +34,7 @@ The helper uses fixed command strings from server-side tables. Browser values ca
 - **Overview:** system, network, Tailscale, hardware, safe INFO actions, and capability summary.
 - **Tool Registry:** hardware-aware modules and disabled future actions.
 - **Package Inventory:** all installed packages with search, type filters, and bounded rendering controls.
-- **Jobs & Reports:** asynchronous proof job, system-report job, polling, stop, view, and browser-side download.
+- **Jobs & Reports:** asynchronous proof, system report, bounded Nmap discovery, cellular snapshot, polling, stop, view, and browser-side download.
 - **Settings:** read-only security posture and operating limits. It intentionally changes no configuration.
 
 ## Tool registry
@@ -80,7 +80,7 @@ Limits:
 - transient output only under `/tmp/ddk/`;
 - only `TERM` may be sent, and only after PID, job directory, and worker command line all match.
 
-The system includes an asynchronous read-only demo, a sanitized system-report task, and one reviewed SECURITY task: bounded Nmap host discovery on the server-derived private `br-lan` `/24`-or-smaller subnet. That task accepts no browser target or flags, permits one active scan, and tracks its child process for safe cancellation.
+The system includes an asynchronous read-only demo, a sanitized system-report task, bounded Nmap discovery, and a cellular snapshot. The Nmap task accepts no browser target or flags, permits one active scan, and tracks its child process for safe cancellation. The cellular task is fixed to the verified EC25-AF management node and four read-only UQMI actions; it parses only approved identity, registration, and signal fields into output.
 
 ## Report handling
 

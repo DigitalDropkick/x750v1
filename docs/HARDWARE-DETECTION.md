@@ -8,7 +8,7 @@ Hardware probes are read-only, on-demand, and conservative. They never start a d
 | --- | --- |
 | USB | Parsed `lsusb` lines. |
 | Serial | Existing `/dev/ttyUSB[0-9]+` and `/dev/ttyACM[0-9]+` nodes. |
-| Cellular modem | `lsusb` contains Quectel or vendor ID `2c7c`. |
+| Cellular modem | Capability state uses Quectel/`2c7c` USB presence. The enabled snapshot additionally requires exact `2c7c:0125`, `/dev/cdc-wdm0`, `qmi_wwan`, and attributed `wwan0`. |
 | Video | Existing `/dev/video[0-9]+` nodes. |
 | RTL-SDR | `lsusb` contains `0bda:283*` or an RTL283 identifier. |
 | CAN | `ip -o link show type can` returns an interface. |
@@ -30,6 +30,7 @@ Hardware probes are read-only, on-demand, and conservative. They never start a d
 - Installed kernel support is not equivalent to attached hardware.
 - Android detection does not run `adb devices`, because doing so may start the ADB server.
 - GPS detection does not infer GNSS from an arbitrary serial port.
+- Cellular capability presence alone cannot authorize a query; the snapshot independently validates the exact EC25-AF management topology before opening the device.
 
 ## Extending detection
 

@@ -577,6 +577,12 @@ end
 local job_actions = {
 	["diagnostic.demo"] = { worker = "demo", label = "Read-only asynchronous proof", class = "INFO" },
 	["report.system"] = { worker = "system_report", label = "DDK System Report", class = "INFO" },
+	["cellular.snapshot"] = {
+		worker = "cellular_snapshot",
+		label = "Cellular Identity & Signal Snapshot",
+		class = "INFO",
+		singleton = true
+	},
 	["network.nmap_lan_discovery"] = {
 		worker = "nmap_lan_discovery",
 		label = "Nmap LAN Host Discovery",
@@ -627,7 +633,7 @@ local function start_job(action_id)
 	cleanup_transient()
 	if active_job_count() >= MAX_ACTIVE_JOBS then return nil, "Two DDK jobs are already active" end
 	if spec.singleton and has_active_action(action_id) then
-		return nil, "This bounded discovery job is already active"
+		return nil, "This bounded job is already active"
 	end
 
 	local job_id = string.format("job-%d-%d", os.time(), nixio.getpid())

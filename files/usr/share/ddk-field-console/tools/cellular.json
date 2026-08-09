@@ -2,16 +2,16 @@
   "id": "cellular",
   "name": "Cellular / Modem",
   "category": "Cellular",
-  "description": "Quectel/QMI modem information and future bounded diagnostics.",
+  "description": "Privacy-conscious Quectel identity, registration, and radio-signal snapshot.",
   "package_names": ["qmi-utils", "uqmi", "qcsuper", "libqmi"],
   "expected_binaries": ["qmicli", "uqmi", "qcsuper"],
   "required_hardware": ["cellular_modem"],
   "status_probe": "cellular_modem",
-  "risk_level": "ACTION",
-  "enabled": false,
+  "risk_level": "INFO",
+  "enabled": true,
   "actions": [
-    {"id": "cellular.identity", "class": "INFO", "enabled": false},
+    {"id": "cellular.snapshot", "class": "INFO", "execution": "job", "enabled": true},
     {"id": "cellular.raw_command", "class": "DISRUPTIVE", "enabled": false}
   ],
-  "help_text": "The detected EC25-AF is operational infrastructure; raw AT/QMI execution is intentionally unavailable."
+  "help_text": "The enabled snapshot uses fixed read-only UQMI queries and excludes subscriber IDs, phone number, SIM contents, APN, location, network scans, and raw AT/QMI input."
 }

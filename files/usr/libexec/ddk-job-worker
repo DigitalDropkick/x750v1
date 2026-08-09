@@ -16,7 +16,7 @@ job_pid="${job_numbers#*-}"
 case "$job_epoch" in ''|*[!0-9]*) exit 64 ;; esac
 case "$job_pid" in ''|*[!0-9]*) exit 64 ;; esac
 case "$task" in
-	demo|system_report|nmap_lan_discovery) ;;
+	demo|system_report|nmap_lan_discovery|cellular_snapshot) ;;
 	*) exit 64 ;;
 esac
 
@@ -47,9 +47,11 @@ stop_job() {
 				wait "$child_pid" 2>/dev/null || true
 				;;
 		esac
-	fi
-	# shellcheck disable=SC2317
-	status_set stopped
+		fi
+		# shellcheck disable=SC2317
+		rm -f "$job_dir"/cellular-*.json "$job_dir"/cellular-*.json.err
+		# shellcheck disable=SC2317
+		status_set stopped
 	# shellcheck disable=SC2317
 	printf '%s\n' 'Worker stopped by an authenticated DDK request.' >> "$job_dir/stderr"
 	# shellcheck disable=SC2317
@@ -92,6 +94,60 @@ validate_private_ipv4() {
 			;;
 	esac
 	return 1
+}
+
+safe_word() {
+	case "$1" in
+		''|*[!A-Za-z0-9_.-]*) printf '%s' UNKNOWN ;;
+		*) printf '%s' "$1" ;;
+	esac
+}
+
+safe_number() {
+	case "$1" in
+		''|*[!0-9.-]*) printf '%s' UNKNOWN ;;
+		*) printf '%s' "$1" ;;
+	esac
+}
+
+run_uqmi_query() {
+	query_label="$1"
+	query_action="$2"
+	query_output="$3"
+	query_error="$query_output.err"
+	: > "$query_output"
+	: > "$query_error"
+
+	/sbin/uqmi -d /dev/cdc-wdm0 --timeout 5000 "$query_action" > "$query_output" 2> "$query_error" &
+	child_pid=$!
+	query_deadline=$(( $(date +%s) + 7 ))
+	query_timed_out=0
+	while kill -0 "$child_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$query_deadline" ]; then
+			query_timed_out=1
+			kill -TERM "$child_pid" 2>/dev/null || true
+			sleep 1
+			kill -KILL "$child_pid" 2>/dev/null || true
+			break
+		fi
+		sleep 1
+	done
+	query_result=0
+	wait "$child_pid" 2>/dev/null || query_result=$?
+	child_pid=""
+	if [ -s "$query_error" ]; then
+		{
+			printf '%s: ' "$query_label"
+			head -c 4096 "$query_error"
+			printf '\n'
+		} >> "$job_dir/stderr"
+	fi
+	rm -f "$query_error"
+	if [ "$query_timed_out" -eq 1 ]; then
+		printf '%s timed out after 7 seconds.\n' "$query_label" >> "$job_dir/stderr"
+		return 124
+	fi
+	return "$query_result"
 }
 
 trap stop_job HUP INT TERM
@@ -175,7 +231,7 @@ elif [ "$task" = "system_report" ]; then
 	rm -f "$report_tmp"
 	chmod 600 "$report_path"
 	printf 'Report ready: %s\n' "$report_id" > "$job_dir/stdout"
-else
+elif [ "$task" = "nmap_lan_discovery" ]; then
 	command -v nmap >/dev/null 2>&1 || task_fail 'Nmap is not installed; the console did not attempt installation.'
 	command -v jsonfilter >/dev/null 2>&1 || task_fail 'The native jsonfilter helper is unavailable.'
 
@@ -240,6 +296,86 @@ else
 	date -u >> "$job_dir/stdout"
 	head -c 131072 "$job_dir/stdout" > "$job_dir/stdout.next"
 	mv "$job_dir/stdout.next" "$job_dir/stdout"
+else
+	command -v uqmi >/dev/null 2>&1 || task_fail 'UQMI is not installed; the console did not attempt installation.'
+	command -v jsonfilter >/dev/null 2>&1 || task_fail 'The native jsonfilter helper is unavailable.'
+	[ -c /dev/cdc-wdm0 ] || task_fail 'The expected QMI management device /dev/cdc-wdm0 is unavailable.'
+	modem_sysfs=/sys/class/usbmisc/cdc-wdm0/device
+	[ -d "$modem_sysfs" ] || task_fail 'The QMI management sysfs path is unavailable.'
+	[ "$(cat "$modem_sysfs/../idVendor" 2>/dev/null)" = '2c7c' ] || task_fail 'Safety policy rejected the unexpected modem USB vendor.'
+	[ "$(cat "$modem_sysfs/../idProduct" 2>/dev/null)" = '0125' ] || task_fail 'Safety policy rejected the unexpected modem USB product.'
+	[ "$(basename "$(readlink -f "$modem_sysfs/driver")")" = 'qmi_wwan' ] || task_fail 'Safety policy rejected the unexpected modem driver.'
+	[ -d "$modem_sysfs/net/wwan0" ] || task_fail 'Safety policy could not attribute wwan0 to the expected QMI device.'
+
+	mode_file="$job_dir/cellular-mode.json"
+	data_file="$job_dir/cellular-data.json"
+	signal_file="$job_dir/cellular-signal.json"
+	serving_file="$job_dir/cellular-serving.json"
+	query_success=0
+	if run_uqmi_query OPERATING_MODE --get-device-operating-mode "$mode_file"; then query_success=$((query_success + 1)); fi
+	if run_uqmi_query DATA_STATUS --get-data-status "$data_file"; then query_success=$((query_success + 1)); fi
+	if run_uqmi_query SIGNAL_INFO --get-signal-info "$signal_file"; then query_success=$((query_success + 1)); fi
+	if run_uqmi_query SERVING_SYSTEM --get-serving-system "$serving_file"; then query_success=$((query_success + 1)); fi
+
+	mode="$(jsonfilter -i "$mode_file" -e '@' 2>/dev/null || true)"
+	data_status="$(jsonfilter -i "$data_file" -e '@' 2>/dev/null || true)"
+	radio_type="$(jsonfilter -i "$signal_file" -e '@.type' 2>/dev/null || true)"
+	rssi="$(jsonfilter -i "$signal_file" -e '@.rssi' 2>/dev/null || true)"
+	rsrq="$(jsonfilter -i "$signal_file" -e '@.rsrq' 2>/dev/null || true)"
+	rsrp="$(jsonfilter -i "$signal_file" -e '@.rsrp' 2>/dev/null || true)"
+	snr="$(jsonfilter -i "$signal_file" -e '@.snr' 2>/dev/null || true)"
+	registration="$(jsonfilter -i "$serving_file" -e '@.registration' 2>/dev/null || true)"
+	plmn_mcc="$(jsonfilter -i "$serving_file" -e '@.plmn_mcc' 2>/dev/null || true)"
+	plmn_mnc="$(jsonfilter -i "$serving_file" -e '@.plmn_mnc' 2>/dev/null || true)"
+	roaming="$(jsonfilter -i "$serving_file" -e '@.roaming' 2>/dev/null || true)"
+
+	mode="$(safe_word "$mode")"
+	data_status="$(safe_word "$data_status")"
+	radio_type="$(safe_word "$radio_type")"
+	registration="$(safe_word "$registration")"
+	rssi="$(safe_number "$rssi")"
+	rsrq="$(safe_number "$rsrq")"
+	rsrp="$(safe_number "$rsrp")"
+	snr="$(safe_number "$snr")"
+	case "$plmn_mcc" in ''|*[!0-9]*) plmn_mcc=UNKNOWN ;; esac
+	case "$plmn_mnc" in ''|*[!0-9]*) plmn_mnc=UNKNOWN ;; esac
+	case "$roaming" in true) roaming_display=YES ;; false) roaming_display=NO ;; *) roaming_display=UNKNOWN ;; esac
+	case "$radio_type" in
+		lte|LTE) radio_display=LTE ;;
+		gsm|GSM) radio_display=GSM ;;
+		umts|UMTS) radio_display=UMTS ;;
+		wcdma|WCDMA) radio_display=WCDMA ;;
+		cdma|CDMA) radio_display=CDMA ;;
+		*) radio_display="$radio_type" ;;
+	esac
+
+	{
+		printf '%s\n' 'DIGITAL DROPKICK — CELLULAR IDENTITY & SIGNAL SNAPSHOT'
+		printf '%s\n' 'Read-only fixed UQMI profile; subscriber IDs, phone number, SIM contents, APN, location, and raw commands are excluded.'
+		printf 'Generated (UTC): '
+		date -u
+		printf '\n[MODEM]\n'
+		printf '%s\n' 'Model: Quectel EC25-AF'
+		printf '%s\n' 'USB identity: 2c7c:0125'
+		printf '%s\n' 'Management: /dev/cdc-wdm0 via qmi_wwan'
+		printf '%s\n' 'Network interface: wwan0'
+		printf 'Operating mode: %s\n' "$mode"
+		printf 'QMI data session: %s\n' "$data_status"
+		printf '\n[REGISTRATION]\n'
+		printf 'State: %s\n' "$registration"
+		printf 'PLMN: %s-%s\n' "$plmn_mcc" "$plmn_mnc"
+		printf 'Roaming: %s\n' "$roaming_display"
+		printf '\n[RADIO SIGNAL]\n'
+		printf 'Radio: %s\n' "$radio_display"
+		printf 'RSSI: %s dBm\n' "$rssi"
+		printf 'RSRQ: %s dB\n' "$rsrq"
+		printf 'RSRP: %s dBm\n' "$rsrp"
+		printf 'SNR: %s dB\n' "$snr"
+		printf '\nQuery status: %s/4 succeeded\n' "$query_success"
+	} > "$job_dir/stdout.next"
+	head -c 32768 "$job_dir/stdout.next" > "$job_dir/stdout"
+	rm -f "$job_dir/stdout.next" "$mode_file" "$data_file" "$signal_file" "$serving_file"
+	if [ "$query_success" -eq 0 ]; then result=69; fi
 fi
 
 head -c 32768 "$job_dir/stderr" > "$job_dir/stderr.next" 2>/dev/null || true
