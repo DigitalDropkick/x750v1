@@ -32,7 +32,10 @@ mount | grep -q '^/dev/sda1 on /overlay type ext4 ' || fail 'extroot is not acti
 pass 'extroot remains active'
 
 grep -q '^/overlay/ddk-install.swap[[:space:]]' /proc/swaps || fail '/overlay/ddk-install.swap is not active'
-pass 'USB-backed swap remains active'
+[ "$(uci -q get fstab.ddk_install_swap)" = 'swap' ] || fail 'named swap UCI section is missing'
+[ "$(uci -q get fstab.ddk_install_swap.device)" = '/overlay/ddk-install.swap' ] || fail 'swap UCI device is incorrect'
+[ "$(uci -q get fstab.ddk_install_swap.enabled)" = '1' ] || fail 'swap UCI section is not enabled'
+pass 'USB-backed swap is active and configured for native boot activation'
 
 for file in \
 	/usr/share/luci/menu.d/ddk-field-console.json \
@@ -59,10 +62,32 @@ pass 'router-side Lua, shell, and JSON syntax'
 /usr/libexec/ddk-console packages | json_ok || fail 'package API failed'
 pass 'status, capability, and package APIs'
 
-for action in system.refresh network.interfaces network.routes hardware.usb hardware.serial remote.tailscale storage.mounts system.memory packages.count; do
+for action in system.refresh network.interfaces network.routes hardware.usb hardware.serial serial.inspect remote.tailscale storage.mounts system.memory packages.count; do
 	/usr/libexec/ddk-console info "$action" | json_ok || fail "INFO action failed: $action"
 done
 pass 'all phase-one INFO actions'
+
+serial_payload="$(/usr/libexec/ddk-console info serial.inspect)"
+serial_output="$(printf '%s' "$serial_payload" | jsonfilter -e '@.data.output')"
+printf '%s' "$serial_output" | grep -Fq 'Policy: read metadata only; no serial port was opened.' || fail 'serial action safety declaration is missing'
+for node in /dev/ttyUSB0 /dev/ttyUSB1 /dev/ttyUSB2 /dev/ttyUSB3; do
+	printf '%s' "$serial_output" | grep -Fq "$node" || fail "serial attribution is missing $node"
+done
+[ "$(printf '%s' "$serial_output" | grep -c 'Classification: MODEM RESERVED')" -eq 4 ] || fail 'all four EC25 serial functions were not marked modem-reserved'
+[ "$(printf '%s' "$serial_output" | grep -c 'USB: 2c7c:0125')" -eq 4 ] || fail 'EC25 VID:PID attribution count is incorrect'
+[ "$(printf '%s' "$serial_output" | grep -c 'Driver: option')" -eq 4 ] || fail 'EC25 serial driver attribution count is incorrect'
+printf '%s' "$serial_output" | grep -Fq 'Summary: 4 total; 4 modem-reserved; 0 reviewed general-purpose; 0 unreviewed; 0 unattributed.' || fail 'serial attribution summary is incorrect'
+if printf '%s' "$serial_output" | grep -Fq 'Generic use allowed: YES'; then fail 'an EC25 port was authorized for generic use'; fi
+status_payload="$(/usr/libexec/ddk-console status)"
+[ "$(printf '%s' "$status_payload" | jsonfilter -e '@.data.hardware.serial_summary.modem_reserved')" = '4' ] || fail 'status API modem-reserved count is incorrect'
+[ "$(printf '%s' "$status_payload" | jsonfilter -e '@.data.hardware.serial_summary.reviewed_general_purpose')" = '0' ] || fail 'status API incorrectly exposes general-purpose serial hardware'
+serial_manifest=/usr/share/ddk-field-console/tools/serial.json
+[ "$(jsonfilter -i "$serial_manifest" -e '@.enabled')" = 'true' ] || fail 'serial attribution module is not enabled'
+[ "$(jsonfilter -i "$serial_manifest" -e '@.actions[0].id')" = 'serial.inspect' ] || fail 'serial INFO action ID is incorrect'
+[ "$(jsonfilter -i "$serial_manifest" -e '@.actions[0].class')" = 'INFO' ] || fail 'serial inspection lost its INFO classification'
+[ "$(jsonfilter -i "$serial_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'serial inspection is not explicitly enabled'
+[ "$(jsonfilter -i "$serial_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'serial session placeholder was unexpectedly enabled'
+pass 'EC25 serial ownership and modem-reserved policy'
 
 injection_marker=/tmp/ddk-injection-marker
 rm -f "$injection_marker"

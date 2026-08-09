@@ -141,7 +141,7 @@
 				h('span', { class: 'ddk-eyebrow' }, 'DIGITAL DROPKICK'),
 				h('h2', {}, section || 'FIELD CONSOLE'),
 				h('p', {}, description || 'GL-X750 field appliance control surface')),
-			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v1.2.1')));
+			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v1.3.0')));
 	}
 
 	function sectionHeading(title, detail) {
@@ -219,11 +219,13 @@
 		var modules = await exec([ 'capabilities' ]);
 		var system = status.system, network = status.network, remote = status.remote_access, hardware = status.hardware;
 		var memoryUsed = Math.max(0, system.memory.total - system.memory.available);
+		var serialSummary = hardware.serial_summary || { total: hardware.serial_devices.length, modem_reserved: 0, reviewed_general_purpose: 0, unreviewed: hardware.serial_devices.length };
+		var serialText = serialSummary.total ? serialSummary.total + ' nodes · ' + serialSummary.modem_reserved + ' MODEM RESERVED · ' + serialSummary.reviewed_general_purpose + ' GENERAL' : 'NONE';
 		var output = h('section', { class: 'ddk-output' });
 		var actions = [
 			[ 'Refresh System Status', 'system.refresh' ], [ 'Show Interfaces', 'network.interfaces' ],
 			[ 'Show Routes', 'network.routes' ], [ 'Show USB Devices', 'hardware.usb' ],
-			[ 'Show Serial Devices', 'hardware.serial' ], [ 'Show Tailscale Status', 'remote.tailscale' ],
+			[ 'Inspect Serial Attribution', 'serial.inspect' ], [ 'Show Tailscale Status', 'remote.tailscale' ],
 			[ 'Show Storage / Mounts', 'storage.mounts' ], [ 'Show Memory / Swap', 'system.memory' ],
 			[ 'Package Count', 'packages.count' ]
 		];
@@ -237,7 +239,7 @@
 				card('Memory & Storage', 'RESOURCES', [ row('Physical memory', formatBytes(system.memory.total)), row('Available memory', formatBytes(system.memory.available)), meter('Memory pressure', memoryUsed, system.memory.total, formatBytes(memoryUsed) + ' used'), row('Swap total / used', formatBytes(system.swap.total) + ' / ' + formatBytes(system.swap.used)), row('Root free', formatBytes(system.storage.available)), meter('Root storage', system.storage.used, system.storage.total, system.storage.percent + '% used') ]),
 				card('Network', 'CONNECTIVITY', [ row('LAN IP', network.lan_ip), row('WAN state', network.wan_up ? 'UP' : 'DOWN'), row('WAN interface', network.wan_interface), row('WAN IP', network.wan_ip), row('Default route', network.default_route), row('DNS', network.dns.join(', ')), row('Attached interfaces', network.interfaces.length) ]),
 				card('Remote Access', 'TAILSCALE', [ row('Installed', remote.tailscale_installed ? 'YES' : 'NO'), row('Process', remote.tailscale_running ? 'RUNNING' : 'NOT RUNNING'), row('Tailscale IP', remote.tailscale_ip), row('Version', remote.tailscale_version), h('div', { class: 'ddk-alert ddk-alert-info' }, 'Observation only — no Tailscale setting is read or modified.') ], 'ddk-card-wide'),
-				card('Hardware Presence', 'LIVE PROBES', [ row('USB devices', hardware.usb_devices.length), row('Serial devices', hardware.serial_devices.length ? hardware.serial_devices.join(', ') : 'NONE'), row('Video devices', hardware.video_devices.length ? hardware.video_devices.join(', ') : 'NONE'), row('RTL-SDR', hardware.classes.rtl_sdr ? 'DETECTED' : 'NOT DETECTED'), row('CAN interfaces', hardware.can_interfaces.length ? hardware.can_interfaces.join(', ') : 'NONE'), row('Bluetooth controller', hardware.classes.bluetooth ? 'DETECTED' : 'NOT DETECTED'), row('I2C / SPI', hardware.i2c_devices.length + ' / ' + hardware.spi_devices.length) ], 'ddk-card-wide')),
+				card('Hardware Presence', 'LIVE PROBES', [ row('USB devices', hardware.usb_devices.length), row('Serial attribution', serialText), row('Serial nodes', hardware.serial_devices.length ? hardware.serial_devices.join(', ') : 'NONE'), row('Video devices', hardware.video_devices.length ? hardware.video_devices.join(', ') : 'NONE'), row('RTL-SDR', hardware.classes.rtl_sdr ? 'DETECTED' : 'NOT DETECTED'), row('CAN interfaces', hardware.can_interfaces.length ? hardware.can_interfaces.join(', ') : 'NONE'), row('Bluetooth controller', hardware.classes.bluetooth ? 'DETECTED' : 'NOT DETECTED'), row('I2C / SPI', hardware.i2c_devices.length + ' / ' + hardware.spi_devices.length) ], 'ddk-card-wide')),
 			sectionHeading('Capability Matrix', modules.length + ' modular tool groups'),
 			h('div', { class: 'ddk-cap-grid' }, capabilitySummary(modules)),
 			sectionHeading('Safe Phase-One Actions', 'Fixed INFO allowlist only'),
@@ -364,7 +366,7 @@
 			[ 'Idle footprint', 'No DDK daemon, database, timer, analytics, or background poller runs on the router.' ],
 			[ 'Configuration', 'This page is deliberately read-only in phase one.' ]
 		];
-		app.replaceChildren(brand('SETTINGS', 'Production safety posture and operating limits'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'There are no mutable Field Console settings in version 1.2. This is intentional.'), h('div', { class: 'ddk-posture' }, posture.map(function(item) { return h('div', { class: 'ddk-posture-item' }, h('strong', {}, item[0]), h('span', {}, item[1])); })), sectionHeading('Explicitly Disabled', 'Requires future deliberate wiring'), card('Operating Boundaries', 'LOCKED', [ row('DISRUPTIVE actions', 'DISABLED'), row('SECURITY actions', 'ONLY BOUNDED LAN DISCOVERY ENABLED'), row('Cellular mutations / identifiers', 'NOT IMPLEMENTED'), row('Arbitrary targets / flags', 'REJECTED'), row('Generic PID stop', 'NOT IMPLEMENTED'), row('Persistent logs', 'NOT IMPLEMENTED'), row('WAN service exposure', 'NOT IMPLEMENTED') ], 'ddk-card-full'));
+		app.replaceChildren(brand('SETTINGS', 'Production safety posture and operating limits'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'There are no mutable web settings in version 1.3. The approved swap boot entry is managed only by guarded command-line tooling.'), h('div', { class: 'ddk-posture' }, posture.map(function(item) { return h('div', { class: 'ddk-posture-item' }, h('strong', {}, item[0]), h('span', {}, item[1])); })), sectionHeading('Explicitly Disabled', 'Requires future deliberate wiring'), card('Operating Boundaries', 'LOCKED', [ row('DISRUPTIVE actions', 'DISABLED'), row('SECURITY actions', 'ONLY BOUNDED LAN DISCOVERY ENABLED'), row('Cellular mutations / identifiers', 'NOT IMPLEMENTED'), row('Arbitrary targets / flags', 'REJECTED'), row('Generic PID stop', 'NOT IMPLEMENTED'), row('Persistent logs', 'NOT IMPLEMENTED'), row('WAN service exposure', 'NOT IMPLEMENTED') ], 'ddk-card-full'));
 	}
 
 	var renderers = { overview: renderOverview, tools: renderTools, packages: renderPackages, jobs: renderJobs, settings: renderSettings };

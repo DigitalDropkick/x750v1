@@ -14,6 +14,7 @@
 - Never change LAN, WAN, cellular, Wi-Fi, firewall, Tailscale, extroot, or swap configuration without explicit approval.
 - Never add a listener, expose a service to WAN, enable ttyd on WAN, reboot, or start unrelated daemons.
 - Never factory reset, repartition, format, or delete `/overlay/ddk-install.swap`.
+- The only approved persistent-swap change is the exact named `ddk_install_swap` fstab entry managed by the guarded configure/rollback scripts. Any other swap or extroot change needs new explicit approval.
 - Never modify GL.iNet proprietary UI files for this application.
 - Back up every existing target file before replacement and maintain tested rollback tooling.
 

@@ -136,10 +136,24 @@ try {
 	await waitUntil(async () => evaluate(pageSession, '!!document.querySelector("#ddk-app .ddk-brand") && !document.querySelector("#ddk-app .ddk-loading")'), 15000, 'Timed out rendering the shortcut destination.');
 	const shortcut = await evaluate(pageSession, `({
 		path: location.pathname,
-		version: document.body.textContent.includes('X750 / v1.2.1'),
+		version: document.body.textContent.includes('X750 / v1.3.0'),
+		serial: document.body.textContent.includes('4 nodes · 4 MODEM RESERVED · 0 GENERAL'),
+		overflow: document.documentElement.scrollWidth > window.innerWidth,
 		login: document.body.textContent.includes('Authorization Required')
 	})`);
-	if (!shortcut.version || shortcut.login) throw new Error(`Shortcut validation failed: ${JSON.stringify(shortcut)}`);
+	if (!shortcut.version || !shortcut.serial || shortcut.overflow || shortcut.login) throw new Error(`Shortcut validation failed: ${JSON.stringify(shortcut)}`);
+
+	await openPage(pageSession, 'overview', 320, 844);
+	const compactOverview = await evaluate(pageSession, `(() => ({
+		overflow: document.documentElement.scrollWidth > window.innerWidth,
+		serial: document.body.textContent.includes('4 nodes · 4 MODEM RESERVED · 0 GENERAL'),
+		inspect: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Inspect Serial Attribution' && !node.disabled),
+		width: window.innerWidth
+	}))()`);
+	if (compactOverview.overflow || !compactOverview.serial || !compactOverview.inspect || compactOverview.width !== 320) {
+		throw new Error(`Compact Overview validation failed: ${JSON.stringify(compactOverview)}`);
+	}
+	const overviewPath = await screenshot(pageSession, 'ddk-v130-overview-320.png');
 
 	await openPage(pageSession, 'jobs', 1440, 1000);
 	await waitForJobs(pageSession);
@@ -148,7 +162,7 @@ try {
 		const cellularButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Cellular Snapshot');
 		return {
 			login: document.body.textContent.includes('Authorization Required'),
-			version: document.body.textContent.includes('X750 / v1.2.1'),
+			version: document.body.textContent.includes('X750 / v1.3.0'),
 			button: !!button,
 			enabled: !!button && !button.disabled,
 			cellular: !!cellularButton && !cellularButton.disabled,
@@ -161,7 +175,7 @@ try {
 	if (desktop.login || !desktop.version || !desktop.button || !desktop.enabled || !desktop.cellular || !desktop.securityStyle || desktop.overflow) {
 		throw new Error(`Desktop Jobs validation failed: ${JSON.stringify(desktop)}`);
 	}
-	const desktopPath = await screenshot(pageSession, 'ddk-v121-jobs-desktop.png');
+	const desktopPath = await screenshot(pageSession, 'ddk-v130-jobs-desktop.png');
 
 	await openPage(pageSession, 'tools', 1440, 1000);
 	const tools = await evaluate(pageSession, `(() => {
@@ -169,9 +183,11 @@ try {
 		const button = card && Array.from(card.querySelectorAll('button')).find(node => node.textContent.trim() === 'network.nmap_lan_discovery');
 		const cellularCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Cellular / Modem'));
 		const cellularButton = cellularCard && Array.from(cellularCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'cellular.snapshot');
-		return { card: !!card, ready: !!card && card.textContent.includes('READY'), button: !!button, enabled: !!button && !button.disabled, cellularCard: !!cellularCard, cellularReady: !!cellularCard && cellularCard.textContent.includes('READY'), cellularButton: !!cellularButton && !cellularButton.disabled };
+		const serialCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('USB & Serial Attribution'));
+		const serialButton = serialCard && Array.from(serialCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'serial.inspect');
+		return { card: !!card, ready: !!card && card.textContent.includes('READY'), button: !!button, enabled: !!button && !button.disabled, cellularCard: !!cellularCard, cellularReady: !!cellularCard && cellularCard.textContent.includes('READY'), cellularButton: !!cellularButton && !cellularButton.disabled, serialCard: !!serialCard, serialReady: !!serialCard && serialCard.textContent.includes('READY'), serialButton: !!serialButton && !serialButton.disabled };
 	})()`);
-	if (!tools.card || !tools.ready || !tools.button || !tools.enabled || !tools.cellularCard || !tools.cellularReady || !tools.cellularButton) {
+	if (!tools.card || !tools.ready || !tools.button || !tools.enabled || !tools.cellularCard || !tools.cellularReady || !tools.cellularButton || !tools.serialCard || !tools.serialReady || !tools.serialButton) {
 		throw new Error(`Tool Registry validation failed: ${JSON.stringify(tools)}`);
 	}
 	await evaluate(pageSession, `(() => {
@@ -180,7 +196,7 @@ try {
 		return true;
 	})()`);
 	await new Promise(resolve => setTimeout(resolve, 200));
-	const toolsPath = await screenshot(pageSession, 'ddk-v121-tools-desktop.png');
+	const toolsPath = await screenshot(pageSession, 'ddk-v130-tools-desktop.png');
 
 	await openPage(pageSession, 'jobs', 390, 844);
 	await waitForJobs(pageSession);
@@ -193,10 +209,11 @@ try {
 	if (mobile.overflow || !mobile.button || !mobile.cellular || mobile.width !== 390) {
 		throw new Error(`Mobile Jobs validation failed: ${JSON.stringify(mobile)}`);
 	}
-	const mobilePath = await screenshot(pageSession, 'ddk-v121-jobs-mobile.png');
+	const mobilePath = await screenshot(pageSession, 'ddk-v130-jobs-mobile.png');
 
 	if (browserErrors.length) throw new Error(`Browser errors: ${browserErrors.join(' | ')}`);
-	console.log('Browser verification passed: /ddk shortcut, authenticated Jobs and Tool Registry at 1440px, Jobs at 390px, no horizontal overflow or runtime errors.');
+	console.log('Browser verification passed: /ddk shortcut, serial-aware Overview at 320px, authenticated Jobs and Tool Registry at 1440px, Jobs at 390px, no horizontal overflow or runtime errors.');
+	console.log(`DDK_BROWSER_OVERVIEW=${overviewPath}`);
 	console.log(`DDK_BROWSER_DESKTOP=${desktopPath}`);
 	console.log(`DDK_BROWSER_TOOLS=${toolsPath}`);
 	console.log(`DDK_BROWSER_MOBILE=${mobilePath}`);

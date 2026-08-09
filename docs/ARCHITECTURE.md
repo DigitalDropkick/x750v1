@@ -59,7 +59,11 @@ Disabled actions remain visible as roadmap placeholders. The manifest cannot cre
 4. A fixed read-only command runs with a timeout and output limit.
 5. The helper returns structured JSON for escaped text rendering.
 
-Phase-one INFO IDs are system refresh, interfaces, routes, USB, serial, Tailscale, storage/mounts, memory/swap, and installed-package count.
+Phase-one INFO IDs are system refresh, interfaces, routes, USB, serial attribution, Tailscale, storage/mounts, memory/swap, and installed-package count. Both the overview alias and registry action use one sysfs-only renderer; neither opens a serial device.
+
+## Serial ownership model
+
+The backend walks `/sys/class/tty` for `ttyUSB*` and `ttyACM*`, resolves each USB interface and parent, and records VID:PID, manufacturer/product, parent topology, interface number, and driver. Exact Quectel `2c7c:0125` functions using the `option` driver are classified `MODEM RESERVED`. Unknown adapters remain `UNREVIEWED SERIAL`; they do not satisfy the generic `serial` hardware class until a future explicit hardware allowlist approves them.
 
 ## Job system
 
@@ -101,11 +105,14 @@ The installer may create or replace only:
 
 It backs up each pre-existing target to `/root/ddk-backups/<timestamp>/`, records new files separately, installs atomically where practical, invalidates only LuCI's exact menu index cache file, and sends rpcd its native ACL reload signal. It does not touch the firmware's Lua module-cache directory or restart nginx, uhttpd, rpcd, or the router.
 
+Persistent swap activation is deliberately separate from application deployment. The opt-in configurator owns only `/etc/config/fstab`, creates before/after checksummed backups, and writes one exact named UCI section. Its rollback refuses to overwrite later fstab changes. The existing `S11fstab`/`block mount` path performs activation on a later authorized boot; DDK adds no init script.
+
 ## Deliberate exclusions
 
 - No package installation or upgrade.
 - No service activation.
 - No ttyd integration.
-- No network, firewall, wireless, cellular, Tailscale, extroot, or swap mutation.
+- No network, firewall, wireless, cellular, Tailscale, or extroot mutation.
+- No swapfile creation, initialization, resize, direct activation, or deactivation. The separately approved fstab entry is the only persistent swap configuration change.
 - No generic command runner or PID kill endpoint.
 - No Node, npm, Python server, frontend framework, telemetry, or external asset.

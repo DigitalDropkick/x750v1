@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.3.0 — 2026-08-09
+
+### Added
+
+- Sysfs-only serial attribution with VID:PID, USB parent, interface number, driver, and ownership state.
+- Exact `MODEM RESERVED` classification for all four Quectel EC25-AF serial functions.
+- Enabled `serial.inspect` INFO module; serial sessions remain disabled.
+- Separate idempotent swap-autostart configurator with exact fstab before/after backups and hash-guarded rollback.
+- Compact read-only post-reboot verifier for boot-critical appliance invariants.
+- Password-free browser verification wrapper that creates and destroys a five-minute, DDK-only LuCI session.
+
+### Safety
+
+- Serial inspection never opens a port and never infers AT/GNSS/diagnostic roles.
+- Unknown adapters remain unreviewed and cannot satisfy the generic serial class.
+- Swap tooling never creates, initializes, resizes, stops, or directly activates swap; it adds only the explicitly approved named native fstab entry.
+- No listener, daemon, package, firewall, network, wireless, cellular, Tailscale, GL.iNet UI, or extroot change.
+
 ## 1.2.1 — 2026-08-09
 
 ### Added

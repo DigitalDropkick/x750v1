@@ -1,12 +1,12 @@
 # Digital Dropkick Field Console
 
-Production-oriented LuCI control dashboard for the GL.iNet GL-X750 field appliance. Version 1.2.1 provides live system health, hardware-aware capability state, searchable package inventory, bounded Nmap LAN discovery, a privacy-conscious cellular identity/signal snapshot, and the memorable `/ddk` shortcut without adding a daemon or listener.
+Production-oriented LuCI control dashboard for the GL.iNet GL-X750 field appliance. Version 1.3.0 adds exact EC25 serial-port attribution, guarded native swap boot activation, and compact post-reboot verification to the live health, package inventory, bounded Nmap discovery, privacy-conscious cellular snapshot, and memorable `/ddk` shortcut—without adding a daemon or listener.
 
 ## Safety status
 
 The source is designed for the exact discovered target documented in [docs/TARGET-ENVIRONMENT.md](docs/TARGET-ENVIRONMENT.md). Deployment refuses a model, architecture, OpenWrt, extroot, free-space, swap, LuCI, or UI preflight mismatch before changing router files.
 
-At initial discovery on 2026-08-09, `/proc/swaps` reported no active swap. After extroot media migration, the swapfile was confirmed active; `deploy.sh` still refuses deployment whenever `/overlay/ddk-install.swap` is not active. The project does not activate, recreate, or modify it.
+At initial discovery on 2026-08-09, `/proc/swaps` reported no active swap. After extroot media migration, the swapfile was confirmed active; `deploy.sh` still refuses deployment whenever `/overlay/ddk-install.swap` is not active. The separate, explicitly approved `configure-swap-autostart.sh` adds only a native fstab boot entry. It does not create, initialize, resize, stop, or directly activate the swapfile. See [docs/SWAP-AUTOSTART.md](docs/SWAP-AUTOSTART.md).
 
 ## Architecture
 
@@ -28,6 +28,9 @@ docs/                  Target, architecture, security, registry, and roadmap doc
 deploy.sh              Validated one-connection deployment
 verify.sh              Local checks plus remote production verification
 rollback.sh            Restore a timestamped pre-deployment backup
+configure-swap-autostart.sh  Add the exact approved native swap boot entry
+rollback-swap-autostart.sh   Restore the exact pre-change fstab safely
+post-reboot-verify.sh        Compact read-only boot validation
 ```
 
 ## Local validation
@@ -84,7 +87,9 @@ The top-level LuCI entry is **Digital Dropkick**.
 
 Verification covers identity, extroot, swap, installed files, Lua/shell/JSON syntax, live APIs, all INFO actions, injection rejection, generic-PID rejection, traversal rejection, asynchronous jobs, Nmap proofs, the cellular privacy/read-only snapshot, system reports, GL.iNet UI, LuCI, dashboard route, Tailscale, protected configuration hashes, listener absence, memory, disk, and recent errors.
 
-The authenticated visual page and mobile layout should also be opened after deployment. `scripts/verify-browser.mjs` performs dependency-free Chrome DevTools checks when supplied a transient session through `DDK_BROWSER_SESSION`; it never accepts or stores a password. Automated review must use a short-lived, narrowly scoped test session that is destroyed immediately; passwords, tokens, and persistent browser sessions must never be printed, persisted, or transmitted outside the workstation/router boundary.
+The authenticated visual page and mobile layout should also be opened after deployment. `scripts/verify-browser-authenticated.sh` creates a five-minute LuCI session with only the DDK access group, runs the dependency-free Chrome DevTools checks, and destroys that session on exit. It requires the same already-authenticated SSH control socket as deployment and never accepts, prints, or stores a password or persistent browser session. The lower-level `scripts/verify-browser.mjs` still accepts a transient session through `DDK_BROWSER_SESSION` for manual test orchestration.
+
+After an explicitly authorized controlled reboot, run `./post-reboot-verify.sh`. It is intentionally much shorter than the full destructive-proof suite and checks only the boot-critical appliance invariants.
 
 ## Rollback
 
@@ -102,6 +107,12 @@ Or select the exact path printed by deployment:
 
 Rollback restores every pre-existing target file, removes only files recorded as newly created by this project, removes empty project directories, invalidates LuCI's exact menu index cache, and reloads rpcd ACLs. It does not factory reset, restart services, or touch UCI/network configuration.
 
+Swap boot configuration has a separate hash-guarded rollback because it owns one production-sensitive file:
+
+```sh
+./rollback-swap-autostart.sh
+```
+
 ## Adding tools
 
 See [docs/ADDING-A-TOOL.md](docs/ADDING-A-TOOL.md). Adding a manifest cannot enable execution by itself.
@@ -111,6 +122,7 @@ See [docs/ADDING-A-TOOL.md](docs/ADDING-A-TOOL.md). Adding a manifest cannot ena
 - DISRUPTIVE actions and every SECURITY action except the reviewed, bounded `network.nmap_lan_discovery` profile are placeholders only.
 - Nmap discovery accepts no browser target or flags. It is limited to host discovery on the server-derived private `br-lan` `/24`-or-smaller subnet, one active scan, and a 75-second wall limit.
 - Cellular snapshot accepts no device, action, or argument. It is fixed to the verified EC25-AF on `/dev/cdc-wdm0`, uses four read-only UQMI queries, and excludes subscriber identifiers, phone number, SIM contents, APN, location, scans, and raw commands.
+- Serial inspection reads sysfs metadata only. All four EC25 `ttyUSB` functions are `MODEM RESERVED`; no port is opened and no functional role is guessed.
 - Tool hardware detection is conservative and documents ambiguity.
 - Reports are transient across reboot and have a 24-hour cleanup horizon.
 - The browser polls only active jobs; there is no router-side polling process.

@@ -1,17 +1,17 @@
 {
   "id": "serial",
-  "name": "USB & Serial",
+  "name": "USB & Serial Attribution",
   "category": "Serial",
-  "description": "Serial terminals, bridges, and concentrator tooling.",
+  "description": "Read-only sysfs ownership mapping for serial nodes, plus disabled terminal and bridge placeholders.",
   "package_names": ["picocom", "ser2net", "conserver", "gensio-bin"],
   "expected_binaries": ["picocom", "ser2net", "conserver"],
-  "required_hardware": ["serial"],
-  "status_probe": "serial",
-  "risk_level": "ACTION",
-  "enabled": false,
+  "required_hardware": ["serial_detected"],
+  "status_probe": "serial_detected",
+  "risk_level": "INFO",
+  "enabled": true,
   "actions": [
-    {"id": "serial.inspect", "class": "INFO", "enabled": false},
+    {"id": "serial.inspect", "class": "INFO", "enabled": true},
     {"id": "serial.session", "class": "ACTION", "enabled": false}
   ],
-  "help_text": "Serial nodes are detected independently from whether they are safe to open. Modem ports must not be seized."
+  "help_text": "Inspection never opens a port. EC25-owned nodes are MODEM RESERVED; every other adapter remains UNREVIEWED until its hardware identity is explicitly approved."
 }

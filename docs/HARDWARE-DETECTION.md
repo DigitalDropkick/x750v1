@@ -7,7 +7,8 @@ Hardware probes are read-only, on-demand, and conservative. They never start a d
 | Class | Current probe |
 | --- | --- |
 | USB | Parsed `lsusb` lines. |
-| Serial | Existing `/dev/ttyUSB[0-9]+` and `/dev/ttyACM[0-9]+` nodes. |
+| Serial detected | Existing `/dev/ttyUSB[0-9]+` and `/dev/ttyACM[0-9]+` nodes, attributed through sysfs. |
+| Generic serial | True only for a future explicitly reviewed adapter identity; modem-reserved and unreviewed nodes do not satisfy this class. |
 | Cellular modem | Capability state uses Quectel/`2c7c` USB presence. The enabled snapshot additionally requires exact `2c7c:0125`, `/dev/cdc-wdm0`, `qmi_wwan`, and attributed `wwan0`. |
 | Video | Existing `/dev/video[0-9]+` nodes. |
 | RTL-SDR | `lsusb` contains `0bda:283*` or an RTL283 identifier. |
@@ -24,7 +25,9 @@ Hardware probes are read-only, on-demand, and conservative. They never start a d
 
 ## Important limitations
 
-- A serial node proves a serial-class device, not that it is safe or appropriate for a given industrial tool. The current Quectel modem exposes serial nodes and must not be seized by generic serial actions.
+- A serial node proves a serial-class device, not that it is safe or appropriate for a given industrial tool. The current Quectel modem exposes four nodes, all classified `MODEM RESERVED`, and none satisfies the generic serial hardware class.
+- The attribution probe reads sysfs only and never opens `/dev/ttyUSB*` or `/dev/ttyACM*`. It records interface numbers but deliberately does not infer AT, GNSS, diagnostic, or modem roles without reviewed vendor evidence.
+- A non-EC25 serial node is `UNREVIEWED SERIAL`, not automatically general-purpose. This prevents a newly attached device from becoming an executable target merely because a node appeared.
 - USB description matching can miss devices with generic descriptors and can produce false positives. A future module may add an exact, reviewed VID:PID list.
 - Hardware presence is not service health. The console does not start gpsd, Bluetooth, camera, SDR, CAN, or serial services to improve a status color.
 - Installed kernel support is not equivalent to attached hardware.

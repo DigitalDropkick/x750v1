@@ -11,8 +11,10 @@ fail() {
 }
 
 git diff --check
-bash -n deploy.sh verify.sh rollback.sh
-sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh files/usr/libexec/ddk-job-worker
+bash -n deploy.sh verify.sh rollback.sh configure-swap-autostart.sh rollback-swap-autostart.sh post-reboot-verify.sh scripts/verify-browser-authenticated.sh
+sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh \
+	scripts/router-configure-swap-autostart.sh scripts/router-rollback-swap-autostart.sh \
+	scripts/router-post-reboot-verify.sh files/usr/libexec/ddk-job-worker
 node --check scripts/verify-browser.mjs >/dev/null
 
 shortcut_file=files/www/ddk/gl_home.html
@@ -35,8 +37,30 @@ if rg -n 'opkg[[:space:]]+upgrade|--force-depends|--force-overwrite' files scrip
 	fail 'forbidden package operation found'
 fi
 
-if rg -n 'uci[[:space:]]+(set|add|delete|commit)|firewall[.-](restart|reload)|/etc/init.d/(network|firewall|tailscale)[[:space:]]+(restart|reload|stop|start)|(^|[;&|])[[:space:]]*(cp|mv|sed[^[:space:]]*[[:space:]]+-i)[^\n]*/etc/config/(network|firewall|wireless)' files scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh; then
+if rg -n 'uci[[:space:]]+(-q[[:space:]]+)?(set|add|delete|commit|revert)|firewall[.-](restart|reload)|/etc/init.d/(network|firewall|tailscale)[[:space:]]+(restart|reload|stop|start)|(^|[;&|])[[:space:]]*(cp|mv|sed[^[:space:]]*[[:space:]]+-i)[^\n]*/etc/config/(network|firewall|wireless)' \
+	files scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh \
+	scripts/router-configure-swap-autostart.sh scripts/router-rollback-swap-autostart.sh \
+	scripts/router-post-reboot-verify.sh deploy.sh verify.sh rollback.sh \
+	configure-swap-autostart.sh rollback-swap-autostart.sh post-reboot-verify.sh |
+	grep -v '^scripts/router-configure-swap-autostart\.sh:'; then
 	fail 'production configuration mutation found'
+fi
+
+swap_mutation_count="$(rg -n 'uci[[:space:]]+(-q[[:space:]]+)?(set|add|delete|commit|revert)' scripts/router-configure-swap-autostart.sh | wc -l)"
+[[ "$swap_mutation_count" -eq 6 ]] || fail "unexpected number of approved fstab mutations: $swap_mutation_count"
+for approved_mutation in \
+	"uci -q revert fstab.ddk_install_swap || true" \
+	"uci -q delete fstab.ddk_install_swap || true" \
+	"uci set fstab.ddk_install_swap='swap'" \
+	"uci set fstab.ddk_install_swap.device='/overlay/ddk-install.swap'" \
+	"uci set fstab.ddk_install_swap.enabled='1'" \
+	"uci commit fstab"
+do
+	rg -F "$approved_mutation" scripts/router-configure-swap-autostart.sh >/dev/null || fail "approved swap mutation is missing: $approved_mutation"
+done
+if rg -n 'swapoff|mkswap|block[[:space:]]+mount|/etc/init\.d/|reboot|poweroff|uci[[:space:]]+(-q[[:space:]]+)?(set|add|delete|commit|revert)[^\n]*(network|firewall|wireless|uhttpd|rpcd|tailscale)' \
+	scripts/router-configure-swap-autostart.sh scripts/router-rollback-swap-autostart.sh configure-swap-autostart.sh rollback-swap-autostart.sh; then
+	fail 'swap-autostart tooling contains a prohibited operation'
 fi
 
 if rg -n 'cmd=[^[:space:]]|[?&]cmd=|action_id=.*shell|kill[[:space:]]+\$[A-Za-z_][A-Za-z0-9_]*' files/www files/usr/libexec; then

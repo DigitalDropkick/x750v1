@@ -29,9 +29,10 @@ The board name contains `nor`, while the firmware release reports the `ath79/nan
 - Physical memory: 121,188 KiB total; 37,276 KiB was available during post-migration validation.
 - Load averages were 1.36 / 1.65 / 1.91 roughly 19 minutes after the replacement card booted.
 - Initial discovery found no active swap. Post-migration validation confirmed `/overlay/ddk-install.swap` active with 262,140 KiB total and 776 KiB used.
-- A later reboot left the valid mode-0600 swapfile intact but inactive, confirming that boot activation is not configured. It was reactivated as a separate operator maintenance step before the 1.2.1 deployment; no fstab or boot configuration was changed.
+- A later reboot left the valid mode-0600 swapfile intact but inactive, confirming that boot activation was not configured. It was reactivated as a separate operator maintenance step before the 1.2.1 deployment.
+- Phase 2A inspection found no existing swap UCI section. The exact installed fstools commit supports an absolute regular swapfile target through `config swap`, and the enabled `S11fstab` boot script invokes `/sbin/block mount`. Version 1.3.0 therefore uses one named `ddk_install_swap` entry plus a separate hash-guarded rollback; no DDK init script is added.
 
-Deployment treats inactive swap as a failed safety preflight. The project never deletes, recreates, formats, or silently activates the swap file. No explicit swap section was present in UCI at post-migration validation, so this document does not claim that activation will persist through another boot.
+Deployment treats inactive swap as a failed safety preflight. The project never deletes, recreates, formats, resizes, stops, or silently activates the swap file. Persistence is not considered proven until the compact verifier passes after a separately authorized reboot.
 
 ## Web and authentication topology
 
@@ -82,7 +83,7 @@ Relevant confirmed paths:
 ## Hardware baseline
 
 - USB: Quectel EC25-AF modem, Generic USB Storage, USB 2.0 hub, and USB/IP virtual host controllers.
-- Serial: `/dev/ttyUSB0` through `/dev/ttyUSB3`.
+- Serial: `/dev/ttyUSB0` through `/dev/ttyUSB3`; sysfs attributes all four to Quectel `2c7c:0125`, USB interfaces `00`–`03`, using the `option` driver. They are `MODEM RESERVED`, not general-purpose adapters.
 - Video: no `/dev/video*` node.
 - CAN: no CAN interface.
 - Bluetooth: no active controller reported by `hciconfig`.

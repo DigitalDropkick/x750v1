@@ -4,14 +4,16 @@ The first reviewed SECURITY module and the cellular INFO snapshot are now wired.
 
 ## Release phases
 
-### Phase 2A — Appliance hardening and serial attribution (next)
+### Phase 2A — Appliance hardening and serial attribution (implemented in 1.3.0)
 
-1. Decide whether `/overlay/ddk-install.swap` should receive an explicit, rollback-tested boot activation entry. The file survived the observed reboot but did not reactivate; this configuration change requires separate approval.
-2. Map every `/dev/ttyUSB*` and `/dev/ttyACM*` node through sysfs to its USB VID:PID, interface number, driver, and parent device without opening the port.
-3. Label the EC25-AF modem functions separately from true general-purpose serial adapters so later tools cannot target the wrong port.
-4. Add a compact post-reboot verification profile for version, `/ddk`, LuCI authentication, GL.iNet UI, extroot, swap, Tailscale, protected hashes, listeners, and idle workers.
+1. The separately approved native swap entry has guarded configure/rollback tooling and an exact fstab backup model.
+2. Every `/dev/ttyUSB*` and `/dev/ttyACM*` node is mapped through sysfs to USB identity, interface number, driver, and parent without opening the port.
+3. All EC25-AF serial functions are `MODEM RESERVED`; unreviewed adapters cannot satisfy the general serial hardware class.
+4. `post-reboot-verify.sh` checks the boot-critical appliance invariants without starting bounded tools.
 
-### Phase 2B — Digital Dropkick brand alignment
+The remaining acceptance gate is one separately authorized controlled reboot followed by the compact verifier.
+
+### Phase 2B — Digital Dropkick brand alignment (next)
 
 Translate the public website's visual language into the console before several more tool workflows expand the interface. This is a design-token port, not a copy of the Astro/GoDaddy runtime.
 
@@ -44,9 +46,9 @@ After the hardware map and visual system are stable, add packet capture first, t
 
 `cellular.snapshot` validates the exact EC25-AF topology, runs four fixed read-only UQMI actions with per-query limits, and emits only whitelisted modem, registration, and signal fields. Connect/disconnect, subscriber IDs, SIM contents, APN/current settings, bands, PIN/PUK, cell location, scans, resets, raw AT/QMI, and GL.iNet modem configuration are excluded.
 
-## 1. Serial device attribution
+## Completed: Serial device attribution
 
-Map each `/dev/ttyUSB*` node through sysfs to VID:PID/interface purpose. This prevents the Quectel modem ports from being presented as generic serial adapters.
+The sysfs-only inspector maps each serial node to VID:PID, parent, interface, and driver. It marks the verified EC25-AF ports modem-reserved and makes no unverified interface-role claims.
 
 ## 2. Bounded tcpdump capture
 

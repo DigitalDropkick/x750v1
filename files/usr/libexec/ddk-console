@@ -249,13 +249,119 @@ local function has_dir_entry(path, pattern)
 	return false
 end
 
+local function serial_attribution()
+	local nodes = list_device_nodes("^ttyUSB%d+$")
+	for _, node in ipairs(list_device_nodes("^ttyACM%d+$")) do
+		nodes[#nodes + 1] = node
+	end
+	table.sort(nodes)
+
+	local devices = {}
+	local summary = {
+		total = 0,
+		modem_reserved = 0,
+		reviewed_general_purpose = 0,
+		unreviewed = 0,
+		unattributed = 0
+	}
+
+	for _, node in ipairs(nodes) do
+		local name = node:match("^/dev/(.+)$") or ""
+		local base = "/sys/class/tty/" .. name
+		local interface_path = fs.realpath(base .. "/device/..") or ""
+		local parent_path = fs.realpath(base .. "/device/../..") or ""
+		local interface_number = trim(fs.readfile(base .. "/device/../bInterfaceNumber"))
+		local vendor_id = trim(fs.readfile(base .. "/device/../../idVendor")):lower()
+		local product_id = trim(fs.readfile(base .. "/device/../../idProduct")):lower()
+		local manufacturer = trim(fs.readfile(base .. "/device/../../manufacturer"))
+		local product = trim(fs.readfile(base .. "/device/../../product"))
+		local driver_link = fs.readlink(base .. "/device/../driver") or ""
+		local driver = driver_link:match("([^/]+)$") or ""
+		local parent = parent_path:match("([^/]+)$") or ""
+		local exact_ec25 = vendor_id == "2c7c" and product_id == "0125" and
+			manufacturer:lower() == "quectel" and product:lower():match("^ec25") ~= nil and driver == "option"
+		local classification
+		local owner
+
+		if exact_ec25 then
+			classification = "MODEM RESERVED"
+			owner = "Quectel EC25-AF cellular modem"
+			summary.modem_reserved = summary.modem_reserved + 1
+		elseif vendor_id ~= "" and product_id ~= "" then
+			classification = "UNREVIEWED SERIAL"
+			owner = trim(manufacturer .. " " .. product)
+			if owner == "" then owner = "Unknown USB serial device" end
+			summary.unreviewed = summary.unreviewed + 1
+		else
+			classification = "UNATTRIBUTED"
+			owner = "Sysfs USB parent unavailable"
+			summary.unattributed = summary.unattributed + 1
+		end
+
+		devices[#devices + 1] = {
+			node = node,
+			classification = classification,
+			owner = owner,
+			generic_use_allowed = false,
+			usb = {
+				vendor_id = vendor_id,
+				product_id = product_id,
+				manufacturer = manufacturer,
+				product = product,
+				parent = parent,
+				interface_number = interface_number,
+				driver = driver,
+				interface_path = interface_path
+			}
+		}
+	end
+
+	summary.total = #devices
+	return devices, summary
+end
+
+local function serial_attribution_text()
+	local devices, summary = serial_attribution()
+	local lines = {
+		"SERIAL DEVICE ATTRIBUTION (SYSFS ONLY)",
+		"Policy: read metadata only; no serial port was opened.",
+		""
+	}
+
+	if #devices == 0 then
+		lines[#lines + 1] = "No /dev/ttyUSB* or /dev/ttyACM* nodes detected."
+	else
+		for _, device in ipairs(devices) do
+			local usb_id = device.usb.vendor_id ~= "" and device.usb.product_id ~= "" and
+				(device.usb.vendor_id .. ":" .. device.usb.product_id) or "unavailable"
+			lines[#lines + 1] = device.node
+			lines[#lines + 1] = "  Classification: " .. device.classification
+			lines[#lines + 1] = "  Owner: " .. device.owner
+			lines[#lines + 1] = "  USB: " .. usb_id
+			lines[#lines + 1] = "  Parent: " .. (device.usb.parent ~= "" and device.usb.parent or "unavailable")
+			lines[#lines + 1] = "  Interface: " .. (device.usb.interface_number ~= "" and device.usb.interface_number or "unavailable")
+			lines[#lines + 1] = "  Driver: " .. (device.usb.driver ~= "" and device.usb.driver or "unavailable")
+			lines[#lines + 1] = "  Generic use allowed: NO"
+			lines[#lines + 1] = ""
+		end
+	end
+
+	lines[#lines + 1] = string.format(
+		"Summary: %d total; %d modem-reserved; %d reviewed general-purpose; %d unreviewed; %d unattributed.",
+		summary.total,
+		summary.modem_reserved,
+		summary.reviewed_general_purpose,
+		summary.unreviewed,
+		summary.unattributed
+	)
+	return table.concat(lines, "\n") .. "\n"
+end
+
 local function hardware_snapshot()
 	local usb, usb_text = usb_lines()
-	local serial = list_device_nodes("^ttyUSB%d+$")
-	for _, node in ipairs(list_device_nodes("^ttyACM%d+$")) do
-		serial[#serial + 1] = node
-	end
-	table.sort(serial)
+	local serial, serial_summary = serial_attribution()
+	local serial_nodes = {}
+	for _, device in ipairs(serial) do serial_nodes[#serial_nodes + 1] = device.node end
 	local video = list_device_nodes("^video%d+$")
 	local i2c = list_device_nodes("^i2c%-%d+$")
 	local spi = list_device_nodes("^spidev")
@@ -268,7 +374,8 @@ local function hardware_snapshot()
 
 	local classes = {
 		usb = #usb > 0,
-		serial = #serial > 0,
+		serial = serial_summary.reviewed_general_purpose > 0,
+		serial_detected = serial_summary.total > 0,
 		cellular_modem = usb_text:match("quectel") ~= nil or usb_text:match("2c7c:") ~= nil,
 		video = #video > 0,
 		rtl_sdr = usb_text:match("0bda:283") ~= nil or usb_text:match("rtl283") ~= nil,
@@ -286,7 +393,9 @@ local function hardware_snapshot()
 
 	return {
 		usb_devices = usb,
-		serial_devices = serial,
+		serial_devices = serial_nodes,
+		serial_attribution = serial,
+		serial_summary = serial_summary,
 		video_devices = video,
 		can_interfaces = can,
 		i2c_devices = i2c,
@@ -384,7 +493,7 @@ local function system_status()
 end
 
 local valid_probe_ids = {
-	software = true, usb = true, serial = true, cellular_modem = true,
+	software = true, usb = true, serial = true, serial_detected = true, cellular_modem = true,
 	video = true, rtl_sdr = true, can = true, bluetooth = true,
 	i2c = true, spi = true, gps = true, android = true,
 	apple_mobile = true, smartcard = true, programmer = true,
@@ -487,7 +596,8 @@ local info_actions = {
 	["network.interfaces"] = { label = "Interfaces", command = "ip -o link show; ip -o addr show" },
 	["network.routes"] = { label = "Routes", command = "ip route show; ip -6 route show" },
 	["hardware.usb"] = { label = "USB Devices", command = "lsusb" },
-	["hardware.serial"] = { label = "Serial Devices", command = "ls -l /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true" },
+	["hardware.serial"] = { label = "Serial Device Attribution", render = serial_attribution_text },
+	["serial.inspect"] = { label = "Serial Device Attribution", render = serial_attribution_text },
 	["remote.tailscale"] = { label = "Tailscale Status", command = "tailscale version; tailscale ip -4; pidof tailscaled >/dev/null && echo 'tailscaled: running' || echo 'tailscaled: not running'" },
 	["storage.mounts"] = { label = "Storage and Mounts", command = "df -hT; printf '\\nMounts:\\n'; mount" },
 	["system.memory"] = { label = "Memory and Swap", command = "free; printf '\\n/proc/swaps:\\n'; cat /proc/swaps" },
@@ -739,7 +849,14 @@ elseif verb == "info" and #arg == 2 then
 	local action_id = arg[2]
 	local spec = info_actions[action_id]
 	if not spec then respond(false, nil, "Unknown or disabled INFO action", "ACTION_NOT_ALLOWED") end
-	local output, truncated = capture(spec.command, MAX_CAPTURE)
+	local output, truncated
+	if spec.render then
+		output = spec.render()
+		truncated = #output > MAX_CAPTURE
+		if truncated then output = output:sub(1, MAX_CAPTURE) end
+	else
+		output, truncated = capture(spec.command, MAX_CAPTURE)
+	end
 	respond(true, { action_id = action_id, class = "INFO", label = spec.label, output = output, truncated = truncated })
 elseif verb == "job" and arg[2] == "list" and #arg == 2 then
 	respond(true, list_jobs())
