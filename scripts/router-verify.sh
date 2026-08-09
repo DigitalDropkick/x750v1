@@ -41,7 +41,8 @@ for file in \
 	/usr/libexec/ddk-job-worker \
 	/usr/lib/lua/luci/view/ddk/shell.htm \
 	/www/luci-static/resources/ddk/console-app.js \
-	/www/luci-static/resources/ddk/console.css
+	/www/luci-static/resources/ddk/console.css \
+	/www/ddk/gl_home.html
 do
 	[ -f "$file" ] || fail "installed file is missing: $file"
 done
@@ -222,10 +223,15 @@ pass 'sanitized system report generation and view'
 root_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1/ || true)"
 luci_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1/cgi-bin/luci/ || true)"
 dashboard_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1/cgi-bin/luci/admin/ddk/overview || true)"
+shortcut_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1/ddk || true)"
+shortcut_page="$(curl -sS --max-time 8 http://127.0.0.1/ddk/ || true)"
 [ "$root_http" = '200' ] || fail "GL.iNet UI returned HTTP $root_http"
 case "$luci_http" in 200|302|403) ;; *) fail "LuCI returned HTTP $luci_http" ;; esac
 [ "$dashboard_http" = '403' ] || [ "$dashboard_http" = '302' ] || [ "$dashboard_http" = '200' ] || fail "dashboard route returned HTTP $dashboard_http"
-pass 'GL.iNet UI, LuCI, and authenticated dashboard boundary respond'
+[ "$shortcut_http" = '301' ] || [ "$shortcut_http" = '302' ] || fail "/ddk shortcut returned HTTP $shortcut_http"
+printf '%s' "$shortcut_page" | grep -Fq 'content="0;url=/cgi-bin/luci/admin/ddk/overview"' || fail '/ddk shortcut target is incorrect'
+printf '%s' "$shortcut_page" | grep -Fq 'Continue to the authenticated console' || fail '/ddk shortcut fallback is missing'
+pass 'GL.iNet UI, LuCI, authenticated dashboard, and /ddk shortcut respond'
 
 pidof tailscaled >/dev/null 2>&1 || fail 'tailscaled is not running'
 tailscale_ip="$(tailscale ip -4 2>/dev/null || true)"

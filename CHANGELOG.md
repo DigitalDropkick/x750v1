@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.1 — 2026-08-09
+
+### Added
+
+- Memorable `http://192.168.8.1/ddk` shortcut to the authenticated dashboard.
+
+### Safety
+
+- The shortcut is a content-free static redirect under `/www/ddk/`; it adds no listener, CGI handler, nginx rule, service reload, or authentication bypass.
+- Deployment and rollback own only the exact shortcut file and retain the existing protected-configuration checks.
+
 ## 1.2.0 — 2026-08-09
 
 ### Added

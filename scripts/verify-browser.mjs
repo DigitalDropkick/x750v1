@@ -131,6 +131,16 @@ try {
 	}, pageSession);
 	if (!cookie.success) throw new Error('Chrome rejected the transient LuCI cookie.');
 
+	await call('Page.navigate', { url: `${base}/ddk` }, pageSession);
+	await waitUntil(async () => evaluate(pageSession, `location.pathname.endsWith('/cgi-bin/luci/admin/ddk/overview') && document.readyState === 'complete' && document.querySelector('#ddk-app')?.dataset.page === 'overview'`), 15000, 'Timed out following the /ddk shortcut.');
+	await waitUntil(async () => evaluate(pageSession, '!!document.querySelector("#ddk-app .ddk-brand") && !document.querySelector("#ddk-app .ddk-loading")'), 15000, 'Timed out rendering the shortcut destination.');
+	const shortcut = await evaluate(pageSession, `({
+		path: location.pathname,
+		version: document.body.textContent.includes('X750 / v1.2.1'),
+		login: document.body.textContent.includes('Authorization Required')
+	})`);
+	if (!shortcut.version || shortcut.login) throw new Error(`Shortcut validation failed: ${JSON.stringify(shortcut)}`);
+
 	await openPage(pageSession, 'jobs', 1440, 1000);
 	await waitForJobs(pageSession);
 	const desktop = await evaluate(pageSession, `(() => {
@@ -138,7 +148,7 @@ try {
 		const cellularButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Cellular Snapshot');
 		return {
 			login: document.body.textContent.includes('Authorization Required'),
-			version: document.body.textContent.includes('X750 / v1.2'),
+			version: document.body.textContent.includes('X750 / v1.2.1'),
 			button: !!button,
 			enabled: !!button && !button.disabled,
 			cellular: !!cellularButton && !cellularButton.disabled,
@@ -151,7 +161,7 @@ try {
 	if (desktop.login || !desktop.version || !desktop.button || !desktop.enabled || !desktop.cellular || !desktop.securityStyle || desktop.overflow) {
 		throw new Error(`Desktop Jobs validation failed: ${JSON.stringify(desktop)}`);
 	}
-	const desktopPath = await screenshot(pageSession, 'ddk-v12-jobs-desktop.png');
+	const desktopPath = await screenshot(pageSession, 'ddk-v121-jobs-desktop.png');
 
 	await openPage(pageSession, 'tools', 1440, 1000);
 	const tools = await evaluate(pageSession, `(() => {
@@ -170,7 +180,7 @@ try {
 		return true;
 	})()`);
 	await new Promise(resolve => setTimeout(resolve, 200));
-	const toolsPath = await screenshot(pageSession, 'ddk-v12-tools-desktop.png');
+	const toolsPath = await screenshot(pageSession, 'ddk-v121-tools-desktop.png');
 
 	await openPage(pageSession, 'jobs', 390, 844);
 	await waitForJobs(pageSession);
@@ -183,10 +193,10 @@ try {
 	if (mobile.overflow || !mobile.button || !mobile.cellular || mobile.width !== 390) {
 		throw new Error(`Mobile Jobs validation failed: ${JSON.stringify(mobile)}`);
 	}
-	const mobilePath = await screenshot(pageSession, 'ddk-v12-jobs-mobile.png');
+	const mobilePath = await screenshot(pageSession, 'ddk-v121-jobs-mobile.png');
 
 	if (browserErrors.length) throw new Error(`Browser errors: ${browserErrors.join(' | ')}`);
-	console.log('Browser verification passed: authenticated Jobs and Tool Registry at 1440px, Jobs at 390px, no horizontal overflow or runtime errors.');
+	console.log('Browser verification passed: /ddk shortcut, authenticated Jobs and Tool Registry at 1440px, Jobs at 390px, no horizontal overflow or runtime errors.');
 	console.log(`DDK_BROWSER_DESKTOP=${desktopPath}`);
 	console.log(`DDK_BROWSER_TOOLS=${toolsPath}`);
 	console.log(`DDK_BROWSER_MOBILE=${mobilePath}`);

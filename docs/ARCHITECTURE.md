@@ -13,7 +13,7 @@ The target's installed LuCI 23.119 applications establish the native pattern:
 3. Shared dependency-free JavaScript and namespaced CSS live in `/www/luci-static/resources/ddk/`.
 4. `/usr/share/rpcd/acl.d/ddk-field-console.json` permits execution only of the fixed DDK helper through the already-installed authenticated LuCI `cgi-io` path.
 
-Static LuCI assets contain no secrets. All live information and executable behavior remain behind the existing LuCI session boundary. No CGI handler, public route, port, nginx rule, uhttpd rule, or firewall rule is added.
+Static LuCI assets contain no secrets. All live information and executable behavior remain behind the existing LuCI session boundary. `/www/ddk/gl_home.html` is a content-free static redirect to the authenticated overview, providing the memorable `/ddk` path without a CGI handler, port, nginx rule, uhttpd rule, or firewall rule.
 
 ## Backend
 
@@ -93,6 +93,7 @@ The installer may create or replace only:
 - `/usr/share/luci/menu.d/ddk-field-console.json`
 - `/usr/share/rpcd/acl.d/ddk-field-console.json`
 - `/www/luci-static/resources/ddk/*`
+- `/www/ddk/gl_home.html`
 - `/usr/lib/lua/luci/view/ddk/*`
 - `/usr/libexec/ddk-console`
 - `/usr/libexec/ddk-job-worker`

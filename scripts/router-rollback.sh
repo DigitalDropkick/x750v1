@@ -19,6 +19,7 @@ allowed_target() {
 		/usr/share/rpcd/acl.d/ddk-field-console.json) return 0 ;;
 		/usr/lib/lua/luci/view/ddk/*) return 0 ;;
 		/www/luci-static/resources/ddk/*) return 0 ;;
+		/www/ddk/gl_home.html) return 0 ;;
 		# Retained only so backups from pre-template DDK builds remain removable.
 		/www/luci-static/resources/view/ddk/*) return 0 ;;
 		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker) return 0 ;;
@@ -65,6 +66,7 @@ done < "$backup_path/new.list"
 rmdir /usr/lib/lua/luci/view/ddk 2>/dev/null || true
 rmdir /www/luci-static/resources/view/ddk 2>/dev/null || true
 rmdir /www/luci-static/resources/ddk 2>/dev/null || true
+rmdir /www/ddk 2>/dev/null || true
 rmdir /usr/share/ddk-field-console/tools 2>/dev/null || true
 rmdir /usr/share/ddk-field-console 2>/dev/null || true
 [ -d /tmp/luci-indexcache ] || rm -f /tmp/luci-indexcache

@@ -1,6 +1,6 @@
 # Digital Dropkick Field Console
 
-Production-oriented LuCI control dashboard for the GL.iNet GL-X750 field appliance. Version 1.2 provides live system health, hardware-aware capability state, searchable package inventory, bounded Nmap LAN discovery, and a privacy-conscious cellular identity/signal snapshot without adding a daemon or listener.
+Production-oriented LuCI control dashboard for the GL.iNet GL-X750 field appliance. Version 1.2.1 provides live system health, hardware-aware capability state, searchable package inventory, bounded Nmap LAN discovery, a privacy-conscious cellular identity/signal snapshot, and the memorable `/ddk` shortcut without adding a daemon or listener.
 
 ## Safety status
 
@@ -69,8 +69,10 @@ The installer sends rpcd its native reload signal so it recognizes the new ACL. 
 After deployment and normal LuCI login:
 
 ```text
-http://192.168.8.1/cgi-bin/luci/admin/ddk/overview
+http://192.168.8.1/ddk
 ```
+
+The content-free shortcut immediately redirects to `/cgi-bin/luci/admin/ddk/overview`. Authentication remains entirely within LuCI; the shortcut exposes no dashboard data.
 
 The top-level LuCI entry is **Digital Dropkick**.
 

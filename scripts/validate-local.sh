@@ -15,6 +15,14 @@ bash -n deploy.sh verify.sh rollback.sh
 sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh files/usr/libexec/ddk-job-worker
 node --check scripts/verify-browser.mjs >/dev/null
 
+shortcut_file=files/www/ddk/gl_home.html
+[[ -f "$shortcut_file" ]] || fail 'the /ddk shortcut page is missing'
+rg -F 'content="0;url=/cgi-bin/luci/admin/ddk/overview"' "$shortcut_file" >/dev/null || fail 'the /ddk shortcut target is incorrect'
+rg -F 'href="/cgi-bin/luci/admin/ddk/overview"' "$shortcut_file" >/dev/null || fail 'the /ddk fallback target is incorrect'
+if rg -ni 'https?://|<form|<script|fetch\(|xmlhttprequest|/cgi-bin/cgi-exec' "$shortcut_file"; then
+	fail 'the /ddk shortcut contains an external, executable, or backend reference'
+fi
+
 while IFS= read -r file; do
 	node --check "$file" >/dev/null
 done < <(find files/www/luci-static/resources -type f -name '*.js' | sort)

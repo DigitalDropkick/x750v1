@@ -23,6 +23,7 @@ allowed_target() {
 		/usr/share/rpcd/acl.d/ddk-field-console.json) return 0 ;;
 		/usr/lib/lua/luci/view/ddk/*) return 0 ;;
 		/www/luci-static/resources/ddk/*) return 0 ;;
+		/www/ddk/gl_home.html) return 0 ;;
 		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker) return 0 ;;
 		/usr/share/ddk-field-console/*) return 0 ;;
 		*) return 1 ;;

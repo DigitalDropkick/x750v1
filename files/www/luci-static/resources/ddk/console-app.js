@@ -141,7 +141,7 @@
 				h('span', { class: 'ddk-eyebrow' }, 'DIGITAL DROPKICK'),
 				h('h2', {}, section || 'FIELD CONSOLE'),
 				h('p', {}, description || 'GL-X750 field appliance control surface')),
-			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v1.2')));
+			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v1.2.1')));
 	}
 
 	function sectionHeading(title, detail) {

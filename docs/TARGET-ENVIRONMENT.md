@@ -29,12 +29,14 @@ The board name contains `nor`, while the firmware release reports the `ath79/nan
 - Physical memory: 121,188 KiB total; 37,276 KiB was available during post-migration validation.
 - Load averages were 1.36 / 1.65 / 1.91 roughly 19 minutes after the replacement card booted.
 - Initial discovery found no active swap. Post-migration validation confirmed `/overlay/ddk-install.swap` active with 262,140 KiB total and 776 KiB used.
+- A later reboot left the valid mode-0600 swapfile intact but inactive, confirming that boot activation is not configured. It was reactivated as a separate operator maintenance step before the 1.2.1 deployment; no fstab or boot configuration was changed.
 
 Deployment treats inactive swap as a failed safety preflight. The project never deletes, recreates, formats, or silently activates the swap file. No explicit swap section was present in UCI at post-migration validation, so this document does not claim that activation will persist through another boot.
 
 ## Web and authentication topology
 
 - nginx 1.17.7 is the active public HTTP/HTTPS server on ports 80 and 443.
+- Its document root is `/www`, directory index is `gl_home.html`, and directory canonicalization allows a project-owned `/ddk` shortcut without changing nginx configuration.
 - `http://192.168.8.1/` and `https://192.168.8.1/` returned the GL.iNet UI with HTTP 200.
 - Unauthenticated `http://192.168.8.1/cgi-bin/luci/` returned HTTP 403 with `X-LuCI-Login-Required: yes`.
 - The LuCI dispatcher, Lua templates, modern JavaScript views, menu JSON, and rpcd ACL directories are present.

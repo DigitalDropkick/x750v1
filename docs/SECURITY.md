@@ -79,7 +79,7 @@ Reports live outside `/www` under mode-restricted `/tmp/ddk/reports/`. Authentic
 
 ## WAN and service posture
 
-The project creates no listener and makes no firewall, nginx, uhttpd, ttyd, network, wireless, cellular, or Tailscale change. Verification searches for any DDK listener and checks protected configuration hashes.
+The project creates no listener and makes no firewall, nginx, uhttpd, ttyd, network, wireless, cellular, or Tailscale configuration change. The public `/ddk` resource contains only a same-origin redirect and fallback link to the authenticated LuCI overview; it exposes no status, action, identifier, session, or report data. Verification checks the exact redirect target, searches for any DDK listener, and checks protected configuration hashes.
 
 Existing listeners found during discovery are out of scope; this project neither endorses nor changes them.
 
