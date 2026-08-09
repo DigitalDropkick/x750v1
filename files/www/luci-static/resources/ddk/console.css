@@ -226,6 +226,8 @@ body.ddk-page {
 }
 .ddk-console button.ddk-button:hover { background: #cfd5db; border-color: #cfd5db; }
 .ddk-console button.ddk-button.ddk-button-secondary { background: transparent; color: #d8dde3; border-color: #4b545e; }
+.ddk-console button.ddk-button.ddk-button-security { background: #211b0e; color: #f1d28d; border-color: #8a6c2d; }
+.ddk-console button.ddk-button.ddk-button-security:hover { background: #302715; border-color: #b59145; }
 .ddk-console button.ddk-button:disabled { background: #171b20; color: #69737d; border-color: #2c333a; cursor: not-allowed; }
 
 .ddk-output { margin-top: 10px; }

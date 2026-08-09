@@ -10,12 +10,12 @@ Add a lowercase file below:
 files/usr/share/ddk-field-console/tools/
 ```
 
-Example `nmap-lan-discovery.json`:
+The shipped Nmap entry is the concrete reviewed example. Its relevant fields in `network-discovery.json` are:
 
 ```json
 {
-  "id": "nmap-lan-discovery",
-  "name": "Nmap LAN Discovery",
+  "id": "network-discovery",
+  "name": "Network Discovery",
   "category": "Network Diagnostics",
   "description": "Bounded host discovery on an explicitly permitted local subnet.",
   "package_names": ["nmap-full"],
@@ -23,19 +23,19 @@ Example `nmap-lan-discovery.json`:
   "required_hardware": [],
   "status_probe": "software",
   "risk_level": "SECURITY",
-  "enabled": false,
+  "enabled": true,
   "actions": [
     {
       "id": "network.nmap_lan_discovery",
       "class": "SECURITY",
-      "enabled": false
+      "enabled": true
     }
   ],
-  "help_text": "Target scope and scan profile must be reviewed before enabling."
+  "help_text": "The enabled profile performs host discovery only on the server-derived private br-lan subnet; all other discovery actions remain disabled."
 }
 ```
 
-Deploying only this file creates a disabled, hardware/software-aware card. It does not run Nmap.
+That manifest is only one gate. The action runs because the same exact ID is also implemented in the backend `job_actions` table, mapped to the fixed `nmap_lan_discovery` worker task, included in `scripts/enabled-security-actions.txt`, and rendered with a dedicated confirmation path. Copying a manifest alone cannot create executable behavior.
 
 ## Manifest fields
 
@@ -64,7 +64,7 @@ android apple_mobile smartcard programmer usb_storage
 ## 2. Validate the manifest
 
 ```sh
-jq -e . files/usr/share/ddk-field-console/tools/nmap-lan-discovery.json
+jq -e . files/usr/share/ddk-field-console/tools/network-discovery.json
 ./scripts/validate-local.sh
 ```
 
@@ -81,7 +81,7 @@ Before changing `enabled`:
 7. Add success, failure, injection, traversal, resource, and stop tests.
 8. Document operational impact and rollback.
 
-For the Nmap example, a safe first profile would still be classified `SECURITY` and should use a fixed executable/profile such as host discovery only, a server-derived local CIDR, strict host-count ceiling, timeout, retry limit, output cap, and explicit operator confirmation. Do not accept raw Nmap flags or a free-form target string.
+The shipped Nmap profile is still classified `SECURITY`. It uses `/usr/bin/nmap` with fixed host-discovery-only arguments, a server-derived `br-lan` CIDR, RFC1918 and `/24`-or-smaller checks, fixed retry/rate/host/wall-time limits, one-scan concurrency, bounded transient output, and explicit operator confirmation. It accepts no raw Nmap flags or free-form target.
 
 ## 4. Review state semantics
 
@@ -89,4 +89,4 @@ For the Nmap example, a safe first profile would still be classified `SECURITY` 
 - Software present but required hardware absent: `HARDWARE REQUIRED`.
 - Device-oriented repair tooling with `no_device_state`: `READY / NO DEVICE`.
 - Software/hardware ready but console behavior disabled: `NOT CONFIGURED`.
-- Fully wired INFO module: `READY`.
+- Fully wired reviewed module: `READY`.

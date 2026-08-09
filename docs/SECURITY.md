@@ -33,24 +33,27 @@ Manifest `actions` and `status_probe` values are descriptive. The backend valida
 
 ## Argument validation
 
-Phase one accepts:
+The current release accepts:
 
 - exact INFO action IDs;
 - exact job action IDs;
 - job IDs matching `job-<digits>-<digits>`;
 - report IDs matching `report-<digits>-<digits>`.
 
-There are no browser-provided network targets, interfaces, filenames, device nodes, PIDs, package names, or flags.
+There are no browser-provided network targets, interfaces, filenames, device nodes, PIDs, package names, or flags. For `network.nmap_lan_discovery`, the worker independently requires the native LAN device to equal `br-lan`, reads its IPv4 CIDR from the kernel, validates RFC1918 scope and a `/24`-or-smaller prefix, and then invokes one fixed host-discovery profile.
 
 ## Job controls
 
 - The helper generates the job ID and worker task name.
+- Detached workers receive stdin from `/dev/null`; browser or caller input cannot reach an interactive child.
 - At most two jobs may be active.
+- At most one Nmap LAN discovery job may be active.
 - A stop request supplies a generated job ID, not a PID.
 - Before `TERM`, the helper reads its own PID file and confirms `/proc/<pid>/cmdline` contains both the DDK worker path and exact job ID.
 - No other signal or generic kill endpoint exists.
 - stdout is limited to 128 KiB and stderr to 32 KiB.
 - Cleanup traverses only validated DDK-owned `/tmp/ddk/jobs/job-*` directories and report names.
+- The Nmap worker tracks its direct child and terminates that child when an authenticated stop request terminates the worker.
 
 ## Reports and sensitive information
 

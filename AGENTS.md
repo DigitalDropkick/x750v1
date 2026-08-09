@@ -32,7 +32,7 @@
 - Never accept a browser-supplied command, executable path, PID, output path, or shell fragment.
 - Validate every argument against a strict allowlist or format before use.
 - Never concatenate browser input into a shell command.
-- INFO actions may be enabled. ACTION, DISRUPTIVE, and SECURITY actions remain disabled until deliberately reviewed.
+- INFO actions may be enabled. ACTION, DISRUPTIVE, and SECURITY actions remain disabled unless individually reviewed, fixed in the backend allowlist, bounded, tested, and documented.
 - Stop only validated jobs created by this console, after verifying the worker identity.
 
 ## Change and completion discipline

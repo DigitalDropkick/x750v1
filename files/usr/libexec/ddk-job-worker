@@ -16,7 +16,7 @@ job_pid="${job_numbers#*-}"
 case "$job_epoch" in ''|*[!0-9]*) exit 64 ;; esac
 case "$job_pid" in ''|*[!0-9]*) exit 64 ;; esac
 case "$task" in
-	demo|system_report) ;;
+	demo|system_report|nmap_lan_discovery) ;;
 	*) exit 64 ;;
 esac
 
@@ -30,14 +30,68 @@ status_set() {
 	mv "$job_dir/status.next" "$job_dir/status"
 }
 
+child_pid=""
+
 stop_job() {
 	# Invoked asynchronously by the signal trap.
+	# shellcheck disable=SC2317
+	trap - HUP INT TERM
+	# shellcheck disable=SC2317
+	if [ -n "$child_pid" ]; then
+		case "$child_pid" in
+			*[!0-9]*) ;;
+			*)
+				kill -TERM "$child_pid" 2>/dev/null || true
+				sleep 1
+				kill -KILL "$child_pid" 2>/dev/null || true
+				wait "$child_pid" 2>/dev/null || true
+				;;
+		esac
+	fi
 	# shellcheck disable=SC2317
 	status_set stopped
 	# shellcheck disable=SC2317
 	printf '%s\n' 'Worker stopped by an authenticated DDK request.' >> "$job_dir/stderr"
 	# shellcheck disable=SC2317
 	exit 143
+}
+
+task_fail() {
+	printf '%s\n' "$1" >> "$job_dir/stderr"
+	status_set failed
+	exit 65
+}
+
+validate_ipv4() {
+	address_value="$1"
+	previous_ifs="$IFS"
+	IFS=.
+	# Intentionally split only the already server-derived address.
+	# shellcheck disable=SC2086
+	set -- $address_value
+	IFS="$previous_ifs"
+	[ "$#" -eq 4 ] || return 1
+	for octet_value in "$@"; do
+		case "$octet_value" in
+			''|*[!0-9]*) return 1 ;;
+		esac
+		[ "$octet_value" -le 255 ] 2>/dev/null || return 1
+	done
+	return 0
+}
+
+validate_private_ipv4() {
+	private_value="$1"
+	case "$private_value" in
+		10.*|192.168.*) return 0 ;;
+		172.*)
+			second_octet="${private_value#*.}"
+			second_octet="${second_octet%%.*}"
+			[ "$second_octet" -ge 16 ] 2>/dev/null && [ "$second_octet" -le 31 ] 2>/dev/null
+			return $?
+			;;
+	esac
+	return 1
 }
 
 trap stop_job HUP INT TERM
@@ -69,7 +123,7 @@ if [ "$task" = "demo" ]; then
 	} > "$demo_tmp" 2> "$job_dir/stderr" || result=$?
 	head -c 131072 "$demo_tmp" > "$job_dir/stdout"
 	rm -f "$demo_tmp"
-else
+elif [ "$task" = "system_report" ]; then
 	report_id="report-${job_id#job-}"
 	report_tmp="$report_root/$report_id.txt.next"
 	report_path="$report_root/$report_id.txt"
@@ -121,6 +175,71 @@ else
 	rm -f "$report_tmp"
 	chmod 600 "$report_path"
 	printf 'Report ready: %s\n' "$report_id" > "$job_dir/stdout"
+else
+	command -v nmap >/dev/null 2>&1 || task_fail 'Nmap is not installed; the console did not attempt installation.'
+	command -v jsonfilter >/dev/null 2>&1 || task_fail 'The native jsonfilter helper is unavailable.'
+
+	lan_status="$(ubus call network.interface.lan status 2>/dev/null)" || task_fail 'Unable to read the native LAN status.'
+	lan_device="$(jsonfilter -s "$lan_status" -e '@.l3_device' 2>/dev/null)" || task_fail 'Unable to derive the LAN device.'
+	[ "$lan_device" = "br-lan" ] || task_fail 'Safety policy rejected discovery because the native LAN device is not br-lan.'
+	lan_cidr="$(ip -o -4 addr show dev br-lan scope global 2>/dev/null | awk '$3 == "inet" { print $4; exit }')"
+	case "$lan_cidr" in
+		*/*) ;;
+		*) task_fail 'Safety policy could not derive an IPv4 CIDR from br-lan.' ;;
+	esac
+	case "$lan_cidr" in
+		*/*/*|*[!0-9./]*) task_fail 'Safety policy rejected the derived LAN CIDR format.' ;;
+	esac
+	lan_ip="${lan_cidr%/*}"
+	lan_prefix="${lan_cidr#*/}"
+	validate_ipv4 "$lan_ip" || task_fail 'Safety policy rejected the derived LAN IPv4 address.'
+	validate_private_ipv4 "$lan_ip" || task_fail 'Safety policy permits only an RFC1918 private LAN target.'
+	case "$lan_prefix" in
+		''|*[!0-9]*) task_fail 'Safety policy rejected the derived LAN prefix.' ;;
+	esac
+	if ! { [ "$lan_prefix" -ge 24 ] 2>/dev/null && [ "$lan_prefix" -le 32 ] 2>/dev/null; }; then
+		task_fail 'Safety policy permits only a private /24 or smaller br-lan subnet.'
+	fi
+
+	{
+		printf '%s\n' 'DIGITAL DROPKICK — BOUNDED NMAP LAN HOST DISCOVERY'
+		printf '%s\n' 'Scope source: network.interface.lan / br-lan (server-derived)'
+		printf 'Target: %s\n' "$lan_cidr"
+		printf '%s\n' 'Profile: host discovery only (-sn), no DNS (-n), no port scan'
+		printf '%s\n' 'Limits: /24 maximum, T3, 1 retry, 8s host timeout, 64 packets/second, 75s wall time'
+		printf 'Started (UTC): '
+		date -u
+		printf '\n'
+	} > "$job_dir/stdout"
+
+	/usr/bin/nmap -sn -n -T3 --max-retries 1 --host-timeout 8s --max-rate 64 -e br-lan "$lan_cidr" \
+		>> "$job_dir/stdout" 2> "$job_dir/stderr" &
+	child_pid=$!
+	deadline_epoch=$(( $(date +%s) + 75 ))
+	timed_out=0
+	while kill -0 "$child_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$deadline_epoch" ]; then
+			timed_out=1
+			kill -TERM "$child_pid" 2>/dev/null || true
+			sleep 2
+			kill -KILL "$child_pid" 2>/dev/null || true
+			break
+		fi
+		sleep 1
+	done
+	child_result=0
+	wait "$child_pid" 2>/dev/null || child_result=$?
+	child_pid=""
+	if [ "$timed_out" -eq 1 ]; then
+		result=124
+		printf '%s\n' 'Nmap discovery exceeded the fixed 75-second wall limit.' >> "$job_dir/stderr"
+	else
+		result="$child_result"
+	fi
+	printf '\nCompleted (UTC): ' >> "$job_dir/stdout"
+	date -u >> "$job_dir/stdout"
+	head -c 131072 "$job_dir/stdout" > "$job_dir/stdout.next"
+	mv "$job_dir/stdout.next" "$job_dir/stdout"
 fi
 
 head -c 32768 "$job_dir/stderr" > "$job_dir/stderr.next" 2>/dev/null || true

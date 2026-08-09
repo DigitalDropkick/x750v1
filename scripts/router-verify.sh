@@ -91,6 +91,73 @@ done
 printf '%s' "$job_payload" | jsonfilter -e '@.data.stdout' | grep -q 'ASYNCHRONOUS READ-ONLY PROOF' || fail 'asynchronous proof output is missing'
 pass 'non-blocking job framework proof'
 
+nmap_manifest=/usr/share/ddk-field-console/tools/network-discovery.json
+[ "$(jsonfilter -i "$nmap_manifest" -e '@.enabled')" = 'true' ] || fail 'Nmap discovery module is not enabled'
+[ "$(jsonfilter -i "$nmap_manifest" -e '@.actions[0].id')" = 'network.nmap_lan_discovery' ] || fail 'Nmap action manifest ID is incorrect'
+[ "$(jsonfilter -i "$nmap_manifest" -e '@.actions[0].class')" = 'SECURITY' ] || fail 'Nmap action lost its SECURITY classification'
+[ "$(jsonfilter -i "$nmap_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'Nmap action is not explicitly enabled'
+[ -x /usr/bin/nmap ] || fail 'already-installed Nmap executable is unavailable'
+pass 'reviewed Nmap manifest and installed executable'
+
+if /usr/libexec/ddk-console job start 'network.nmap_lan_discovery;touch' 2>/dev/null | json_ok; then
+	fail 'malformed Nmap action ID was accepted'
+fi
+
+stop_scan_payload="$(/usr/libexec/ddk-console job start network.nmap_lan_discovery)"
+printf '%s' "$stop_scan_payload" | json_ok || fail 'bounded Nmap stop proof did not start'
+stop_scan_id="$(printf '%s' "$stop_scan_payload" | jsonfilter -e '@.data.id')"
+if /usr/libexec/ddk-console job start network.nmap_lan_discovery 2>/dev/null | json_ok; then
+	fail 'a second concurrent Nmap discovery was accepted'
+fi
+
+attempt=0
+stop_scan_status=''
+while [ "$attempt" -lt 8 ]; do
+	stop_scan_state="$(/usr/libexec/ddk-console job status "$stop_scan_id")"
+	stop_scan_status="$(printf '%s' "$stop_scan_state" | jsonfilter -e '@.data.status')"
+	stop_scan_pid="$(printf '%s' "$stop_scan_state" | jsonfilter -e '@.data.pid')"
+	[ "$stop_scan_status" = 'running' ] && [ -n "$stop_scan_pid" ] && break
+	case "$stop_scan_status" in complete|failed|stopped) break ;; esac
+	attempt=$((attempt + 1))
+	sleep 1
+done
+[ "$stop_scan_status" = 'running' ] || fail "Nmap stop proof was not active long enough to cancel: $stop_scan_status"
+/usr/libexec/ddk-console job stop "$stop_scan_id" | json_ok || fail 'authenticated Nmap stop request failed'
+attempt=0
+while [ "$attempt" -lt 8 ]; do
+	stop_scan_state="$(/usr/libexec/ddk-console job status "$stop_scan_id")"
+	stop_scan_status="$(printf '%s' "$stop_scan_state" | jsonfilter -e '@.data.status')"
+	[ "$stop_scan_status" = 'stopped' ] && break
+	attempt=$((attempt + 1))
+	sleep 1
+done
+[ "$stop_scan_status" = 'stopped' ] || fail "Nmap stop proof ended in state: $stop_scan_status"
+printf '%s' "$stop_scan_state" | jsonfilter -e '@.data.stderr' | grep -q 'authenticated DDK request' || fail 'Nmap worker stop evidence is missing'
+pass 'Nmap singleton enforcement and DDK-owned cancellation'
+
+scan_payload="$(/usr/libexec/ddk-console job start network.nmap_lan_discovery)"
+printf '%s' "$scan_payload" | json_ok || fail 'bounded Nmap discovery did not start'
+scan_id="$(printf '%s' "$scan_payload" | jsonfilter -e '@.data.id')"
+attempt=0
+scan_status=''
+while [ "$attempt" -lt 90 ]; do
+	scan_state="$(/usr/libexec/ddk-console job status "$scan_id")"
+	scan_status="$(printf '%s' "$scan_state" | jsonfilter -e '@.data.status')"
+	case "$scan_status" in complete|failed|stopped) break ;; esac
+	attempt=$((attempt + 1))
+	sleep 1
+done
+[ "$scan_status" = 'complete' ] || fail "bounded Nmap discovery ended in state: $scan_status"
+scan_output="$(printf '%s' "$scan_state" | jsonfilter -e '@.data.stdout')"
+lan_cidr="$(ip -o -4 addr show dev br-lan scope global | awk '$3 == "inet" { print $4; exit }')"
+printf '%s' "$scan_state" | jsonfilter -e '@.data.metadata.class' | grep -qx 'SECURITY' || fail 'Nmap job metadata class is incorrect'
+printf '%s' "$scan_output" | grep -Fq 'Scope source: network.interface.lan / br-lan (server-derived)' || fail 'Nmap scope evidence is missing'
+printf '%s' "$scan_output" | grep -Fq "Target: $lan_cidr" || fail 'Nmap did not use the current server-derived LAN CIDR'
+printf '%s' "$scan_output" | grep -Fq 'Profile: host discovery only (-sn), no DNS (-n), no port scan' || fail 'Nmap fixed-profile evidence is missing'
+printf '%s' "$scan_output" | grep -Fq 'Nmap done:' || fail 'Nmap completion summary is missing'
+[ "$(printf '%s' "$scan_output" | wc -c)" -le 131072 ] || fail 'Nmap stdout exceeded its bound'
+pass 'bounded server-derived Nmap LAN discovery'
+
 report_payload="$(/usr/libexec/ddk-console job start report.system)"
 printf '%s' "$report_payload" | json_ok || fail 'system report job did not start'
 report_job="$(printf '%s' "$report_payload" | jsonfilter -e '@.data.id')"

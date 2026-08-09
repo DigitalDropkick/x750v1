@@ -80,9 +80,9 @@ The top-level LuCI entry is **Digital Dropkick**.
 ./verify.sh
 ```
 
-Verification covers identity, extroot, swap, installed files, Lua/shell/JSON syntax, live APIs, all INFO actions, injection rejection, generic-PID rejection, traversal rejection, asynchronous jobs, system reports, GL.iNet UI, LuCI, dashboard route, Tailscale, protected configuration hashes, listener absence, memory, disk, and recent errors.
+Verification covers identity, extroot, swap, installed files, Lua/shell/JSON syntax, live APIs, all INFO actions, injection rejection, generic-PID rejection, traversal rejection, asynchronous jobs, the Nmap singleton/cancellation/full-scan proofs, system reports, GL.iNet UI, LuCI, dashboard route, Tailscale, protected configuration hashes, listener absence, memory, disk, and recent errors.
 
-The authenticated visual page and mobile layout should also be opened after deployment. Automated review may use a short-lived, narrowly scoped test session that is destroyed immediately; passwords and persistent browser sessions must never be exported.
+The authenticated visual page and mobile layout should also be opened after deployment. `scripts/verify-browser.mjs` performs dependency-free Chrome DevTools checks when supplied a transient session through `DDK_BROWSER_SESSION`; it never accepts or stores a password. Automated review must use a short-lived, narrowly scoped test session that is destroyed immediately; passwords, tokens, and persistent browser sessions must never be printed, persisted, or transmitted outside the workstation/router boundary.
 
 ## Rollback
 
@@ -104,9 +104,10 @@ Rollback restores every pre-existing target file, removes only files recorded as
 
 See [docs/ADDING-A-TOOL.md](docs/ADDING-A-TOOL.md). Adding a manifest cannot enable execution by itself.
 
-## Known phase-one limits
+## Known limits
 
-- DISRUPTIVE and SECURITY actions are placeholders only.
+- DISRUPTIVE actions and every SECURITY action except the reviewed, bounded `network.nmap_lan_discovery` profile are placeholders only.
+- Nmap discovery accepts no browser target or flags. It is limited to host discovery on the server-derived private `br-lan` `/24`-or-smaller subnet, one active scan, and a 75-second wall limit.
 - Tool hardware detection is conservative and documents ambiguity.
 - Reports are transient across reboot and have a 24-hour cleanup horizon.
 - The browser polls only active jobs; there is no router-side polling process.

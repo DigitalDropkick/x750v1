@@ -13,6 +13,7 @@ fail() {
 git diff --check
 bash -n deploy.sh verify.sh rollback.sh
 sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh files/usr/libexec/ddk-job-worker
+node --check scripts/verify-browser.mjs >/dev/null
 
 while IFS= read -r file; do
 	node --check "$file" >/dev/null
@@ -36,11 +37,24 @@ fi
 
 while IFS= read -r action; do
 	action_class="$(jq -r --arg id "$action" '.actions[] | select(.id == $id) | .class' files/usr/share/ddk-field-console/tools/*.json | head -n 1)"
-	[[ "$action_class" == "INFO" ]] || fail "enabled action is not INFO: $action"
+	case "$action_class" in
+		INFO) ;;
+		SECURITY)
+			rg -Fx "$action" scripts/enabled-security-actions.txt >/dev/null || fail "enabled SECURITY action was not explicitly reviewed: $action"
+			;;
+		*) fail "enabled action has a prohibited class: $action ($action_class)" ;;
+	esac
 	disable_count="$(jq -r --arg id "$action" '[.actions[] | select(.id == $id and .enabled == true)] | length' files/usr/share/ddk-field-console/tools/*.json | awk '{sum += $1} END{print sum+0}')"
 	[[ "$disable_count" -gt 0 ]] || fail "enabled module action is not explicitly enabled: $action"
 	rg -F "[\"$action\"]" files/usr/libexec/ddk-console >/dev/null || fail "enabled action missing from backend allowlist: $action"
 done < <(jq -r 'select(.enabled == true) | .actions[] | select(.enabled == true) | .id' files/usr/share/ddk-field-console/tools/*.json | sort -u)
+
+while IFS= read -r action || [[ -n "$action" ]]; do
+	[[ -z "$action" || "$action" == \#* ]] && continue
+	[[ "$action" =~ ^[a-z0-9][a-z0-9._-]+$ ]] || fail "invalid reviewed SECURITY action ID: $action"
+	enabled_count="$(jq -r --arg id "$action" '[.actions[] | select(.id == $id and .class == "SECURITY" and .enabled == true)] | length' files/usr/share/ddk-field-console/tools/*.json | awk '{sum += $1} END{print sum+0}')"
+	[[ "$enabled_count" -eq 1 ]] || fail "reviewed SECURITY action is missing or duplicated: $action"
+done < scripts/enabled-security-actions.txt
 
 while IFS= read -r file; do
 	size="$(wc -c < "$file")"

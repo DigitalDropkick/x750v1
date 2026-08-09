@@ -1,0 +1,2 @@
+# Exact SECURITY action IDs approved after code and operational review.
+network.nmap_lan_discovery

@@ -576,7 +576,13 @@ end
 
 local job_actions = {
 	["diagnostic.demo"] = { worker = "demo", label = "Read-only asynchronous proof", class = "INFO" },
-	["report.system"] = { worker = "system_report", label = "DDK System Report", class = "INFO" }
+	["report.system"] = { worker = "system_report", label = "DDK System Report", class = "INFO" },
+	["network.nmap_lan_discovery"] = {
+		worker = "nmap_lan_discovery",
+		label = "Nmap LAN Host Discovery",
+		class = "SECURITY",
+		singleton = true
+	}
 }
 
 local function active_job_count()
@@ -593,6 +599,23 @@ local function active_job_count()
 	return count
 end
 
+local function has_active_action(action_id)
+	local iterator = fs.dir(JOB_ROOT)
+	if iterator then
+		for name in iterator do
+			if valid_job_id(name) then
+				local base = JOB_ROOT .. "/" .. name
+				local state = trim(fs.readfile(base .. "/status"))
+				if state == "queued" or state == "running" or state == "stopping" then
+					local metadata = parse_json(fs.readfile(base .. "/metadata.json"))
+					if metadata and metadata.action_id == action_id then return true end
+				end
+			end
+		end
+	end
+	return false
+end
+
 local function start_job(action_id)
 	local spec = job_actions[action_id]
 	if not spec then return nil, "Unknown or disabled job action" end
@@ -603,6 +626,9 @@ local function start_job(action_id)
 	fs.chmod(REPORT_ROOT, "0700")
 	cleanup_transient()
 	if active_job_count() >= MAX_ACTIVE_JOBS then return nil, "Two DDK jobs are already active" end
+	if spec.singleton and has_active_action(action_id) then
+		return nil, "This bounded discovery job is already active"
+	end
 
 	local job_id = string.format("job-%d-%d", os.time(), nixio.getpid())
 	local job_dir = JOB_ROOT .. "/" .. job_id
@@ -624,7 +650,7 @@ local function start_job(action_id)
 	fs.chmod(job_dir, "0700")
 
 	-- Both interpolated values are generated or exact server-side allowlist literals.
-	local command = string.format("/usr/libexec/ddk-job-worker %s %s >/dev/null 2>&1 &", job_id, spec.worker)
+	local command = string.format("/usr/libexec/ddk-job-worker %s %s </dev/null >/dev/null 2>&1 &", job_id, spec.worker)
 	local result = os.execute(command)
 	if result ~= 0 and result ~= true then
 		write_file(job_dir .. "/status", "failed\n")
@@ -664,9 +690,12 @@ local function stop_job(job_id)
 	if not cmdline:match("/usr/libexec/ddk%-job%-worker") or not cmdline:find(job_id, 1, true) then
 		return nil, "PID does not belong to this DDK job"
 	end
-	local killed = nixio.kill(pid, 15)
-	if not killed then return nil, "Unable to signal DDK worker" end
 	write_file(JOB_ROOT .. "/" .. job_id .. "/status", "stopping\n")
+	local killed = nixio.kill(pid, 15)
+	if not killed then
+		write_file(JOB_ROOT .. "/" .. job_id .. "/status", state.status .. "\n")
+		return nil, "Unable to signal DDK worker"
+	end
 	return job_state(job_id)
 end
 

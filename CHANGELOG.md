@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.0 — 2026-08-09
+
+### Added
+
+- Reviewed `network.nmap_lan_discovery` SECURITY action with explicit browser confirmation.
+- Server-derived `br-lan` scope validation: RFC1918 only and `/24` or smaller.
+- Fixed Nmap host-discovery profile with no DNS or port scan, bounded rate/retries/time/output, single-scan concurrency, and DDK-owned cancellation.
+- Local validation requires every enabled SECURITY action to appear in a separate exact review allowlist.
+- Dependency-free authenticated Chrome verification for desktop and mobile layouts.
+
+### Safety
+
+- The browser cannot supply an Nmap target, interface, executable, flag, filename, or PID.
+- No package, network, firewall, listener, service, Tailscale, GL.iNet UI, extroot, or swap change is part of this release.
+
 ## 1.0.0 — 2026-08-09
 
 ### Added

@@ -67,7 +67,7 @@ Long work never occupies a LuCI request:
 
 1. The helper validates a job action and enforces a maximum of two active jobs.
 2. It creates `/tmp/ddk/jobs/<generated-job-id>/` with restrictive permissions.
-3. A fixed `/usr/libexec/ddk-job-worker` task is detached.
+3. A fixed `/usr/libexec/ddk-job-worker` task is detached with stdin, stdout, and stderr disconnected from the LuCI request.
 4. The worker atomically updates `status`, `pid`, `metadata.json`, `stdout`, and `stderr`.
 5. The browser polls the helper for that generated job ID.
 
@@ -80,7 +80,7 @@ Limits:
 - transient output only under `/tmp/ddk/`;
 - only `TERM` may be sent, and only after PID, job directory, and worker command line all match.
 
-Phase one proves the system with an asynchronous read-only demo and a sanitized system-report task.
+The system includes an asynchronous read-only demo, a sanitized system-report task, and one reviewed SECURITY task: bounded Nmap host discovery on the server-derived private `br-lan` `/24`-or-smaller subnet. That task accepts no browser target or flags, permits one active scan, and tracks its child process for safe cancellation.
 
 ## Report handling
 

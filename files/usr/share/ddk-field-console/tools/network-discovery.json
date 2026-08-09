@@ -2,15 +2,15 @@
   "id": "network-discovery",
   "name": "Network Discovery",
   "category": "Network Diagnostics",
-  "description": "Host, route, reachability, DNS, LLDP, and SNMP discovery tools.",
+  "description": "Bounded host discovery plus installed route, reachability, DNS, LLDP, and SNMP tooling.",
   "package_names": ["nmap-full", "netdiscover", "arp-scan", "fping", "mtr-nojson", "httping", "bind-dig", "lldpd", "snmp-utils"],
   "expected_binaries": ["nmap", "arp-scan", "fping", "dig"],
   "required_hardware": [],
   "status_probe": "software",
   "risk_level": "SECURITY",
-  "enabled": false,
+  "enabled": true,
   "actions": [
-    {"id": "network.quick_scan", "class": "SECURITY", "enabled": false}
+    {"id": "network.nmap_lan_discovery", "class": "SECURITY", "enabled": true}
   ],
-  "help_text": "Discovery targets and rate limits require a separate authorization and validation design."
+  "help_text": "The enabled profile performs host discovery only on the server-derived private br-lan subnet; all other discovery actions remain disabled."
 }
