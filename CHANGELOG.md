@@ -18,6 +18,13 @@
 - Swap tooling never creates, initializes, resizes, stops, or directly activates swap; it adds only the explicitly approved named native fstab entry.
 - No listener, daemon, package, firewall, network, wireless, cellular, Tailscale, GL.iNet UI, or extroot change.
 
+### Verification
+
+- Exact swap rollback/re-apply and idempotence proved on the target.
+- Native swap boot activation proved after an authorized reboot and attended power cycle.
+- Compact post-reboot verification passed 10 checks with 0 warnings; the comprehensive suite passed 22 checks with 0 warnings.
+- Authenticated browser regression passed at 320 px, 390 px, and desktop with no runtime errors or document overflow.
+
 ## 1.2.1 — 2026-08-09
 
 ### Added

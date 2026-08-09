@@ -32,7 +32,9 @@ The board name contains `nor`, while the firmware release reports the `ath79/nan
 - A later reboot left the valid mode-0600 swapfile intact but inactive, confirming that boot activation was not configured. It was reactivated as a separate operator maintenance step before the 1.2.1 deployment.
 - Phase 2A inspection found no existing swap UCI section. The exact installed fstools commit supports an absolute regular swapfile target through `config swap`, and the enabled `S11fstab` boot script invokes `/sbin/block mount`. Version 1.3.0 therefore uses one named `ddk_install_swap` entry plus a separate hash-guarded rollback; no DDK init script is added.
 
-Deployment treats inactive swap as a failed safety preflight. The project never deletes, recreates, formats, resizes, stops, or silently activates the swap file. Persistence is not considered proven until the compact verifier passes after a separately authorized reboot.
+Deployment treats inactive swap as a failed safety preflight. The project never deletes, recreates, formats, resizes, stops, or silently activates the swap file. Persistence was proven on 2026-08-09: after an authorized reboot and attended power cycle, `/dev/sda1` returned as extroot and the native fstab path automatically activated `/overlay/ddk-install.swap` with 262,140 KiB total and default priority `-2`.
+
+Operational note: the normal software reboot completed its preflight and `sync`, and the router went down, but it remained dark instead of restarting. A physical power cycle was required. Plan future maintenance reboots as attended operations until that device-specific behavior is separately diagnosed.
 
 ## Web and authentication topology
 

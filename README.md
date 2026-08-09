@@ -8,6 +8,8 @@ The source is designed for the exact discovered target documented in [docs/TARGE
 
 At initial discovery on 2026-08-09, `/proc/swaps` reported no active swap. After extroot media migration, the swapfile was confirmed active; `deploy.sh` still refuses deployment whenever `/overlay/ddk-install.swap` is not active. The separate, explicitly approved `configure-swap-autostart.sh` adds only a native fstab boot entry. It does not create, initialize, resize, stop, or directly activate the swapfile. See [docs/SWAP-AUTOSTART.md](docs/SWAP-AUTOSTART.md).
 
+Boot persistence was proven on the target on 2026-08-09: the compact post-reboot profile passed 10 checks with no warnings, the comprehensive suite passed 22 checks with no warnings, and authenticated 320 px, 390 px, and desktop browser checks passed. The router remained dark after the software reboot and required an attended physical power cycle; after startup, extroot and the configured swapfile activated normally.
+
 ## Architecture
 
 - Native LuCI menu JSON, authenticated server template, and dependency-free JavaScript.

@@ -67,3 +67,14 @@ A reboot is intentionally outside the configuration script. After separately aut
 ```
 
 The compact verifier proves that the named UCI entry is present and the swapfile was activated during boot, then checks version, `/ddk`, LuCI authentication, the GL.iNet UI, extroot, Tailscale, protected hashes, listeners, idle workers, memory, storage, logs, and EC25 serial attribution.
+
+## Target validation record
+
+Validation completed on 2026-08-09:
+
+- configuration, exact rollback, re-application, and idempotence all passed while swap and extroot remained active;
+- the software reboot passed its preflight and `sync`, but the router remained dark and required an attended physical power cycle;
+- after startup, the named fstab entry was intact and `/overlay/ddk-install.swap` was automatically active at 262,140 KiB with priority `-2`;
+- the compact post-reboot verifier passed 10 checks with 0 warnings;
+- the comprehensive verifier passed 22 checks with 0 warnings;
+- authenticated 320 px, 390 px, and desktop browser regression checks passed with no runtime errors or document overflow.

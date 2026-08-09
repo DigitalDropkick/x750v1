@@ -11,7 +11,7 @@ The first reviewed SECURITY module and the cellular INFO snapshot are now wired.
 3. All EC25-AF serial functions are `MODEM RESERVED`; unreviewed adapters cannot satisfy the general serial hardware class.
 4. `post-reboot-verify.sh` checks the boot-critical appliance invariants without starting bounded tools.
 
-The remaining acceptance gate is one separately authorized controlled reboot followed by the compact verifier.
+The acceptance gate passed on 2026-08-09: 10 compact post-reboot checks and 22 comprehensive checks completed with no warnings, followed by authenticated mobile and desktop browser verification. The router required an attended physical power cycle after the software reboot left it dark; this operational behavior is recorded in the target documentation.
 
 ### Phase 2B — Digital Dropkick brand alignment (next)
 
