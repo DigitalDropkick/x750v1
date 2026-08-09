@@ -15,13 +15,16 @@
 	<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 	<meta name="color-scheme" content="dark">
 	<title>Digital Dropkick Field Console</title>
-	<link rel="stylesheet" href="/luci-static/resources/ddk/console.css?v=1.3.0">
-	<script defer src="/luci-static/resources/ddk/console-app.js?v=1.3.0"></script>
+	<link rel="stylesheet" href="/luci-static/resources/ddk/console.css?v=1.4.0">
+	<script defer src="/luci-static/resources/ddk/console-app.js?v=1.4.0"></script>
 </head>
 <body class="ddk-page">
 	<div class="ddk-shell">
 		<nav class="ddk-nav" aria-label="Digital Dropkick console navigation">
-			<a class="ddk-nav-home" href="<%=util.pcdata(base)%>/overview">DDK // FIELD CONSOLE</a>
+			<a class="ddk-nav-home" href="<%=util.pcdata(base)%>/overview" aria-label="Digital Dropkick Field Console home">
+				<span class="ddk-nav-mark" aria-hidden="true"><img src="/luci-static/resources/ddk/brand/dropkick-logo.png" alt=""></span>
+				<span><strong>DIGITAL DROPKICK</strong><small>FIELD CONSOLE</small></span>
+			</a>
 			<div class="ddk-nav-links">
 				<a<% if page == "overview" then %> class="active" aria-current="page"<% end %> href="<%=util.pcdata(base)%>/overview">Overview</a>
 				<a<% if page == "tools" then %> class="active" aria-current="page"<% end %> href="<%=util.pcdata(base)%>/tools">Tools</a>

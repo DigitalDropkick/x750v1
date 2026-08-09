@@ -28,6 +28,9 @@ model="$(ubus call system board | jsonfilter -e '@.model')"
 [ "$model" = 'GL.iNet GL-X750' ] || fail "target identity changed: $model"
 pass 'GL-X750 target identity'
 
+[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.4.0' ] || fail 'Field Console version is not 1.4.0'
+pass 'Field Console version 1.4.0'
+
 mount | grep -q '^/dev/sda1 on /overlay type ext4 ' || fail 'extroot is not active on /dev/sda1'
 pass 'extroot remains active'
 
@@ -45,11 +48,23 @@ for file in \
 	/usr/lib/lua/luci/view/ddk/shell.htm \
 	/www/luci-static/resources/ddk/console-app.js \
 	/www/luci-static/resources/ddk/console.css \
+	/www/luci-static/resources/ddk/brand/dropkick-logo.png \
+	/www/luci-static/resources/ddk/brand/overview.webp \
+	/www/luci-static/resources/ddk/brand/tools.webp \
+	/www/luci-static/resources/ddk/brand/packages.webp \
+	/www/luci-static/resources/ddk/brand/jobs.webp \
+	/www/luci-static/resources/ddk/brand/settings.webp \
 	/www/ddk/gl_home.html
 do
 	[ -f "$file" ] || fail "installed file is missing: $file"
 done
 pass 'project-owned LuCI files are installed'
+
+for asset in dropkick-logo.png overview.webp tools.webp packages.webp jobs.webp settings.webp; do
+	asset_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 "http://127.0.0.1/luci-static/resources/ddk/brand/$asset" || true)"
+	[ "$asset_http" = '200' ] || fail "brand asset returned HTTP $asset_http: $asset"
+done
+pass 'local Digital Dropkick brand assets are served by the existing web stack'
 
 DDK_LUA_FILE=/usr/libexec/ddk-console lua -e 'assert(loadfile(os.getenv("DDK_LUA_FILE")))' || fail 'Lua backend syntax check failed'
 DDK_TEMPLATE_FILE=/usr/lib/lua/luci/view/ddk/shell.htm lua -e 'local parser = require "luci.template.parser"; assert(parser.parse(os.getenv("DDK_TEMPLATE_FILE")))' || fail 'LuCI template syntax check failed'

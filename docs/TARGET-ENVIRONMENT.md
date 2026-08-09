@@ -47,6 +47,12 @@ Operational note: the normal software reboot completed its preflight and `sync`,
 - The nginx front end returned 404 for LuCI's `/ubus/` JSON-RPC route, with matching failures predating this project in the existing nginx error log. The console therefore uses LuCI's working authenticated `/cgi-bin/cgi-exec` (`fs.exec_direct`) path and does not alter nginx.
 - LuCI session authentication uses `sysauth_http` / `sysauth_https`; the rpcd root login has wildcard read/write ACLs. Password material was redacted during discovery.
 
+### Version 1.4 live acceptance
+
+The Digital Dropkick brand-alignment release was deployed on 2026-08-09 with pre-change backup `/root/ddk-backups/20260809T222112Z-field-console-v1`. The production suite passed 24 checks with no warnings, and the authenticated browser suite passed every branded page at 320 px, 390 px, and desktop widths with no external requests, runtime errors, or horizontal document overflow. Source-to-router SHA-256 comparison found exact parity for every project file.
+
+The final snapshot reported 45,620 KiB available RAM, load averages 1.68 / 1.35 / 1.24, 27,696,828 KiB free on extroot, the 262,140 KiB swapfile active at priority `-2`, Tailscale running, and zero DDK listeners or workers. Protected configuration hashes remained unchanged. These resource values are point-in-time verification evidence, not permanent operating expectations.
+
 ## Native LuCI conventions
 
 This firmware contains both generations of LuCI application structure:

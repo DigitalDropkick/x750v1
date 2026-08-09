@@ -13,11 +13,11 @@ The first reviewed SECURITY module and the cellular INFO snapshot are now wired.
 
 The acceptance gate passed on 2026-08-09: 10 compact post-reboot checks and 22 comprehensive checks completed with no warnings, followed by authenticated mobile and desktop browser verification. The router required an attended physical power cycle after the software reboot left it dark; this operational behavior is recorded in the target documentation.
 
-### Phase 2B — Digital Dropkick brand alignment (next)
+### Phase 2B — Digital Dropkick brand alignment (implemented in 1.4.0)
 
 Translate the public website's visual language into the console before several more tool workflows expand the interface. This is a design-token port, not a copy of the Astro/GoDaddy runtime.
 
-Planned visual elements:
+Implemented visual elements:
 
 - black and paper-white foundations with a restrained Digital Dropkick green accent;
 - the circular brand mark, optimized and stored locally;
@@ -25,14 +25,16 @@ Planned visual elements:
 - subtle top/bottom fades and a lightweight CSS grid texture;
 - website-inspired spacing and hierarchy while preserving the console's dense cards, status colors, and fast mobile operation.
 
-Hard limits:
+Enforced limits:
 
 - no website JavaScript, analytics, trackers, external fonts, CDN requests, Astro runtime, or third-party CSS;
-- no full-size hero photography in operational views;
+- compact, 320-pixel-tall source scenes only; each view requests one scene;
 - no animation that consumes idle CPU or obscures status;
 - keep all CSS namespaced and preserve LuCI/GL.iNet pages;
-- target no JavaScript growth, less than 8 KiB additional CSS, and at most one optimized local brand asset around 30 KiB;
+- six optimized files total no more than 170 KiB, each scene no more than 44 KiB, and the shared logo no more than 10 KiB;
 - validate at 320 px, 390 px, and desktop widths, including contrast, focus visibility, horizontal overflow, and resource impact.
+
+The acceptance gate passed on 2026-08-09: 24 production checks completed with no warnings; all five authenticated page headers and both logo placements loaded at mobile and desktop widths; 44-pixel touch targets and keyboard focus were confirmed; and no external request, runtime error, or horizontal document overflow was observed. The deployed tree matched source byte for byte and left no DDK worker or listener active.
 
 ### Phase 3 — Bounded field operations
 

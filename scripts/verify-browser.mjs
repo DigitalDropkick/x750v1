@@ -54,6 +54,8 @@ let socket;
 let nextId = 1;
 const pending = new Map();
 const browserErrors = [];
+const externalRequests = [];
+const allowedOrigin = new URL(base).origin;
 
 function call(method, params = {}, sessionId) {
 	const id = nextId++;
@@ -79,6 +81,25 @@ async function openPage(sessionId, path, width, height) {
 	await call('Page.navigate', { url: `${base}/cgi-bin/luci/admin/ddk/${path}` }, sessionId);
 	await waitUntil(async () => evaluate(sessionId, `location.pathname.endsWith('/${path}') && document.readyState === 'complete' && document.querySelector('#ddk-app')?.dataset.page === '${path}'`), 15000, `Timed out loading ${path}.`);
 	await waitUntil(async () => evaluate(sessionId, '!!document.querySelector("#ddk-app .ddk-brand") && !document.querySelector("#ddk-app .ddk-loading")'), 15000, `Timed out rendering ${path}.`);
+}
+
+async function validateBrand(sessionId, page) {
+	const result = await evaluate(sessionId, `(() => {
+		const logo = document.querySelector('.ddk-brand-mark img');
+		const navLogo = document.querySelector('.ddk-nav-mark img');
+		const scene = document.querySelector('.ddk-brand-media img');
+		return {
+			logo: !!logo && logo.complete && logo.naturalWidth === 160,
+			navLogo: !!navLogo && navLogo.complete && navLogo.naturalWidth === 160,
+			scene: !!scene && scene.complete && scene.naturalWidth === 960,
+			scenePath: scene ? new URL(scene.src).pathname : '',
+			accent: getComputedStyle(document.querySelector('.ddk-console')).getPropertyValue('--ddk-accent').trim(),
+			brandHeight: document.querySelector('.ddk-brand')?.getBoundingClientRect().height || 0
+		};
+	})()`);
+	if (!result.logo || !result.navLogo || !result.scene || !result.scenePath.endsWith(`/brand/${page}.webp`) || result.accent !== '#4d7c0f' || result.brandHeight < 170) {
+		throw new Error(`${page} brand validation failed: ${JSON.stringify(result)}`);
+	}
 }
 
 async function screenshot(sessionId, filename) {
@@ -113,6 +134,10 @@ try {
 		else if (message.method === 'Log.entryAdded' && message.params.entry.level === 'error') {
 			browserErrors.push(message.params.entry.text);
 		}
+		else if (message.method === 'Network.requestWillBeSent') {
+			const url = message.params.request.url;
+			if (/^https?:/.test(url) && new URL(url).origin !== allowedOrigin) externalRequests.push(url);
+		}
 	});
 
 	const target = await call('Target.createTarget', { url: 'about:blank' });
@@ -136,24 +161,35 @@ try {
 	await waitUntil(async () => evaluate(pageSession, '!!document.querySelector("#ddk-app .ddk-brand") && !document.querySelector("#ddk-app .ddk-loading")'), 15000, 'Timed out rendering the shortcut destination.');
 	const shortcut = await evaluate(pageSession, `({
 		path: location.pathname,
-		version: document.body.textContent.includes('X750 / v1.3.0'),
+		version: document.body.textContent.includes('X750 / v1.4.0'),
 		serial: document.body.textContent.includes('4 nodes · 4 MODEM RESERVED · 0 GENERAL'),
 		overflow: document.documentElement.scrollWidth > window.innerWidth,
 		login: document.body.textContent.includes('Authorization Required')
 	})`);
 	if (!shortcut.version || !shortcut.serial || shortcut.overflow || shortcut.login) throw new Error(`Shortcut validation failed: ${JSON.stringify(shortcut)}`);
+	await validateBrand(pageSession, 'overview');
 
 	await openPage(pageSession, 'overview', 320, 844);
-	const compactOverview = await evaluate(pageSession, `(() => ({
-		overflow: document.documentElement.scrollWidth > window.innerWidth,
-		serial: document.body.textContent.includes('4 nodes · 4 MODEM RESERVED · 0 GENERAL'),
-		inspect: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Inspect Serial Attribution' && !node.disabled),
-		width: window.innerWidth
-	}))()`);
-	if (compactOverview.overflow || !compactOverview.serial || !compactOverview.inspect || compactOverview.width !== 320) {
+	await call('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }, pageSession);
+	await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }, pageSession);
+	const compactOverview = await evaluate(pageSession, `(() => {
+		const focusTarget = document.activeElement;
+		const focusStyle = focusTarget && focusTarget !== document.body ? getComputedStyle(focusTarget) : null;
+		const touchTargets = Array.from(document.querySelectorAll('.ddk-nav a, .ddk-console button.ddk-button, .ddk-console a.ddk-button'));
+		return {
+			overflow: document.documentElement.scrollWidth > window.innerWidth,
+			serial: document.body.textContent.includes('4 nodes · 4 MODEM RESERVED · 0 GENERAL'),
+			inspect: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Inspect Serial Attribution' && !node.disabled),
+			focus: !!focusStyle && focusStyle.outlineStyle !== 'none' && parseFloat(focusStyle.outlineWidth) >= 2,
+			touchTargets: touchTargets.length > 0 && touchTargets.every(node => node.getBoundingClientRect().height >= 43.5),
+			width: window.innerWidth
+		};
+	})()`);
+	if (compactOverview.overflow || !compactOverview.serial || !compactOverview.inspect || !compactOverview.focus || !compactOverview.touchTargets || compactOverview.width !== 320) {
 		throw new Error(`Compact Overview validation failed: ${JSON.stringify(compactOverview)}`);
 	}
-	const overviewPath = await screenshot(pageSession, 'ddk-v130-overview-320.png');
+	await validateBrand(pageSession, 'overview');
+	const overviewPath = await screenshot(pageSession, 'ddk-v140-overview-320.png');
 
 	await openPage(pageSession, 'jobs', 1440, 1000);
 	await waitForJobs(pageSession);
@@ -162,7 +198,7 @@ try {
 		const cellularButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Cellular Snapshot');
 		return {
 			login: document.body.textContent.includes('Authorization Required'),
-			version: document.body.textContent.includes('X750 / v1.3.0'),
+			version: document.body.textContent.includes('X750 / v1.4.0'),
 			button: !!button,
 			enabled: !!button && !button.disabled,
 			cellular: !!cellularButton && !cellularButton.disabled,
@@ -175,7 +211,8 @@ try {
 	if (desktop.login || !desktop.version || !desktop.button || !desktop.enabled || !desktop.cellular || !desktop.securityStyle || desktop.overflow) {
 		throw new Error(`Desktop Jobs validation failed: ${JSON.stringify(desktop)}`);
 	}
-	const desktopPath = await screenshot(pageSession, 'ddk-v130-jobs-desktop.png');
+	await validateBrand(pageSession, 'jobs');
+	const desktopPath = await screenshot(pageSession, 'ddk-v140-jobs-desktop.png');
 
 	await openPage(pageSession, 'tools', 1440, 1000);
 	const tools = await evaluate(pageSession, `(() => {
@@ -190,13 +227,21 @@ try {
 	if (!tools.card || !tools.ready || !tools.button || !tools.enabled || !tools.cellularCard || !tools.cellularReady || !tools.cellularButton || !tools.serialCard || !tools.serialReady || !tools.serialButton) {
 		throw new Error(`Tool Registry validation failed: ${JSON.stringify(tools)}`);
 	}
+	await validateBrand(pageSession, 'tools');
 	await evaluate(pageSession, `(() => {
 		const cellularCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Cellular / Modem'));
 		cellularCard.scrollIntoView({ block: 'center' });
 		return true;
 	})()`);
 	await new Promise(resolve => setTimeout(resolve, 200));
-	const toolsPath = await screenshot(pageSession, 'ddk-v130-tools-desktop.png');
+	const toolsPath = await screenshot(pageSession, 'ddk-v140-tools-desktop.png');
+
+	for (const page of [ 'packages', 'settings' ]) {
+		await openPage(pageSession, page, 1440, 900);
+		await validateBrand(pageSession, page);
+		const overflow = await evaluate(pageSession, 'document.documentElement.scrollWidth > window.innerWidth');
+		if (overflow) throw new Error(`${page} has horizontal document overflow.`);
+	}
 
 	await openPage(pageSession, 'jobs', 390, 844);
 	await waitForJobs(pageSession);
@@ -209,10 +254,12 @@ try {
 	if (mobile.overflow || !mobile.button || !mobile.cellular || mobile.width !== 390) {
 		throw new Error(`Mobile Jobs validation failed: ${JSON.stringify(mobile)}`);
 	}
-	const mobilePath = await screenshot(pageSession, 'ddk-v130-jobs-mobile.png');
+	await validateBrand(pageSession, 'jobs');
+	const mobilePath = await screenshot(pageSession, 'ddk-v140-jobs-mobile.png');
 
 	if (browserErrors.length) throw new Error(`Browser errors: ${browserErrors.join(' | ')}`);
-	console.log('Browser verification passed: /ddk shortcut, serial-aware Overview at 320px, authenticated Jobs and Tool Registry at 1440px, Jobs at 390px, no horizontal overflow or runtime errors.');
+	if (externalRequests.length) throw new Error(`External browser requests were made: ${[ ...new Set(externalRequests) ].join(' | ')}`);
+	console.log('Browser verification passed: /ddk shortcut, five local branded headers and logos, serial-aware Overview at 320px, authenticated Jobs and Tool Registry at 1440px, Jobs at 390px, no external requests, horizontal overflow, or runtime errors.');
 	console.log(`DDK_BROWSER_OVERVIEW=${overviewPath}`);
 	console.log(`DDK_BROWSER_DESKTOP=${desktopPath}`);
 	console.log(`DDK_BROWSER_TOOLS=${toolsPath}`);

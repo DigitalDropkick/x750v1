@@ -22,8 +22,8 @@ fail() {
 
 model="$(ubus call system board | jsonfilter -e '@.model')"
 [ "$model" = 'GL.iNet GL-X750' ] || fail "target identity changed: $model"
-[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.3.0' ] || fail 'Field Console version is not 1.3.0'
-pass 'GL-X750 identity and Field Console 1.3.0'
+[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.4.0' ] || fail 'Field Console version is not 1.4.0'
+pass 'GL-X750 identity and Field Console 1.4.0'
 
 mount | grep -q '^/dev/sda1 on /overlay type ext4 ' || fail 'extroot is not active on /dev/sda1'
 pass 'extroot mounted from /dev/sda1'

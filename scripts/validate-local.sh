@@ -17,6 +17,20 @@ sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback
 	scripts/router-post-reboot-verify.sh files/usr/libexec/ddk-job-worker
 node --check scripts/verify-browser.mjs >/dev/null
 
+brand_root=files/www/luci-static/resources/ddk/brand
+for asset in dropkick-logo.png overview.webp tools.webp packages.webp jobs.webp settings.webp; do
+	[[ -f "$brand_root/$asset" ]] || fail "brand asset is missing: $asset"
+done
+[[ "$(find "$brand_root" -maxdepth 1 -type f | wc -l)" -eq 6 ]] || fail 'unexpected file exists in the brand asset directory'
+[[ "$(stat -c %s "$brand_root/dropkick-logo.png")" -le 10240 ]] || fail 'optimized logo exceeds 10 KiB'
+while IFS= read -r scene; do
+	[[ "$(stat -c %s "$scene")" -le 45056 ]] || fail "optimized scene exceeds 44 KiB: $scene"
+done < <(find "$brand_root" -maxdepth 1 -type f -name '*.webp' | sort)
+[[ "$(du -cb "$brand_root"/* | tail -n 1 | awk '{print $1}')" -le 174080 ]] || fail 'brand asset set exceeds 170 KiB'
+if rg -ni 'https?://|//[^/]' files/www/luci-static/resources/ddk/console.css files/www/luci-static/resources/ddk/console-app.js files/usr/lib/lua/luci/view/ddk/shell.htm; then
+	fail 'console presentation contains a remote asset or request reference'
+fi
+
 shortcut_file=files/www/ddk/gl_home.html
 [[ -f "$shortcut_file" ]] || fail 'the /ddk shortcut page is missing'
 rg -F 'content="0;url=/cgi-bin/luci/admin/ddk/overview"' "$shortcut_file" >/dev/null || fail 'the /ddk shortcut target is incorrect'

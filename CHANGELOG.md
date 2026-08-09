@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.4.0 — 2026-08-09
+
+### Added
+
+- Exact Digital Dropkick kick logo in the persistent console navigation and page header.
+- Five page-specific, monochrome WebP scenes derived from existing website imagery.
+- Website-aligned black, paper-white, silver, and restrained green design tokens.
+- Compact photo-backed headers with top/bottom fades, technical grid texture, stronger hierarchy, and mobile-specific composition.
+- Brand-system documentation with asset provenance and explicit size/request budgets.
+
+### Safety and resources
+
+- Every asset is project-owned and served by the existing `/luci-static/` path; there are no external requests, fonts, trackers, scripts, stylesheets, or services.
+- The current page loads one scene plus the small logo; other page scenes are not requested.
+- No backend action, ACL, listener, package, service, firewall, network, wireless, cellular, Tailscale, GL.iNet UI, extroot, or swap behavior changed.
+
+### Verification
+
+- Local validation, whitespace review, JavaScript syntax, asset budgets, and remote-reference scanning passed.
+- Production verification passed 24 checks with 0 warnings after deployment.
+- Authenticated Chrome checks passed every branded page at 320 px, 390 px, and desktop widths with local images loaded, 44-pixel mobile touch targets, visible keyboard focus, no external requests, no horizontal document overflow, and no runtime errors.
+- The deployed project tree matched the source tree byte for byte; no DDK worker or listener remained active.
+
 ## 1.3.0 — 2026-08-09
 
 ### Added

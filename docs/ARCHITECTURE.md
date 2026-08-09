@@ -15,6 +15,12 @@ The target's installed LuCI 23.119 applications establish the native pattern:
 
 Static LuCI assets contain no secrets. All live information and executable behavior remain behind the existing LuCI session boundary. `/www/ddk/gl_home.html` is a content-free static redirect to the authenticated overview, providing the memorable `/ddk` path without a CGI handler, port, nginx rule, uhttpd rule, or firewall rule.
 
+## Presentation layer
+
+The visual system remains a thin native layer: one namespaced stylesheet, one dependency-free client, the existing LuCI template, and optimized files below `/www/luci-static/resources/ddk/brand/`. The header selects a page image from a fixed client-side table; no URL or asset path comes from browser input. Each page requests only its selected scene and the shared logo.
+
+The public website supplied the visual vocabulary and source imagery, not runtime code. The console contains no Astro output, analytics, tracking pixel, external font, CDN URL, media iframe, or website dependency. CSS gradients provide the technical grid and top/bottom image fades without animation or an idle process. See [BRAND-SYSTEM.md](BRAND-SYSTEM.md).
+
 ## Backend
 
 `/usr/libexec/ddk-console` is a short-lived Lua 5.1 program. LuCI launches it only in response to an authenticated request. It:

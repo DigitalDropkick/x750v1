@@ -1,6 +1,6 @@
 # Digital Dropkick Field Console
 
-Production-oriented LuCI control dashboard for the GL.iNet GL-X750 field appliance. Version 1.3.0 adds exact EC25 serial-port attribution, guarded native swap boot activation, and compact post-reboot verification to the live health, package inventory, bounded Nmap discovery, privacy-conscious cellular snapshot, and memorable `/ddk` shortcut—without adding a daemon or listener.
+Production-oriented LuCI control dashboard for the GL.iNet GL-X750 field appliance. Version 1.4.0 carries the public Digital Dropkick visual system into the console with the real kick logo, compact page-specific imagery, website-derived colors and structure, and responsive instrument styling. Live health, inventory, bounded diagnostics, serial attribution, swap persistence, and the memorable `/ddk` shortcut remain unchanged—without adding a daemon or listener.
 
 ## Safety status
 
@@ -8,7 +8,7 @@ The source is designed for the exact discovered target documented in [docs/TARGE
 
 At initial discovery on 2026-08-09, `/proc/swaps` reported no active swap. After extroot media migration, the swapfile was confirmed active; `deploy.sh` still refuses deployment whenever `/overlay/ddk-install.swap` is not active. The separate, explicitly approved `configure-swap-autostart.sh` adds only a native fstab boot entry. It does not create, initialize, resize, stop, or directly activate the swapfile. See [docs/SWAP-AUTOSTART.md](docs/SWAP-AUTOSTART.md).
 
-Boot persistence was proven on the target on 2026-08-09: the compact post-reboot profile passed 10 checks with no warnings, the comprehensive suite passed 22 checks with no warnings, and authenticated 320 px, 390 px, and desktop browser checks passed. The router remained dark after the software reboot and required an attended physical power cycle; after startup, extroot and the configured swapfile activated normally.
+Boot persistence was proven on the target on 2026-08-09: the compact post-reboot profile passed 10 checks with no warnings. After the v1.4 deployment, the expanded comprehensive suite passed 24 checks with no warnings, and authenticated brand/browser checks passed at 320 px, 390 px, and desktop widths. The router remained dark after the earlier software reboot and required an attended physical power cycle; after startup, extroot and the configured swapfile activated normally.
 
 ## Architecture
 
@@ -17,9 +17,10 @@ Boot persistence was proven on the target on 2026-08-09: the compact post-reboot
 - Short-lived Lua 5.1 helper with an exact action allowlist.
 - JSON tool modules with separate software and hardware state.
 - `/tmp/ddk/` job/report framework with concurrency, size, age, and identity limits.
-- No package install, service, port, firewall rule, CDN, database, or router-side Node/Python runtime.
+- Local, optimized brand assets only; no website runtime, tracker, external font, CDN, or network request.
+- No package install, service, port, firewall rule, database, or router-side Node/Python runtime.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/SECURITY.md](docs/SECURITY.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/BRAND-SYSTEM.md](docs/BRAND-SYSTEM.md), and [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Repository layout
 
@@ -43,7 +44,7 @@ Requirements on the workstation: Bash, Git, Node (syntax only), jq, tar, and SSH
 ./scripts/validate-local.sh
 ```
 
-The validator checks shell syntax, JavaScript syntax, JSON, enabled-action allowlisting, forbidden package/config mutations, asset limits, and whitespace errors.
+The validator checks shell syntax, JavaScript syntax, JSON, enabled-action allowlisting, forbidden package/config mutations, exact brand assets and budgets, absence of remote presentation references, general asset limits, and whitespace errors.
 
 Lua 5.1 with the target's `nixio` and `luci.jsonc` modules is validated again on the router before the installer writes anything.
 
@@ -87,9 +88,9 @@ The top-level LuCI entry is **Digital Dropkick**.
 ./verify.sh
 ```
 
-Verification covers identity, extroot, swap, installed files, Lua/shell/JSON syntax, live APIs, all INFO actions, injection rejection, generic-PID rejection, traversal rejection, asynchronous jobs, Nmap proofs, the cellular privacy/read-only snapshot, system reports, GL.iNet UI, LuCI, dashboard route, Tailscale, protected configuration hashes, listener absence, memory, disk, and recent errors.
+Verification covers identity, extroot, swap, installed files, locally served brand assets, Lua/shell/JSON syntax, live APIs, all INFO actions, injection rejection, generic-PID rejection, traversal rejection, asynchronous jobs, Nmap proofs, the cellular privacy/read-only snapshot, system reports, GL.iNet UI, LuCI, dashboard route, Tailscale, protected configuration hashes, listener absence, memory, disk, and recent errors.
 
-The authenticated visual page and mobile layout should also be opened after deployment. `scripts/verify-browser-authenticated.sh` creates a five-minute LuCI session with only the DDK access group, runs the dependency-free Chrome DevTools checks, and destroys that session on exit. It requires the same already-authenticated SSH control socket as deployment and never accepts, prints, or stores a password or persistent browser session. The lower-level `scripts/verify-browser.mjs` still accepts a transient session through `DDK_BROWSER_SESSION` for manual test orchestration.
+The authenticated visual page and mobile layout should also be opened after deployment. `scripts/verify-browser-authenticated.sh` creates a five-minute LuCI session with only the DDK access group, runs the dependency-free Chrome DevTools checks, and destroys that session on exit. It verifies every page-specific image, both logo placements, the exact local-only request boundary, 320 px and 390 px mobile layouts, desktop layouts, overflow, and runtime errors. It requires the same already-authenticated SSH control socket as deployment and never accepts, prints, or stores a password or persistent browser session. The lower-level `scripts/verify-browser.mjs` still accepts a transient session through `DDK_BROWSER_SESSION` for manual test orchestration.
 
 After an explicitly authorized controlled reboot, run `./post-reboot-verify.sh`. It is intentionally much shorter than the full destructive-proof suite and checks only the boot-critical appliance invariants.
 

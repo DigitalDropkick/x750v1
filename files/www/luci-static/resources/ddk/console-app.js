@@ -134,14 +134,26 @@
 			h('div', { class: 'ddk-card-body' }, content || []));
 	}
 
+	var brandScenes = {
+		overview: '/luci-static/resources/ddk/brand/overview.webp',
+		tools: '/luci-static/resources/ddk/brand/tools.webp',
+		packages: '/luci-static/resources/ddk/brand/packages.webp',
+		jobs: '/luci-static/resources/ddk/brand/jobs.webp',
+		settings: '/luci-static/resources/ddk/brand/settings.webp'
+	};
+
 	function brand(section, description) {
+		var scene = brandScenes[config.page] || brandScenes.overview;
 		return h('header', { class: 'ddk-brand' },
-			h('div', { class: 'ddk-brand-mark', 'aria-hidden': 'true' }, 'DDK'),
+			h('div', { class: 'ddk-brand-media', 'aria-hidden': 'true' },
+				h('img', { src: scene, alt: '', loading: 'eager', decoding: 'async', fetchpriority: 'high' })),
+			h('div', { class: 'ddk-brand-mark' },
+				h('img', { src: '/luci-static/resources/ddk/brand/dropkick-logo.png', alt: 'Digital Dropkick kick logo', decoding: 'async' })),
 			h('div', { class: 'ddk-brand-copy' },
-				h('span', { class: 'ddk-eyebrow' }, 'DIGITAL DROPKICK'),
+				h('span', { class: 'ddk-eyebrow' }, 'LOCAL REPAIR · SERIOUS SYSTEMS'),
 				h('h2', {}, section || 'FIELD CONSOLE'),
 				h('p', {}, description || 'GL-X750 field appliance control surface')),
-			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v1.3.0')));
+			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v1.4.0')));
 	}
 
 	function sectionHeading(title, detail) {
