@@ -283,6 +283,8 @@ body.ddk-page {
 }
 .ddk-console button.ddk-button:hover { background: #609416; border-color: #609416; }
 .ddk-console button.ddk-button.ddk-button-secondary { background: transparent; color: #e8e8e8; border-color: rgba(255, 255, 255, .34); }
+.ddk-console button.ddk-button.ddk-button-action { background: #102027; color: #b6e8ef; border-color: #387381; }
+.ddk-console button.ddk-button.ddk-button-action:hover { background: #16303a; border-color: #55a0af; }
 .ddk-console button.ddk-button.ddk-button-security { background: #211b0e; color: #f1d28d; border-color: #8a6c2d; }
 .ddk-console button.ddk-button.ddk-button-security:hover { background: #302715; border-color: #b59145; }
 .ddk-console button.ddk-button:disabled { background: #171b20; color: #69737d; border-color: #2c333a; cursor: not-allowed; }

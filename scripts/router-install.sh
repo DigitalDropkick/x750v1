@@ -73,7 +73,10 @@ available_kb="$(df -Pk /overlay | awk 'NR == 2 {print $4}')"
 [ -x /usr/bin/jsonfilter ] || fail 'jsonfilter is missing'
 [ -x /usr/bin/nmap ] || fail 'the already-installed nmap-full executable is missing; no package will be installed'
 [ -x /usr/sbin/tcpdump ] || fail 'the already-installed tcpdump executable is missing; no package will be installed'
+[ -x /usr/bin/rtl_433 ] || fail 'the already-installed rtl_433 executable is missing; no package will be installed'
 [ -x /sbin/uqmi ] || fail 'the already-installed uqmi executable is missing; no package will be installed'
+/usr/bin/rtl_433 -c /dev/null -V >/dev/null 2>&1 || fail 'rtl_433 rejected the reviewed empty-config invocation'
+[ "$(uci -q get rtl_tcp.main.disabled)" = '1' ] || fail 'the existing rtl_tcp network service is not explicitly disabled'
 command -v timeout >/dev/null 2>&1 || fail 'timeout is missing'
 [ -x /usr/libexec/cgi-io ] || [ -x /usr/libexec/cgi-io/capture ] || command -v cgi-io >/dev/null 2>&1 || fail 'cgi-io execution support is missing'
 
@@ -87,7 +90,8 @@ printf '%s  %s\n' \
 	0962f72fa72245bb422bc648843615e5a18feafcfdfd04d93603a4a4d869fa9f /etc/config/firewall \
 	59f540ed2424a5a9805a09876c22a0d3504ee110897887b596cb35793e90e5fa /etc/config/wireless \
 	bc654f394ab804a78ffe3c143b309f00b8abdf6090162060f555e905868bba18 /etc/config/uhttpd \
-	1a40da0ebe45b1afd131dfc4650592913e38445e7fe42f96d3b95ad5151ac0e6 /etc/config/rpcd |
+	1a40da0ebe45b1afd131dfc4650592913e38445e7fe42f96d3b95ad5151ac0e6 /etc/config/rpcd \
+	500d071555f688b493b2937f8ef1edf7f56dfddd3888aa584e8b572d5db3f2ad /etc/config/rtl_tcp |
 	sha256sum -c - >/dev/null || fail 'protected configuration drifted since discovery'
 
 DDK_LUA_FILE="$source_root/usr/libexec/ddk-console" lua -e 'assert(loadfile(os.getenv("DDK_LUA_FILE")))'
@@ -119,7 +123,7 @@ mkdir -p "$backup_path/files"
 	printf 'source_version=%s\n' "$(cat "$source_root/usr/share/ddk-field-console/VERSION")"
 } > "$backup_path/metadata"
 
-sha256sum /etc/config/network /etc/config/firewall /etc/config/wireless /etc/config/uhttpd /etc/config/rpcd > "$backup_path/protected-config.sha256"
+sha256sum /etc/config/network /etc/config/firewall /etc/config/wireless /etc/config/uhttpd /etc/config/rpcd /etc/config/rtl_tcp > "$backup_path/protected-config.sha256"
 netstat -lntup 2>/dev/null | awk 'NR > 2 {program=$7; sub(/^[0-9]+\//, "", program); print $1, $4, program}' | sort > "$backup_path/listeners.before"
 
 find "$source_root" -type f | sort | while IFS= read -r source_file; do

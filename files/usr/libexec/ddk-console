@@ -249,6 +249,61 @@ local function has_dir_entry(path, pattern)
 	return false
 end
 
+local function rtl_sdr_probe()
+	local probe = {
+		accepted_usb_ids = { "0bda:2832", "0bda:2838" },
+		reviewed_count = 0,
+		ready = false,
+		reason = "REVIEWED HARDWARE NOT DETECTED"
+	}
+	local candidate
+	local iterator = fs.dir("/sys/bus/usb/devices")
+	if iterator then
+		for name in iterator do
+			local base = "/sys/bus/usb/devices/" .. name
+			local vendor_id = trim(fs.readfile(base .. "/idVendor")):lower()
+			local product_id = trim(fs.readfile(base .. "/idProduct")):lower()
+			if vendor_id == "0bda" and (product_id == "2832" or product_id == "2838") then
+				probe.reviewed_count = probe.reviewed_count + 1
+				local serial = trim(fs.readfile(base .. "/serial"))
+				local serial_valid = #serial > 0 and #serial <= 64 and serial:match("^[A-Za-z0-9_.%-]+$") ~= nil
+				local claimed_driver = ""
+				local interface_iterator = fs.dir("/sys/bus/usb/devices")
+				if interface_iterator then
+					for interface_name in interface_iterator do
+						if interface_name:sub(1, #name + 1) == name .. ":" then
+							local driver_link = fs.readlink("/sys/bus/usb/devices/" .. interface_name .. "/driver") or ""
+							if driver_link ~= "" then claimed_driver = driver_link:match("([^/]+)$") or "claimed" end
+						end
+					end
+				end
+				candidate = {
+					usb_id = vendor_id .. ":" .. product_id,
+					serial_valid = serial_valid,
+					claimed_driver = claimed_driver
+				}
+			end
+		end
+	end
+
+	if probe.reviewed_count > 1 then
+		probe.reason = "MULTIPLE REVIEWED DONGLES DETECTED"
+	elseif probe.reviewed_count == 1 and candidate then
+		probe.usb_id = candidate.usb_id
+		probe.serial_valid = candidate.serial_valid
+		probe.claimed_driver = candidate.claimed_driver
+		if not candidate.serial_valid then
+			probe.reason = "USB SERIAL UNAVAILABLE OR UNSAFE"
+		elseif candidate.claimed_driver ~= "" then
+			probe.reason = "KERNEL DRIVER CLAIMS THE TUNER"
+		else
+			probe.ready = true
+			probe.reason = "READY - EXACTLY ONE REVIEWED DONGLE"
+		end
+	end
+	return probe
+end
+
 local function serial_attribution()
 	local nodes = list_device_nodes("^ttyUSB%d+$")
 	for _, node in ipairs(list_device_nodes("^ttyACM%d+$")) do
@@ -359,6 +414,7 @@ end
 
 local function hardware_snapshot()
 	local usb, usb_text = usb_lines()
+	local rtl_sdr = rtl_sdr_probe()
 	local serial, serial_summary = serial_attribution()
 	local serial_nodes = {}
 	for _, device in ipairs(serial) do serial_nodes[#serial_nodes + 1] = device.node end
@@ -378,7 +434,7 @@ local function hardware_snapshot()
 		serial_detected = serial_summary.total > 0,
 		cellular_modem = usb_text:match("quectel") ~= nil or usb_text:match("2c7c:") ~= nil,
 		video = #video > 0,
-		rtl_sdr = usb_text:match("0bda:283") ~= nil or usb_text:match("rtl283") ~= nil,
+		rtl_sdr = rtl_sdr.ready,
 		can = #can > 0,
 		bluetooth = has_dir_entry("/sys/class/bluetooth", "^hci%d+$"),
 		i2c = #i2c > 0,
@@ -400,6 +456,7 @@ local function hardware_snapshot()
 		can_interfaces = can,
 		i2c_devices = i2c,
 		spi_devices = spi,
+		rtl_sdr = rtl_sdr,
 		classes = classes
 	}
 end
@@ -704,6 +761,14 @@ local job_actions = {
 		label = "LAN Metadata Snapshot",
 		class = "SECURITY",
 		singleton = true
+	},
+	["radio.rtl433_snapshot"] = {
+		worker = "rtl433_snapshot",
+		label = "RTL-433 Sensor Snapshot",
+		class = "ACTION",
+		singleton = true,
+		required_hardware = "rtl_sdr",
+		resource = "rtl_sdr"
 	}
 }
 
@@ -738,9 +803,30 @@ local function has_active_action(action_id)
 	return false
 end
 
+local function has_active_resource(resource_id)
+	local iterator = fs.dir(JOB_ROOT)
+	if iterator then
+		for name in iterator do
+			if valid_job_id(name) then
+				local base = JOB_ROOT .. "/" .. name
+				local state = trim(fs.readfile(base .. "/status"))
+				if state == "queued" or state == "running" or state == "stopping" then
+					local metadata = parse_json(fs.readfile(base .. "/metadata.json"))
+					if metadata and metadata.resource == resource_id then return true end
+				end
+			end
+		end
+	end
+	return false
+end
+
 local function start_job(action_id)
 	local spec = job_actions[action_id]
 	if not spec then return nil, "Unknown or disabled job action" end
+	if spec.required_hardware == "rtl_sdr" then
+		local probe = rtl_sdr_probe()
+		if not probe.ready then return nil, "Reviewed RTL-SDR hardware is not ready: " .. probe.reason end
+	end
 	fs.mkdirr(JOB_ROOT)
 	fs.mkdirr(REPORT_ROOT)
 	fs.chmod("/tmp/ddk", "0700")
@@ -750,6 +836,9 @@ local function start_job(action_id)
 	if active_job_count() >= MAX_ACTIVE_JOBS then return nil, "Two DDK jobs are already active" end
 	if spec.singleton and has_active_action(action_id) then
 		return nil, "This bounded job is already active"
+	end
+	if spec.resource and has_active_resource(spec.resource) then
+		return nil, "The required hardware resource is already in use by a DDK job"
 	end
 
 	local job_id = string.format("job-%d-%d", os.time(), nixio.getpid())
@@ -762,6 +851,7 @@ local function start_job(action_id)
 		action_id = action_id,
 		label = spec.label,
 		class = spec.class,
+		resource = spec.resource,
 		created_at = os.time(),
 		report_id = report_id
 	}

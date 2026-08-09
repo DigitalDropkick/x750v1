@@ -11,7 +11,7 @@ Hardware probes are read-only, on-demand, and conservative. They never start a d
 | Generic serial | True only for a future explicitly reviewed adapter identity; modem-reserved and unreviewed nodes do not satisfy this class. |
 | Cellular modem | Capability state uses Quectel/`2c7c` USB presence. The enabled snapshot additionally requires exact `2c7c:0125`, `/dev/cdc-wdm0`, `qmi_wwan`, and attributed `wwan0`. |
 | Video | Existing `/dev/video[0-9]+` nodes. |
-| RTL-SDR | `lsusb` contains `0bda:283*` or an RTL283 identifier. |
+| RTL-SDR | Ready only when sysfs contains exactly one reviewed `0bda:2832` or `0bda:2838` device, its USB serial passes the strict character/length policy, and no interface driver is attached. |
 | CAN | `ip -o link show type can` returns an interface. |
 | Bluetooth | `/sys/class/bluetooth/hci[0-9]+` exists. |
 | I2C | Existing `/dev/i2c-*` nodes. |
@@ -28,7 +28,8 @@ Hardware probes are read-only, on-demand, and conservative. They never start a d
 - A serial node proves a serial-class device, not that it is safe or appropriate for a given industrial tool. The current Quectel modem exposes four nodes, all classified `MODEM RESERVED`, and none satisfies the generic serial hardware class.
 - The attribution probe reads sysfs only and never opens `/dev/ttyUSB*` or `/dev/ttyACM*`. It records interface numbers but deliberately does not infer AT, GNSS, diagnostic, or modem roles without reviewed vendor evidence.
 - A non-EC25 serial node is `UNREVIEWED SERIAL`, not automatically general-purpose. This prevents a newly attached device from becoming an executable target merely because a node appeared.
-- USB description matching can miss devices with generic descriptors and can produce false positives. A future module may add an exact, reviewed VID:PID list.
+- Most general USB classes still use conservative descriptor matching and may have false positives or negatives. RTL-SDR is the exception: it uses an exact reviewed VID:PID list and additional serial/driver readiness checks.
+- A compatible-looking RTL-SDR with a different VID:PID remains unreviewed and cannot enable the receiver. Multiple approved dongles are deliberately ambiguous and also remain unavailable until a future explicit selection model exists.
 - Hardware presence is not service health. The console does not start gpsd, Bluetooth, camera, SDR, CAN, or serial services to improve a status color.
 - Installed kernel support is not equivalent to attached hardware.
 - Android detection does not run `adb devices`, because doing so may start the ADB server.

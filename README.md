@@ -1,6 +1,6 @@
 # Digital Dropkick Field Console
 
-Production-oriented LuCI control dashboard for the GL.iNet GL-X750 field appliance. Version 1.5.0 adds the first Phase 3 field workflow: an authenticated, non-promiscuous, fixed-profile LAN metadata snapshot using the already-installed `tcpdump`. Live health, inventory, branded responsive UI, bounded Nmap discovery, cellular and serial attribution, swap persistence, and the memorable `/ddk` shortcut remain intact—without adding a daemon or listener.
+Production-oriented LuCI control dashboard for the GL.iNet GL-X750 field appliance. Version 1.6.0 adds a hardware-gated, receive-only RTL-433 sensor snapshot using the already-installed `rtl_433` and `rtl-sdr` packages. With no reviewed tuner attached, the action remains visibly `HARDWARE REQUIRED` and is rejected before job creation. Live health, inventory, branded responsive UI, bounded Nmap and LAN metadata workflows, cellular and serial attribution, swap persistence, and `/ddk` remain intact—without adding a daemon or listener.
 
 ## Safety status
 
@@ -8,7 +8,7 @@ The source is designed for the exact discovered target documented in [docs/TARGE
 
 At initial discovery on 2026-08-09, `/proc/swaps` reported no active swap. After extroot media migration, the swapfile was confirmed active; `deploy.sh` still refuses deployment whenever `/overlay/ddk-install.swap` is not active. The separate, explicitly approved `configure-swap-autostart.sh` adds only a native fstab boot entry. It does not create, initialize, resize, stop, or directly activate the swapfile. See [docs/SWAP-AUTOSTART.md](docs/SWAP-AUTOSTART.md).
 
-Boot persistence was proven on the target on 2026-08-09: the compact post-reboot profile passed 10 checks with no warnings. Version 1.5 then passed 27 comprehensive production checks with no warnings plus authenticated browser checks at 320 px, 390 px, and desktop widths. The router remained dark after the earlier software reboot and required an attended physical power cycle; after startup, extroot and the configured swapfile activated normally.
+Boot persistence was proven on the target on 2026-08-09: the compact post-reboot profile passed 10 checks with no warnings. Version 1.6 then passed 29 comprehensive production checks with no warnings plus authenticated browser checks at 320 px, 390 px, and desktop widths. The router remained dark after the earlier software reboot and required an attended physical power cycle; after startup, extroot and the configured swapfile activated normally.
 
 ## Architecture
 
@@ -20,7 +20,7 @@ Boot persistence was proven on the target on 2026-08-09: the compact post-reboot
 - Local, optimized brand assets only; no website runtime, tracker, external font, CDN, or network request.
 - No package install, service, port, firewall rule, database, or router-side Node/Python runtime.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/BRAND-SYSTEM.md](docs/BRAND-SYSTEM.md), [docs/PACKET-CAPTURE.md](docs/PACKET-CAPTURE.md), and [docs/SECURITY.md](docs/SECURITY.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/BRAND-SYSTEM.md](docs/BRAND-SYSTEM.md), [docs/PACKET-CAPTURE.md](docs/PACKET-CAPTURE.md), [docs/RTL433-RECEIVE.md](docs/RTL433-RECEIVE.md), and [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Repository layout
 
@@ -88,7 +88,7 @@ The top-level LuCI entry is **Digital Dropkick**.
 ./verify.sh
 ```
 
-Verification covers identity, extroot, swap, installed files, locally served brand assets, Lua/shell/JSON syntax, live APIs, all INFO actions, injection rejection, generic-PID rejection, traversal rejection, asynchronous jobs, Nmap proofs, non-promiscuous LAN metadata capture and cancellation, the cellular privacy/read-only snapshot, system reports, GL.iNet UI, LuCI, dashboard route, Tailscale, protected configuration hashes, listener/worker absence, memory, disk, and recent errors.
+Verification covers identity, extroot, swap, installed files, locally served brand assets, Lua/shell/JSON syntax, live APIs, all INFO actions, injection rejection, generic-PID rejection, traversal rejection, asynchronous jobs, Nmap proofs, non-promiscuous LAN metadata capture and cancellation, RTL-433 hardware/no-device gating, the cellular privacy/read-only snapshot, system reports, GL.iNet UI, LuCI, dashboard route, Tailscale, protected configuration hashes including `rtl_tcp`, listener/worker absence, memory, disk, and recent errors.
 
 The authenticated visual page and mobile layout should also be opened after deployment. `scripts/verify-browser-authenticated.sh` creates a five-minute LuCI session with only the DDK access group, runs the dependency-free Chrome DevTools checks, and destroys that session on exit. It verifies every page-specific image, both logo placements, the exact local-only request boundary, 320 px and 390 px mobile layouts, desktop layouts, overflow, and runtime errors. It requires the same already-authenticated SSH control socket as deployment and never accepts, prints, or stores a password or persistent browser session. The lower-level `scripts/verify-browser.mjs` still accepts a transient session through `DDK_BROWSER_SESSION` for manual test orchestration.
 
@@ -125,6 +125,7 @@ See [docs/ADDING-A-TOOL.md](docs/ADDING-A-TOOL.md). Adding a manifest cannot ena
 - DISRUPTIVE actions and every SECURITY action except the separately reviewed, bounded `network.nmap_lan_discovery` and `capture.lan_metadata_snapshot` profiles are placeholders only.
 - Nmap discovery accepts no browser target or flags. It is limited to host discovery on the server-derived private `br-lan` `/24`-or-smaller subnet, one active scan, and a 75-second wall limit.
 - LAN metadata capture accepts no browser interface, filter, duration, filename, or flag. It observes only ARP, ICMP, and IPv4 DHCP metadata on server-derived `br-lan`, in non-promiscuous mode, for 20 seconds or 128 packets. It creates decoded text only and may expose transient local IP/MAC metadata to the authenticated operator.
+- RTL-433 accepts no browser device, frequency, sample rate, gain, duration, decoder, config, output, or network destination. It requires one reviewed `0bda:2832/2838` dongle with a safe server-derived serial and no claimed driver; without that hardware the UI is disabled and the backend creates no job. Live RF receive acceptance remains pending an attached reviewed dongle.
 - Cellular snapshot accepts no device, action, or argument. It is fixed to the verified EC25-AF on `/dev/cdc-wdm0`, uses four read-only UQMI queries, and excludes subscriber identifiers, phone number, SIM contents, APN, location, scans, and raw commands.
 - Serial inspection reads sysfs metadata only. All four EC25 `ttyUSB` functions are `MODEM RESERVED`; no port is opened and no functional role is guessed.
 - Tool hardware detection is conservative and documents ambiguity.

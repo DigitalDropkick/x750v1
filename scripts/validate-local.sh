@@ -85,6 +85,9 @@ while IFS= read -r action; do
 	action_class="$(jq -r --arg id "$action" '.actions[] | select(.id == $id) | .class' files/usr/share/ddk-field-console/tools/*.json | head -n 1)"
 	case "$action_class" in
 		INFO) ;;
+		ACTION)
+			rg -Fx "$action" scripts/enabled-action-ids.txt >/dev/null || fail "enabled ACTION was not explicitly reviewed: $action"
+			;;
 		SECURITY)
 			rg -Fx "$action" scripts/enabled-security-actions.txt >/dev/null || fail "enabled SECURITY action was not explicitly reviewed: $action"
 			;;
@@ -102,6 +105,13 @@ while IFS= read -r action || [[ -n "$action" ]]; do
 	[[ "$enabled_count" -eq 1 ]] || fail "reviewed SECURITY action is missing or duplicated: $action"
 done < scripts/enabled-security-actions.txt
 
+while IFS= read -r action || [[ -n "$action" ]]; do
+	[[ -z "$action" || "$action" == \#* ]] && continue
+	[[ "$action" =~ ^[a-z0-9][a-z0-9._-]+$ ]] || fail "invalid reviewed ACTION ID: $action"
+	enabled_count="$(jq -r --arg id "$action" '[.actions[] | select(.id == $id and .class == "ACTION" and .enabled == true)] | length' files/usr/share/ddk-field-console/tools/*.json | awk '{sum += $1} END{print sum+0}')"
+	[[ "$enabled_count" -eq 1 ]] || fail "reviewed ACTION is missing or duplicated: $action"
+done < scripts/enabled-action-ids.txt
+
 capture_worker=files/usr/libexec/ddk-job-worker
 [[ "$(rg -c '/usr/sbin/tcpdump -i br-lan' "$capture_worker")" -eq 1 ]] || fail 'reviewed tcpdump command is missing or duplicated'
 for capture_guard in \
@@ -115,6 +125,28 @@ do
 done
 if rg -n -- '(^|[[:space:]])-(A|X|XX|w|W|C|G)([[:space:]]|$)|-i[[:space:]]+any' "$capture_worker"; then
 	fail 'capture worker contains a payload dump, PCAP writer, rotation, or all-interface flag'
+fi
+
+radio_worker_section="$(sed -n '/elif \[ "$task" = "rtl433_snapshot" \]/,/^else$/p' "$capture_worker")"
+radio_command_section="$(printf '%s\n' "$radio_worker_section" | sed -n '/exec \/usr\/bin\/rtl_433/,/-T 20/p')"
+[[ "$(printf '%s\n' "$radio_worker_section" | rg -c '/usr/bin/rtl_433 -c /dev/null')" -eq 1 ]] || fail 'reviewed rtl_433 command is missing or duplicated'
+for radio_guard in \
+	'0bda' \
+	'2832' \
+	'2838' \
+	'case "$rtl_serial"' \
+	'ulimit -f 112' \
+	'-d ":$rtl_serial" -f 433920000 -s 250000' \
+	'-S none -F json -M time:iso -M protocol -T 20' \
+	'deadline_epoch=$(( $(date +%s) + 25 ))' \
+	'head -c 57344 "$radio_output"' \
+	'head -c 65536 "$job_dir/stdout"'
+do
+	rg -F -- "$radio_guard" "$capture_worker" >/dev/null || fail "RTL-433 safety guard is missing: $radio_guard"
+done
+if printf '%s\n' "$radio_worker_section" | rg -n -- '/usr/bin/rtl_tcp|/etc/init\.d/rtl_tcp[[:space:]]+(start|enable|restart)' ||
+	printf '%s\n' "$radio_command_section" | rg -n -- '(^|[[:space:]])-(a|A|r|w|W|X)([[:space:]]|$)|-F[[:space:]]+(mqtt|influx|syslog)|-S[[:space:]]+(all|known|unknown)'; then
+	fail 'RTL-433 worker contains a listener, analyzer, custom/file input, network output, or raw-save option'
 fi
 
 while IFS= read -r file; do

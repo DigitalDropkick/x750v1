@@ -28,8 +28,8 @@ model="$(ubus call system board | jsonfilter -e '@.model')"
 [ "$model" = 'GL.iNet GL-X750' ] || fail "target identity changed: $model"
 pass 'GL-X750 target identity'
 
-[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.5.0' ] || fail 'Field Console version is not 1.5.0'
-pass 'Field Console version 1.5.0'
+[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.6.0' ] || fail 'Field Console version is not 1.6.0'
+pass 'Field Console version 1.6.0'
 
 mount | grep -q '^/dev/sda1 on /overlay type ext4 ' || fail 'extroot is not active on /dev/sda1'
 pass 'extroot remains active'
@@ -324,6 +324,69 @@ if pidof tcpdump >/dev/null 2>&1; then fail 'tcpdump remained active after bound
 [ "$(cat /sys/class/net/br-lan/flags)" = "$capture_flags_before" ] || fail 'br-lan flags changed after bounded capture completion'
 pass 'bounded transient LAN metadata snapshot'
 
+radio_manifest=/usr/share/ddk-field-console/tools/sdr-radio.json
+[ "$(jsonfilter -i "$radio_manifest" -e '@.enabled')" = 'true' ] || fail 'SDR/radio module is not enabled'
+[ "$(jsonfilter -i "$radio_manifest" -e '@.actions[0].id')" = 'radio.rtl433_snapshot' ] || fail 'RTL-433 action ID is incorrect'
+[ "$(jsonfilter -i "$radio_manifest" -e '@.actions[0].class')" = 'ACTION' ] || fail 'RTL-433 action lost its ACTION classification'
+[ "$(jsonfilter -i "$radio_manifest" -e '@.actions[0].execution')" = 'job' ] || fail 'RTL-433 action execution mode is incorrect'
+[ "$(jsonfilter -i "$radio_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'RTL-433 action is not explicitly enabled'
+[ "$(jsonfilter -i "$radio_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'AIS receive was unexpectedly enabled'
+[ -x /usr/bin/rtl_433 ] || fail 'the reviewed rtl_433 executable is unavailable'
+rtl_version_output="$(/usr/bin/rtl_433 -c /dev/null -V 2>&1)" || fail 'rtl_433 rejected the explicit empty-config invocation'
+printf '%s' "$rtl_version_output" | grep -Fq 'rtl_433 version' || fail 'rtl_433 version evidence is missing'
+if printf '%s' "$rtl_version_output" | grep -Fq 'Trying conf file'; then fail 'rtl_433 ignored the explicit empty-config boundary'; fi
+[ "$(uci -q get rtl_tcp.main.disabled)" = '1' ] || fail 'the existing rtl_tcp network service is not disabled'
+if pidof rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 >/dev/null 2>&1; then fail 'a radio receiver was active before hardware-gate verification'; fi
+if netstat -lntup 2>/dev/null | grep -Eq '(^|[.:])1234[[:space:]]'; then fail 'the rtl_tcp default listener port is active'; fi
+pass 'reviewed RTL-433 manifest, executable, empty-config boundary, and listener state'
+
+if /usr/libexec/ddk-console job start 'radio.rtl433_snapshot;touch' 2>/dev/null | json_ok; then
+	fail 'malformed RTL-433 action ID was accepted'
+fi
+if /usr/libexec/ddk-console job start radio.rtl433_snapshot 433920000 2>/dev/null | json_ok; then
+	fail 'a browser-supplied RTL-433 frequency was accepted'
+fi
+
+radio_capabilities="$(/usr/libexec/ddk-console capabilities)"
+radio_ready="$(printf '%s' "$radio_capabilities" | jsonfilter -e '@.data[@.id="sdr-radio"].hardware.present')"
+radio_state="$(printf '%s' "$radio_capabilities" | jsonfilter -e '@.data[@.id="sdr-radio"].state')"
+[ "$(printf '%s' "$radio_capabilities" | jsonfilter -e '@.data[@.id="sdr-radio"].console_enabled')" = 'true' ] || fail 'RTL-433 console module is not enabled'
+if [ "$radio_ready" = 'true' ]; then
+	[ "$radio_state" = 'READY' ] || fail "reviewed RTL-SDR hardware has inconsistent capability state: $radio_state"
+	warn 'reviewed RTL-SDR hardware is attached; run the receiver only through its explicit UI confirmation'
+else
+	[ "$radio_state" = 'HARDWARE REQUIRED' ] || fail "absent/unready RTL-SDR has incorrect capability state: $radio_state"
+	radio_jobs_before="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
+	radio_rejection="$(/usr/libexec/ddk-console job start radio.rtl433_snapshot 2>/dev/null || true)"
+	[ "$(printf '%s' "$radio_rejection" | jsonfilter -e '@.ok')" = 'false' ] || fail 'hardware-gated RTL-433 start was not rejected'
+	printf '%s' "$radio_rejection" | jsonfilter -e '@.message' | grep -Fq 'Reviewed RTL-SDR hardware is not ready' || fail 'RTL-433 hardware rejection message is missing'
+	radio_jobs_after="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
+	[ "$radio_jobs_before" = "$radio_jobs_after" ] || fail 'rejected RTL-433 start created a transient job'
+	if pidof rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 >/dev/null 2>&1; then fail 'hardware rejection started a radio process'; fi
+
+	radio_worker_probe_id="job-$(date +%s)-$$"
+	radio_worker_probe_dir="/tmp/ddk/jobs/$radio_worker_probe_id"
+	[ ! -e "$radio_worker_probe_dir" ] || fail 'generated RTL-433 worker-probe ID collided'
+	mkdir "$radio_worker_probe_dir"
+	chmod 700 "$radio_worker_probe_dir"
+	printf '%s\n' queued > "$radio_worker_probe_dir/status"
+	printf '%s\n' '{}' > "$radio_worker_probe_dir/metadata.json"
+	: > "$radio_worker_probe_dir/stdout"
+	: > "$radio_worker_probe_dir/stderr"
+	radio_worker_result=0
+	/usr/libexec/ddk-job-worker "$radio_worker_probe_id" rtl433_snapshot >/dev/null 2>&1 || radio_worker_result=$?
+	radio_worker_status="$(cat "$radio_worker_probe_dir/status" 2>/dev/null || true)"
+	radio_worker_error="$(cat "$radio_worker_probe_dir/stderr" 2>/dev/null || true)"
+	rm -f "$radio_worker_probe_dir/pid" "$radio_worker_probe_dir/status" "$radio_worker_probe_dir/metadata.json" \
+		"$radio_worker_probe_dir/stdout" "$radio_worker_probe_dir/stderr" "$radio_worker_probe_dir/rtl433.output" "$radio_worker_probe_dir/rtl433.stderr"
+	rmdir "$radio_worker_probe_dir"
+	[ "$radio_worker_result" -eq 65 ] || fail "independent RTL-433 worker gate returned $radio_worker_result instead of 65"
+	[ "$radio_worker_status" = 'failed' ] || fail "independent RTL-433 worker gate ended in state: $radio_worker_status"
+	printf '%s' "$radio_worker_error" | grep -Fq 'Exactly one reviewed RTL-SDR USB device' || fail 'independent RTL-433 worker rejection evidence is missing'
+	if pidof rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 >/dev/null 2>&1; then fail 'independent hardware rejection started a radio process'; fi
+	pass 'RTL-433 backend/worker hardware gates and no-device refusal path'
+fi
+
 report_payload="$(/usr/libexec/ddk-console job start report.system)"
 printf '%s' "$report_payload" | json_ok || fail 'system report job did not start'
 report_job="$(printf '%s' "$report_payload" | jsonfilter -e '@.data.id')"
@@ -364,15 +427,16 @@ printf '%s  %s\n' \
 	0962f72fa72245bb422bc648843615e5a18feafcfdfd04d93603a4a4d869fa9f /etc/config/firewall \
 	59f540ed2424a5a9805a09876c22a0d3504ee110897887b596cb35793e90e5fa /etc/config/wireless \
 	bc654f394ab804a78ffe3c143b309f00b8abdf6090162060f555e905868bba18 /etc/config/uhttpd \
-	1a40da0ebe45b1afd131dfc4650592913e38445e7fe42f96d3b95ad5151ac0e6 /etc/config/rpcd |
+	1a40da0ebe45b1afd131dfc4650592913e38445e7fe42f96d3b95ad5151ac0e6 /etc/config/rpcd \
+	500d071555f688b493b2937f8ef1edf7f56dfddd3888aa584e8b572d5db3f2ad /etc/config/rtl_tcp |
 	sha256sum -c - >/dev/null || fail 'a protected configuration hash changed'
-pass 'network, firewall, wireless, uhttpd, and rpcd are untouched'
+pass 'network, firewall, wireless, uhttpd, rpcd, and rtl_tcp are untouched'
 
 if netstat -lntup 2>/dev/null | grep -q 'ddk'; then fail 'a DDK listener exists'; fi
 # BusyBox on this target has no standalone pgrep.
 # shellcheck disable=SC2009
 if ps w | grep '[d]dk-job-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
-if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
+if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
 pass 'no DDK listener or idle operation worker exists'
 
 available_kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"

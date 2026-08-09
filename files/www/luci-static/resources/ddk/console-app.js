@@ -153,7 +153,7 @@
 				h('span', { class: 'ddk-eyebrow' }, 'LOCAL REPAIR · SERIOUS SYSTEMS'),
 				h('h2', {}, section || 'FIELD CONSOLE'),
 				h('p', {}, description || 'GL-X750 field appliance control surface')),
-			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v1.5.0')));
+			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v1.6.0')));
 	}
 
 	function sectionHeading(title, detail) {
@@ -227,6 +227,23 @@
 		return exec([ 'job', 'start', 'capture.lan_metadata_snapshot' ]);
 	}
 
+	function confirmRtl433Snapshot() {
+		return window.confirm(
+			'Start bounded RTL-433 sensor snapshot?\n\n' +
+			'Hardware: one reviewed RTL2832/RTL2838 dongle selected by server-derived USB serial\n' +
+			'Profile: receive-only 433.92 MHz, 250 kS/s, automatic gain, standard decoders\n' +
+			'Privacy: decoded sensor identifiers, measurements, and timestamps may appear\n' +
+			'Safety: no raw I/Q save, custom decoder, config file, network output, or transmitter\n' +
+			'Limits: 20 seconds, one tuner job, 64 KiB final text output'
+		);
+	}
+
+	async function startRtl433Snapshot() {
+		if (!confirmRtl433Snapshot())
+			return null;
+		return exec([ 'job', 'start', 'radio.rtl433_snapshot' ]);
+	}
+
 	async function startToolJob(actionId) {
 		if (actionId !== 'cellular.snapshot')
 			throw new Error('The requested tool job did not match the DDK client allowlist.');
@@ -269,7 +286,7 @@
 				card('Memory & Storage', 'RESOURCES', [ row('Physical memory', formatBytes(system.memory.total)), row('Available memory', formatBytes(system.memory.available)), meter('Memory pressure', memoryUsed, system.memory.total, formatBytes(memoryUsed) + ' used'), row('Swap total / used', formatBytes(system.swap.total) + ' / ' + formatBytes(system.swap.used)), row('Root free', formatBytes(system.storage.available)), meter('Root storage', system.storage.used, system.storage.total, system.storage.percent + '% used') ]),
 				card('Network', 'CONNECTIVITY', [ row('LAN IP', network.lan_ip), row('WAN state', network.wan_up ? 'UP' : 'DOWN'), row('WAN interface', network.wan_interface), row('WAN IP', network.wan_ip), row('Default route', network.default_route), row('DNS', network.dns.join(', ')), row('Attached interfaces', network.interfaces.length) ]),
 				card('Remote Access', 'TAILSCALE', [ row('Installed', remote.tailscale_installed ? 'YES' : 'NO'), row('Process', remote.tailscale_running ? 'RUNNING' : 'NOT RUNNING'), row('Tailscale IP', remote.tailscale_ip), row('Version', remote.tailscale_version), h('div', { class: 'ddk-alert ddk-alert-info' }, 'Observation only — no Tailscale setting is read or modified.') ], 'ddk-card-wide'),
-				card('Hardware Presence', 'LIVE PROBES', [ row('USB devices', hardware.usb_devices.length), row('Serial attribution', serialText), row('Serial nodes', hardware.serial_devices.length ? hardware.serial_devices.join(', ') : 'NONE'), row('Video devices', hardware.video_devices.length ? hardware.video_devices.join(', ') : 'NONE'), row('RTL-SDR', hardware.classes.rtl_sdr ? 'DETECTED' : 'NOT DETECTED'), row('CAN interfaces', hardware.can_interfaces.length ? hardware.can_interfaces.join(', ') : 'NONE'), row('Bluetooth controller', hardware.classes.bluetooth ? 'DETECTED' : 'NOT DETECTED'), row('I2C / SPI', hardware.i2c_devices.length + ' / ' + hardware.spi_devices.length) ], 'ddk-card-wide')),
+				card('Hardware Presence', 'LIVE PROBES', [ row('USB devices', hardware.usb_devices.length), row('Serial attribution', serialText), row('Serial nodes', hardware.serial_devices.length ? hardware.serial_devices.join(', ') : 'NONE'), row('Video devices', hardware.video_devices.length ? hardware.video_devices.join(', ') : 'NONE'), row('RTL-SDR', hardware.rtl_sdr ? hardware.rtl_sdr.reason : hardware.classes.rtl_sdr ? 'READY' : 'NOT DETECTED'), row('CAN interfaces', hardware.can_interfaces.length ? hardware.can_interfaces.join(', ') : 'NONE'), row('Bluetooth controller', hardware.classes.bluetooth ? 'DETECTED' : 'NOT DETECTED'), row('I2C / SPI', hardware.i2c_devices.length + ' / ' + hardware.spi_devices.length) ], 'ddk-card-wide')),
 			sectionHeading('Capability Matrix', modules.length + ' modular tool groups'),
 			h('div', { class: 'ddk-cap-grid' }, capabilitySummary(modules)),
 			sectionHeading('Safe Phase-One Actions', 'Fixed INFO allowlist only'),
@@ -286,6 +303,8 @@
 			var infoEnabled = module.console_enabled && action.enabled && action.class === 'INFO' && action.execution !== 'job';
 			var discoveryEnabled = module.console_enabled && action.enabled && action.class === 'SECURITY' && action.id === 'network.nmap_lan_discovery';
 			var captureEnabled = module.console_enabled && action.enabled && action.class === 'SECURITY' && action.execution === 'job' && action.id === 'capture.lan_metadata_snapshot';
+			var rtl433Action = module.console_enabled && action.enabled && action.class === 'ACTION' && action.execution === 'job' && action.id === 'radio.rtl433_snapshot';
+			var rtl433Enabled = rtl433Action && module.hardware.present;
 			var handler = infoEnabled ? function() { runInfo(action.id, output); } : jobEnabled ? async function() {
 				try {
 					var job = await startToolJob(action.id);
@@ -304,8 +323,14 @@
 					if (job) showModal('LAN Metadata Snapshot Started', h('div', {}, h('p', {}, 'The bounded non-promiscuous capture is running as ' + job.id + '.'), h('p', {}, h('a', { class: 'ddk-button', href: config.base + '/jobs' }, 'Open Jobs & Reports'))));
 				}
 				catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); }
+			} : rtl433Enabled ? async function() {
+				try {
+					var job = await startRtl433Snapshot();
+					if (job) showModal('RTL-433 Snapshot Started', h('div', {}, h('p', {}, 'The bounded receive-only job is running as ' + job.id + '.'), h('p', {}, h('a', { class: 'ddk-button', href: config.base + '/jobs' }, 'Open Jobs & Reports'))));
+				}
+				catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); }
 			} : null;
-			return button(action.id, discoveryEnabled || captureEnabled ? 'ddk-button-security' : 'ddk-button-secondary', handler, !infoEnabled && !jobEnabled && !discoveryEnabled && !captureEnabled);
+			return button(action.id, discoveryEnabled || captureEnabled ? 'ddk-button-security' : rtl433Action ? 'ddk-button-action' : 'ddk-button-secondary', handler, !infoEnabled && !jobEnabled && !discoveryEnabled && !captureEnabled && !rtl433Enabled);
 		});
 		return h('article', { class: 'ddk-tool' },
 			h('div', { class: 'ddk-tool-head' }, h('div', {}, h('span', { class: 'ddk-card-kicker' }, module.category), h('h3', {}, module.name)), statePill(module.state)),
@@ -335,7 +360,7 @@
 			count.textContent = visible + ' of ' + cards.length + ' modules';
 		}
 		search.addEventListener('input', filter); category.addEventListener('change', filter); state.addEventListener('change', filter);
-		app.replaceChildren(brand('TOOL REGISTRY', 'Software inventory separated from live hardware presence'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'A manifest can describe a future action, but only the backend allowlist can execute one. Cellular snapshot is fixed and read-only; Nmap discovery and LAN metadata capture require explicit confirmation; other sensitive controls remain disabled.'), h('div', { class: 'ddk-toolbar' }, search, category, state), h('div', { class: 'ddk-table-meta' }, count, h('span', {}, 'Hardware probes are read-only')), grid, output);
+		app.replaceChildren(brand('TOOL REGISTRY', 'Software inventory separated from live hardware presence'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'A manifest can describe a future action, but only the backend allowlist can execute one. Cellular is fixed and read-only; Nmap and LAN capture require confirmation; RTL-433 also requires reviewed live hardware before its control is enabled.'), h('div', { class: 'ddk-toolbar' }, search, category, state), h('div', { class: 'ddk-table-meta' }, count, h('span', {}, 'Hardware probes are read-only')), grid, output);
 	}
 
 	async function renderPackages() {
@@ -365,6 +390,10 @@
 
 	async function renderJobs() {
 		var jobsNode = h('div'), reportsNode = h('div'), pollers = {};
+		var modules = await exec([ 'capabilities' ]);
+		var rtlModule = modules.find(function(module) { return module.id === 'sdr-radio'; });
+		var rtlReady = !!(rtlModule && rtlModule.console_enabled && rtlModule.hardware.present);
+		var rtlReason = rtlModule && rtlModule.state ? rtlModule.state : 'UNAVAILABLE';
 		function renderJobList(jobs) {
 			if (!jobs.length) { jobsNode.replaceChildren(h('div', { class: 'ddk-empty' }, 'No DDK jobs have run since the last reboot or cleanup.')); return; }
 			jobsNode.replaceChildren(h('div', { class: 'ddk-job-list' }, jobs.map(function(job) {
@@ -386,9 +415,9 @@
 		}
 		async function refresh() { var jobs = await exec([ 'job', 'list' ]); var reports = await exec([ 'report', 'list' ]); renderJobList(jobs); renderReportList(reports); return jobs; }
 		function poll(id) { if (pollers[id]) return; pollers[id] = setTimeout(async function tick() { try { var job = await exec([ 'job', 'status', id ]); await refresh(); if ([ 'queued', 'running', 'stopping' ].indexOf(job.status) >= 0) pollers[id] = setTimeout(tick, 1200); else delete pollers[id]; } catch (_) { delete pollers[id]; } }, 1200); }
-		async function start(action) { try { var job = action === 'network.nmap_lan_discovery' ? await startLanDiscovery() : action === 'capture.lan_metadata_snapshot' ? await startLanMetadataCapture() : await exec([ 'job', 'start', action ]); if (!job) return; await refresh(); poll(job.id); } catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); } }
+		async function start(action) { try { var job = action === 'network.nmap_lan_discovery' ? await startLanDiscovery() : action === 'capture.lan_metadata_snapshot' ? await startLanMetadataCapture() : action === 'radio.rtl433_snapshot' ? await startRtl433Snapshot() : await exec([ 'job', 'start', action ]); if (!job) return; await refresh(); poll(job.id); } catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); } }
 		async function stopJob(id) { try { await exec([ 'job', 'stop', id ]); await refresh(); poll(id); } catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); } }
-		app.replaceChildren(brand('JOBS & REPORTS', 'Bounded asynchronous work without blocking LuCI'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'Only two DDK jobs may run at once. Outputs are bounded, stored in /tmp, and removed by age/retention cleanup.'), sectionHeading('Start Bounded Job', 'Fixed server-side allowlist'), h('div', { class: 'ddk-action-row' }, button('Run Async Proof', '', function() { start('diagnostic.demo'); }), button('Generate DDK System Report', '', function() { start('report.system'); }), button('Cellular Snapshot', 'ddk-button-secondary', function() { start('cellular.snapshot'); }), button('Discover LAN Hosts', 'ddk-button-security', function() { start('network.nmap_lan_discovery'); }), button('Capture LAN Metadata', 'ddk-button-security', function() { start('capture.lan_metadata_snapshot'); }), button('Refresh', 'ddk-button-secondary', refresh)), sectionHeading('Jobs', 'Only DDK-owned worker PIDs can be stopped'), jobsNode, sectionHeading('Reports', 'Authenticated view/download · 24-hour retention'), reportsNode);
+		app.replaceChildren(brand('JOBS & REPORTS', 'Bounded asynchronous work without blocking LuCI'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'Only two DDK jobs may run at once. Outputs are bounded, stored in /tmp, and removed by age/retention cleanup.'), h('div', { class: 'ddk-alert' + (rtlReady ? ' ddk-alert-info' : '') }, 'RTL-433 receiver state: ' + rtlReason + '. The action remains disabled until one reviewed tuner is ready.'), sectionHeading('Start Bounded Job', 'Fixed server-side allowlist'), h('div', { class: 'ddk-action-row' }, button('Run Async Proof', '', function() { start('diagnostic.demo'); }), button('Generate DDK System Report', '', function() { start('report.system'); }), button('Cellular Snapshot', 'ddk-button-secondary', function() { start('cellular.snapshot'); }), button('Discover LAN Hosts', 'ddk-button-security', function() { start('network.nmap_lan_discovery'); }), button('Capture LAN Metadata', 'ddk-button-security', function() { start('capture.lan_metadata_snapshot'); }), button('RTL-433 Sensor Snapshot', 'ddk-button-action', function() { start('radio.rtl433_snapshot'); }, !rtlReady), button('Refresh', 'ddk-button-secondary', refresh)), sectionHeading('Jobs', 'Only DDK-owned worker PIDs can be stopped'), jobsNode, sectionHeading('Reports', 'Authenticated view/download · 24-hour retention'), reportsNode);
 		var jobs = await refresh(); jobs.forEach(function(job) { if ([ 'queued', 'running', 'stopping' ].indexOf(job.status) >= 0) poll(job.id); });
 	}
 
@@ -397,13 +426,13 @@
 			[ 'Authentication', 'Inherited from the existing LuCI sysauth session. No public DDK endpoint.' ],
 			[ 'Network exposure', 'No listener, nginx/uhttpd rule, firewall rule, or WAN binding is created.' ],
 			[ 'Action policy', 'Exact server-side action IDs only. Browser command strings and executable paths are rejected.' ],
-			[ 'Arguments', 'Only known action IDs and generated DDK job/report IDs are accepted. Nmap scope, capture interface/filter, and cellular device/profile are fixed server-side.' ],
+			[ 'Arguments', 'Only known action IDs and generated DDK job/report IDs are accepted. Nmap, packet, cellular, and RTL-433 device/profile parameters are server-derived or fixed.' ],
 			[ 'Jobs', 'Maximum 2 active, 20 retained, 4-hour job cleanup, bounded stdout/stderr.' ],
 			[ 'Reports', 'Stored in /tmp, 128 KiB maximum view, 24-hour cleanup, no secret configuration dumps.' ],
 			[ 'Idle footprint', 'No DDK daemon, database, timer, analytics, or background poller runs on the router.' ],
 			[ 'Configuration', 'This page is deliberately read-only in phase one.' ]
 		];
-		app.replaceChildren(brand('SETTINGS', 'Production safety posture and operating limits'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'There are no mutable web settings in version 1.5. The approved swap boot entry is managed only by guarded command-line tooling.'), h('div', { class: 'ddk-posture' }, posture.map(function(item) { return h('div', { class: 'ddk-posture-item' }, h('strong', {}, item[0]), h('span', {}, item[1])); })), sectionHeading('Explicitly Disabled', 'Requires future deliberate wiring'), card('Operating Boundaries', 'LOCKED', [ row('DISRUPTIVE actions', 'DISABLED'), row('SECURITY actions', 'BOUNDED LAN DISCOVERY + METADATA CAPTURE'), row('Cellular mutations / identifiers', 'NOT IMPLEMENTED'), row('Arbitrary targets / filters / flags', 'REJECTED'), row('PCAP files / packet replay', 'NOT IMPLEMENTED'), row('Generic PID stop', 'NOT IMPLEMENTED'), row('Persistent logs', 'NOT IMPLEMENTED'), row('WAN service exposure', 'NOT IMPLEMENTED') ], 'ddk-card-full'));
+		app.replaceChildren(brand('SETTINGS', 'Production safety posture and operating limits'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'There are no mutable web settings in version 1.6. The approved swap boot entry is managed only by guarded command-line tooling.'), h('div', { class: 'ddk-posture' }, posture.map(function(item) { return h('div', { class: 'ddk-posture-item' }, h('strong', {}, item[0]), h('span', {}, item[1])); })), sectionHeading('Explicitly Disabled', 'Requires future deliberate wiring'), card('Operating Boundaries', 'LOCKED', [ row('DISRUPTIVE actions', 'DISABLED'), row('SECURITY actions', 'BOUNDED LAN DISCOVERY + METADATA CAPTURE'), row('ACTION workflows', 'HARDWARE-GATED RTL-433 SNAPSHOT'), row('Cellular mutations / identifiers', 'NOT IMPLEMENTED'), row('Arbitrary targets / filters / flags', 'REJECTED'), row('Raw I/Q / PCAP / packet replay', 'NOT IMPLEMENTED'), row('Network radio output / rtl_tcp start', 'NOT IMPLEMENTED'), row('Generic PID stop', 'NOT IMPLEMENTED'), row('Persistent logs', 'NOT IMPLEMENTED'), row('WAN service exposure', 'NOT IMPLEMENTED') ], 'ddk-card-full'));
 	}
 
 	var renderers = { overview: renderOverview, tools: renderTools, packages: renderPackages, jobs: renderJobs, settings: renderSettings };

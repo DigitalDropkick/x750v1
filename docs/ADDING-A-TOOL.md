@@ -84,6 +84,8 @@ Before changing `enabled`:
 
 The shipped Nmap and LAN metadata profiles are both classified `SECURITY`. Nmap uses `/usr/bin/nmap` with fixed host-discovery-only arguments, a server-derived `br-lan` CIDR, RFC1918 and `/24`-or-smaller checks, fixed retry/rate/host/wall-time limits, one-scan concurrency, bounded transient output, and explicit operator confirmation. Capture uses `/usr/sbin/tcpdump` with a fixed non-promiscuous interface/filter/duration/count/snap-length profile, one-capture concurrency, decoded text only, and separate confirmation. Neither accepts a browser target, interface, filter, filename, duration, or raw flags.
 
+The shipped RTL-433 profile is classified `ACTION` and is listed separately in `scripts/enabled-action-ids.txt`. It demonstrates the additional pattern for hardware-bound jobs: exact VID:PID plus safe server-derived serial, backend pre-job refusal, independent worker revalidation, shared hardware-resource locking, explicit confirmation, fixed receive parameters, and bounded child/final output. A manifest may display the module while hardware is absent, but both the UI and backend must keep execution unavailable.
+
 ## 4. Review state semantics
 
 - Package/binary absent: `UNAVAILABLE`.

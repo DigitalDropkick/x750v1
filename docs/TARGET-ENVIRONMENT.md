@@ -59,6 +59,12 @@ The bounded LAN metadata release was deployed on 2026-08-09 with pre-change back
 
 The final snapshot reported 45,336 KiB available RAM, load averages 1.32 / 1.28 / 1.19, 27,696,352 KiB free on extroot, and the 262,140 KiB swapfile active with 3,104 KiB used. Tailscale remained running; GL.iNet UI returned HTTP 200; LuCI retained its unauthenticated HTTP 403 boundary; and no DDK listener, DDK worker, or bounded-operation client remained. Protected configuration hashes remained unchanged. These resource values are point-in-time verification evidence, not permanent operating expectations.
 
+### Version 1.6 live acceptance
+
+The hardware-gated RTL-433 release was deployed on 2026-08-09 with pre-change backup `/root/ddk-backups/20260809T231004Z-field-console-v1`. With no reviewed tuner attached, the production suite passed 29 checks with no warnings: the backend refused before job creation, the worker independently failed closed, no receiver process ran, port 1234 remained closed, and the pre-existing UCI-disabled `rtl_tcp` configuration remained byte-identical. Authenticated browser validation passed at 320 px, 390 px, and desktop widths with `HARDWARE REQUIRED` shown and the ACTION controls disabled. All 39 project files matched source.
+
+The acceptance snapshot reported 44,468 KiB available RAM, load averages 1.66 / 1.41 / 1.26, 27,695,868 KiB free on extroot, and the 262,140 KiB swapfile active with 3,104 KiB used at priority `-2`. Tailscale remained running; GL.iNet UI returned HTTP 200; LuCI retained HTTP 403 for unauthenticated access; and no DDK listener, DDK worker, or radio client remained. Live RTL-433 decode, stop, and resource profiling remain explicitly unverified until approved hardware is attached.
+
 ## Native LuCI conventions
 
 This firmware contains both generations of LuCI application structure:
@@ -94,6 +100,15 @@ Relevant confirmed paths:
 - A three-second non-promiscuous capability trial left the interface flags exactly `0x1003` before, during, and after, exited at the deliberate timeout, and left no `tcpdump` process.
 - The native LAN was up on `br-lan` at `192.168.8.1/24` during inspection.
 - No package installation, interface mutation, PCAP file, or captured packet content was required for capability discovery.
+
+## RTL-SDR / rtl_433 capability
+
+- `rtl_433` 20.11-2 is installed at `/usr/bin/rtl_433`; `rtl-sdr` 0.6.0-2 supplies the local tuner tools and `librtlsdr` 0.6.0.
+- The installed build accepts an explicit `/dev/null` configuration and documents serial-based device selection, fixed frequency/sample-rate controls, JSON output, metadata, raw-save disablement, and a built-in duration.
+- No reviewed RTL-SDR USB ID, `/dev/dvb` node, DVB/RTL module, radio receiver process, or RTL-related listener was present during Phase 3B discovery.
+- The packaged `rtl_tcp` init link exists, but `rtl_tcp.main.disabled='1'`; the service was not running and port 1234 was not listening. The console does not alter or invoke this service.
+- BusyBox `ulimit -f` was verified in `/tmp` to enforce POSIX 512-byte block limits; the disposable probe was removed immediately.
+- No tuner was opened, driver detached, module changed, service started, or package installed during discovery.
 
 ## Network and remote-access baseline
 

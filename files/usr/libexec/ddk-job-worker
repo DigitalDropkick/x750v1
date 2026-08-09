@@ -16,7 +16,7 @@ job_pid="${job_numbers#*-}"
 case "$job_epoch" in ''|*[!0-9]*) exit 64 ;; esac
 case "$job_pid" in ''|*[!0-9]*) exit 64 ;; esac
 case "$task" in
-	demo|system_report|nmap_lan_discovery|cellular_snapshot|tcpdump_lan_metadata) ;;
+	demo|system_report|nmap_lan_discovery|cellular_snapshot|tcpdump_lan_metadata|rtl433_snapshot) ;;
 	*) exit 64 ;;
 esac
 
@@ -49,7 +49,8 @@ stop_job() {
 		esac
 		fi
 		# shellcheck disable=SC2317
-		rm -f "$job_dir"/cellular-*.json "$job_dir"/cellular-*.json.err "$job_dir"/tcpdump.stderr
+		rm -f "$job_dir"/cellular-*.json "$job_dir"/cellular-*.json.err \
+			"$job_dir"/tcpdump.stderr "$job_dir"/rtl433.output "$job_dir"/rtl433.stderr
 		# shellcheck disable=SC2317
 		status_set stopped
 	# shellcheck disable=SC2317
@@ -225,7 +226,7 @@ elif [ "$task" = "system_report" ]; then
 		printf '\n[INSTALLED PACKAGE NAMES]\n'
 		opkg list-installed | awk '{print $1}' | sort
 		printf '\n[PROTECTED CONFIGURATION HASHES — CONTENTS NOT INCLUDED]\n'
-		sha256sum /etc/config/network /etc/config/firewall /etc/config/wireless /etc/config/uhttpd /etc/config/rpcd 2>/dev/null || true
+		sha256sum /etc/config/network /etc/config/firewall /etc/config/wireless /etc/config/uhttpd /etc/config/rpcd /etc/config/rtl_tcp 2>/dev/null || true
 	} > "$report_tmp" 2> "$job_dir/stderr" || result=$?
 	head -c 131072 "$report_tmp" > "$report_path"
 	rm -f "$report_tmp"
@@ -364,6 +365,104 @@ elif [ "$task" = "tcpdump_lan_metadata" ]; then
 		} >> "$job_dir/stdout"
 	fi
 	rm -f "$capture_error"
+	head -c 65536 "$job_dir/stdout" > "$job_dir/stdout.next"
+	mv "$job_dir/stdout.next" "$job_dir/stdout"
+elif [ "$task" = "rtl433_snapshot" ]; then
+	[ -x /usr/bin/rtl_433 ] || task_fail 'rtl_433 is not installed at the reviewed path; the console did not attempt installation.'
+	if pidof rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 >/dev/null 2>&1; then
+		task_fail 'A radio receiver or RTL-SDR client is already active; the console did not stop or replace it.'
+	fi
+
+	rtl_device_count=0
+	rtl_device_path=""
+	for usb_device in /sys/bus/usb/devices/*; do
+		[ -r "$usb_device/idVendor" ] || continue
+		vendor_id="$(cat "$usb_device/idVendor")"
+		product_id="$(cat "$usb_device/idProduct")"
+		if [ "$vendor_id" = "0bda" ] && { [ "$product_id" = "2832" ] || [ "$product_id" = "2838" ]; }; then
+			rtl_device_count=$((rtl_device_count + 1))
+			rtl_device_path="$usb_device"
+		fi
+	done
+	[ "$rtl_device_count" -eq 1 ] || task_fail 'Exactly one reviewed RTL-SDR USB device (0bda:2832 or 0bda:2838) is required.'
+	rtl_serial="$(cat "$rtl_device_path/serial" 2>/dev/null || true)"
+	case "$rtl_serial" in
+		''|*[!A-Za-z0-9_.-]*) task_fail 'The reviewed RTL-SDR USB serial is missing or unsafe.' ;;
+	esac
+	[ "${#rtl_serial}" -le 64 ] || task_fail 'The reviewed RTL-SDR USB serial exceeds the fixed safety limit.'
+	for usb_interface in "$rtl_device_path":*; do
+		[ -e "$usb_interface" ] || continue
+		if [ -L "$usb_interface/driver" ]; then
+			claimed_driver="$(basename "$(readlink "$usb_interface/driver")")"
+			task_fail "The reviewed RTL-SDR is claimed by kernel driver $claimed_driver; the console will not detach it."
+		fi
+	done
+
+	radio_output="$job_dir/rtl433.output"
+	radio_error="$job_dir/rtl433.stderr"
+	{
+		printf '%s\n' 'DIGITAL DROPKICK - BOUNDED RTL-433 SENSOR SNAPSHOT'
+		printf '%s\n' 'Hardware: exactly one reviewed 0bda:2832/2838 dongle selected by server-derived USB serial'
+		printf '%s\n' 'Profile: 433.92 MHz, 250 kS/s, automatic tuner gain, standard decoders, JSON events'
+		printf '%s\n' 'Privacy: decoded sensor identifiers, measurements, and timestamps may appear'
+		printf '%s\n' 'Safety: receive only; no raw I/Q save, custom decoder, config file, network output, or transmitter'
+		printf '%s\n' 'Limits: 20-second receiver window, 25-second worker wall limit, 64 KiB final text output'
+		printf 'Started (UTC): '
+		date -u
+		printf '\n[DECODED EVENTS]\n'
+	} > "$job_dir/stdout"
+
+	(
+		# POSIX file-size units are 512-byte blocks: 112 blocks bounds each child file at 56 KiB.
+		ulimit -f 112
+		exec /usr/bin/rtl_433 -c /dev/null -d ":$rtl_serial" -f 433920000 -s 250000 \
+			-S none -F json -M time:iso -M protocol -T 20
+	) > "$radio_output" 2> "$radio_error" &
+	child_pid=$!
+	deadline_epoch=$(( $(date +%s) + 25 ))
+	wall_timed_out=0
+	while kill -0 "$child_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$deadline_epoch" ]; then
+			wall_timed_out=1
+			kill -TERM "$child_pid" 2>/dev/null || true
+			sleep 1
+			if kill -0 "$child_pid" 2>/dev/null; then
+				kill -KILL "$child_pid" 2>/dev/null || true
+			fi
+			break
+		fi
+		sleep 1
+	done
+	child_result=0
+	wait "$child_pid" 2>/dev/null || child_result=$?
+	child_pid=""
+	radio_bytes="$(wc -c < "$radio_output" 2>/dev/null || printf 0)"
+	case "$radio_bytes" in ''|*[!0-9]*) radio_bytes=0 ;; esac
+	output_limited=0
+	[ "$child_result" -eq 159 ] && output_limited=1
+
+	if [ "$wall_timed_out" -eq 1 ]; then
+		head -c 4096 "$radio_error" >> "$job_dir/stderr"
+		printf '%s\n' 'RTL-433 exceeded the independent 25-second wall limit.' >> "$job_dir/stderr"
+		result=124
+	elif [ "$child_result" -ne 0 ] && [ "$output_limited" -eq 0 ]; then
+		head -c 4096 "$radio_error" >> "$job_dir/stderr"
+		result="$child_result"
+	else
+		if [ "$radio_bytes" -gt 0 ]; then
+			head -c 57344 "$radio_output" >> "$job_dir/stdout"
+		else
+			printf '%s\n' 'No supported sensor events were decoded during the fixed window.' >> "$job_dir/stdout"
+		fi
+		{
+			printf '\n[RECEIVE COMPLETE]\n'
+			printf 'Stop condition: %s\n' "$(if [ "$output_limited" -eq 1 ]; then printf '%s' 'bounded output ceiling'; else printf '%s' 'fixed 20-second receiver window'; fi)"
+			printf 'Decoded output bytes: %s\n' "$radio_bytes"
+			printf 'Completed (UTC): '
+			date -u
+		} >> "$job_dir/stdout"
+	fi
+	rm -f "$radio_output" "$radio_error"
 	head -c 65536 "$job_dir/stdout" > "$job_dir/stdout.next"
 	mv "$job_dir/stdout.next" "$job_dir/stdout"
 else

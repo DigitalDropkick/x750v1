@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.6.0 — 2026-08-09
+
+### Added
+
+- Phase 3B `radio.rtl433_snapshot` ACTION workflow using the already-installed `rtl_433` 20.11-2 and `rtl-sdr` 0.6.0-2 packages.
+- Exact `0bda:2832`/`0bda:2838` hardware allowlist, validated server-derived USB serial selection, kernel-driver conflict refusal, and shared `rtl_sdr` job resource.
+- Fixed 433.92 MHz, 250 kS/s, 20-second JSON sensor profile with explicit confirmation and hardware-aware disabled controls.
+- Separate reviewed-ACTION registry and static guards for receiver/network/raw-output options.
+- Dedicated receive/privacy/authorization documentation.
+
+### Safety and current scope
+
+- The backend refuses absent, ambiguous, unsafe-serial, or driver-claimed hardware before creating a job; the worker repeats the gate before opening a tuner.
+- The worker loads `/dev/null` as the explicit configuration, saves no raw I/Q, creates no network output, starts no service/listener, and applies independent time/file/final-output limits.
+- The existing `rtl_tcp` package configuration is UCI-disabled, remains untouched, and is now part of deployment's protected-configuration hash set.
+- No reviewed dongle was attached during development. The no-device path is testable now; live decoding, cancellation, and measured resource acceptance remain deliberately pending hardware.
+
+### Verification
+
+- Production verification passed 29 checks with 0 warnings, including malformed/extra-argument rejection, backend pre-job refusal, independent worker refusal, unchanged `rtl_tcp`, closed port 1234, and absence of every reviewed radio client.
+- Authenticated browser verification passed at 320 px, 390 px, and desktop widths with the module visibly `HARDWARE REQUIRED`, ACTION-styled controls disabled, no external request, no runtime error, and no horizontal overflow.
+- All 39 deployed project files matched source byte for byte; GL.iNet UI, LuCI authentication, Tailscale, extroot, swap, and all protected configuration remained healthy.
+
 ## 1.5.0 — 2026-08-09
 
 ### Added

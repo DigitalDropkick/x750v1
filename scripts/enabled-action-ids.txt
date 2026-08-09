@@ -1,0 +1,2 @@
+# Exact ACTION IDs approved after code, hardware-gate, and operational review.
+radio.rtl433_snapshot

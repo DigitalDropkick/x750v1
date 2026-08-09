@@ -2,16 +2,16 @@
   "id": "sdr-radio",
   "name": "SDR / Radio",
   "category": "SDR / Radio",
-  "description": "RTL-SDR, rtl_433, AIS, and radio-control utilities.",
+  "description": "Hardware-gated 433.92 MHz sensor snapshots plus installed SDR, AIS, and radio-control utilities.",
   "package_names": ["rtl-sdr", "rtl_433", "rtl-ais", "hamlib"],
   "expected_binaries": ["rtl_test", "rtl_433", "rtl_ais", "rigctl"],
   "required_hardware": ["rtl_sdr"],
   "status_probe": "rtl_sdr",
   "risk_level": "ACTION",
-  "enabled": false,
+  "enabled": true,
   "actions": [
-    {"id": "radio.rtl433", "class": "ACTION", "enabled": false},
+    {"id": "radio.rtl433_snapshot", "class": "ACTION", "execution": "job", "enabled": true},
     {"id": "radio.ais", "class": "ACTION", "enabled": false}
   ],
-  "help_text": "Software is installed; an RTL-SDR USB identifier must be present before receiver jobs are enabled."
+  "help_text": "The enabled profile requires exactly one reviewed 0bda:2832/2838 dongle with a safe USB serial and no claimed kernel driver. It receives for 20 seconds at fixed 433.92 MHz, emits bounded JSON text, and never starts rtl_tcp or saves raw I/Q."
 }

@@ -1,6 +1,6 @@
 # Next Modules
 
-Two reviewed SECURITY modules and the cellular INFO snapshot are now wired. The remaining order balances field value, implementation risk, and the GL-X750's resource constraints.
+Two reviewed SECURITY modules, one hardware-gated ACTION module, and the cellular INFO snapshot are now wired. The remaining order balances field value, implementation risk, and the GL-X750's resource constraints.
 
 ## Release phases
 
@@ -58,26 +58,28 @@ The acceptance gate passed on 2026-08-09: 27 production checks completed with no
 
 The sysfs-only inspector maps each serial node to VID:PID, parent, interface, and driver. It marks the verified EC25-AF ports modem-reserved and makes no unverified interface-role claims.
 
-## 2. RTL-SDR / rtl_433 receive job
+### Phase 3B — Hardware-gated RTL-433 receive job (implemented in 1.6.0)
 
-Enable only when a reviewed RTL-SDR VID:PID is present. Add duration, frequency range, output, concurrency, and worker-stop limits. Do not start a persistent rtl_tcp listener.
+`radio.rtl433_snapshot` is implemented with exact `0bda:2832/2838` hardware and safe-serial gates, a fixed 433.92 MHz/250 kS/s/20-second profile, no raw or network output, child/final file limits, and shared tuner locking. No reviewed dongle was attached, so production acceptance is limited to the no-device refusal path until hardware is available.
 
-## 3. Camera snapshot
+The no-device acceptance gate passed on 2026-08-09: 29 production checks completed with no warnings, both backend and worker hardware gates failed closed without starting a receiver, `rtl_tcp` remained unchanged and disabled, port 1234 remained closed, authenticated desktop/mobile UI correctly disabled the ACTION control, and all 39 deployed files matched source. Live receive and cancellation acceptance remain pending hardware.
+
+## 2. Camera snapshot
 
 Enable only for an existing `/dev/videoN` node validated against sysfs. Start with one bounded still capture. Streaming remains later because it creates network-exposure and resource questions.
 
-## 4. GPS snapshot
+## 3. GPS snapshot
 
 Add exact GNSS hardware attribution, then an on-demand position snapshot. Do not start gpsd automatically or include precise location in reports without an explicit privacy decision.
 
-## 5. CAN read-only capture
+## 4. CAN read-only capture
 
 Require an existing CAN interface and expose only bounded `candump`. Interface configuration and transmit remain DISRUPTIVE and disabled.
 
-## 6. Android and Apple identification
+## 5. Android and Apple identification
 
 Add device-presence and identity operations before any shell, recovery, restore, or filesystem action. Treat customer device identifiers as private and transient.
 
-## 7. Firmware-programmer identification
+## 6. Firmware-programmer identification
 
 Identify attached programmers without writing. Per-tool flash/read/erase workflows require separate manifests, confirmation, device targeting, power/voltage guidance, image hashing, and recovery procedures.

@@ -40,7 +40,7 @@ The current release accepts:
 - job IDs matching `job-<digits>-<digits>`;
 - report IDs matching `report-<digits>-<digits>`.
 
-There are no browser-provided network targets, interfaces, filters, filenames, device nodes, PIDs, package names, durations, or flags. For `network.nmap_lan_discovery`, the worker independently requires the native LAN device to equal `br-lan`, reads its IPv4 CIDR from the kernel, validates RFC1918 scope and a `/24`-or-smaller prefix, and then invokes one fixed host-discovery profile. For `capture.lan_metadata_snapshot`, the worker independently requires an up native LAN on exactly `br-lan` and invokes one fixed non-promiscuous ARP/ICMP/DHCP metadata profile. For `cellular.snapshot`, the worker requires the exact EC25-AF VID:PID, `qmi_wwan`, `/dev/cdc-wdm0`, and its attributed `wwan0`; browser input cannot select a modem or QMI action.
+There are no browser-provided network targets, interfaces, filters, filenames, device nodes, PIDs, package names, durations, radio parameters, output protocols, or flags. For `network.nmap_lan_discovery`, the worker independently requires the native LAN device to equal `br-lan`, reads its IPv4 CIDR from the kernel, validates RFC1918 scope and a `/24`-or-smaller prefix, and then invokes one fixed host-discovery profile. For `capture.lan_metadata_snapshot`, the worker independently requires an up native LAN on exactly `br-lan` and invokes one fixed non-promiscuous ARP/ICMP/DHCP metadata profile. For `radio.rtl433_snapshot`, the backend and worker require one exact reviewed tuner and a safe sysfs serial; frequency, sample rate, gain, decoders, configuration, duration, and output are fixed. For `cellular.snapshot`, the worker requires the exact EC25-AF VID:PID, `qmi_wwan`, `/dev/cdc-wdm0`, and its attributed `wwan0`; browser input cannot select a modem or QMI action.
 
 ## Job controls
 
@@ -49,6 +49,7 @@ There are no browser-provided network targets, interfaces, filters, filenames, d
 - At most two jobs may be active.
 - At most one Nmap LAN discovery job may be active.
 - At most one LAN metadata capture may be active.
+- At most one RTL-433 workflow and one shared `rtl_sdr` resource may be active.
 - At most one cellular snapshot may be active.
 - A stop request supplies a generated job ID, not a PID.
 - Before `TERM`, the helper reads its own PID file and confirms `/proc/<pid>/cmdline` contains both the DDK worker path and exact job ID.
@@ -57,6 +58,7 @@ There are no browser-provided network targets, interfaces, filters, filenames, d
 - Cleanup traverses only validated DDK-owned `/tmp/ddk/jobs/job-*` directories and report names.
 - The Nmap worker tracks its direct child and terminates that child when an authenticated stop request terminates the worker.
 - The capture worker tracks its direct `tcpdump` child, terminates it on authenticated stop, and checks that `br-lan` flags are unchanged after normal completion.
+- The RTL-433 worker tracks its direct receiver child, applies a 20-second client limit, a 25-second independent wall limit, 56 KiB child-file limits, and a 64 KiB final-output limit.
 - Each cellular query has a five-second client timeout, a seven-second worker wall limit, and direct-child cancellation.
 
 ## Packet-capture privacy boundary
@@ -64,6 +66,12 @@ There are no browser-provided network targets, interfaces, filters, filenames, d
 The enabled capture is not a general sniffer. It uses `-i br-lan -p -n -q -e -l -tttt -s 96 -c 128` and one literal BPF expression for ARP, ICMP, and IPv4 DHCP. It runs for at most 20 seconds, writes decoded text only, and caps that text at 64 KiB. No PCAP, payload hex/ASCII dump, DNS lookup, TCP/application session, WAN interface, all-interface mode, monitor mode, replay, or persistent capture is available.
 
 An authenticated operator may see timestamps, local MAC addresses, local IP addresses, and brief DHCP/ICMP metadata. The UI discloses this before confirmation. Output uses the existing mode-0700 transient job directory, four-hour age cleanup, and 20-job retention ceiling. See [PACKET-CAPTURE.md](PACKET-CAPTURE.md).
+
+## Radio receive boundary
+
+The enabled radio action is one fixed 433.92 MHz sensor-decoding profile. It loads no default or user config, uses no custom analyzer/decoder, saves no I/Q or signal files, and emits JSON only to its bounded local job output. It never invokes `rtl_tcp`, MQTT, InfluxDB, syslog, a remote input, a transmitter, a driver detach, or a module operation.
+
+Decoded nearby transmissions can expose sensor identifiers and measurements. The UI requires explicit confirmation and states this privacy boundary. Operators must use it only on owned or authorized radio traffic. See [RTL433-RECEIVE.md](RTL433-RECEIVE.md).
 
 ## Cellular privacy boundary
 
