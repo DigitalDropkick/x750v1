@@ -1,0 +1,17 @@
+{
+  "id": "smartcard-auth",
+  "name": "Security / Authentication",
+  "category": "Security / Authentication",
+  "description": "Smart-card, FIDO, YubiKey, OATH, and token tooling.",
+  "package_names": ["libfido2-1", "ykpers", "ykclient", "oath-toolkit", "stoken", "pcsc-tools", "pcscd", "ccid"],
+  "expected_binaries": ["ykinfo", "ykpersonalize", "oathtool", "stoken", "pcsc_scan"],
+  "required_hardware": ["smartcard"],
+  "status_probe": "smartcard",
+  "risk_level": "SECURITY",
+  "enabled": false,
+  "actions": [
+    {"id": "auth.inventory", "class": "INFO", "enabled": false},
+    {"id": "auth.program", "class": "SECURITY", "enabled": false}
+  ],
+  "help_text": "No token programming, PIN, credential, or key material is accepted by phase one."
+}

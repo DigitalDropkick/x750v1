@@ -1,0 +1,17 @@
+{
+  "id": "storage-recovery",
+  "name": "Storage / Recovery",
+  "category": "Storage / Recovery",
+  "description": "External-storage health, recovery, and filesystem utilities.",
+  "package_names": ["e2fsprogs", "badblocks", "smartmontools", "squashfs-tools-unsquashfs"],
+  "expected_binaries": ["e2fsck", "badblocks", "smartctl", "unsquashfs"],
+  "required_hardware": ["usb_storage"],
+  "status_probe": "usb_storage",
+  "risk_level": "DISRUPTIVE",
+  "enabled": false,
+  "actions": [
+    {"id": "storage.health", "class": "INFO", "enabled": false},
+    {"id": "storage.repair", "class": "DISRUPTIVE", "enabled": false}
+  ],
+  "help_text": "The active extroot device must never be unmounted, tested destructively, or repaired online by the console."
+}

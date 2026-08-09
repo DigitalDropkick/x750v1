@@ -1,0 +1,18 @@
+{
+  "id": "android-repair",
+  "name": "Android / ADB",
+  "category": "Device Repair",
+  "description": "Android device detection and future explicit repair workflows.",
+  "package_names": ["adb"],
+  "expected_binaries": ["adb"],
+  "required_hardware": ["android"],
+  "status_probe": "android",
+  "risk_level": "ACTION",
+  "enabled": false,
+  "no_device_state": "READY / NO DEVICE",
+  "actions": [
+    {"id": "android.devices", "class": "INFO", "enabled": false},
+    {"id": "android.shell", "class": "DISRUPTIVE", "enabled": false}
+  ],
+  "help_text": "ADB is installed. Detection does not start the ADB daemon, and no Android USB signature is currently present."
+}

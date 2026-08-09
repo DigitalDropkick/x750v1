@@ -1,0 +1,19 @@
+{
+  "id": "system-information",
+  "name": "System Information",
+  "category": "Hardware",
+  "description": "Live appliance health and bounded read-only diagnostics.",
+  "package_names": ["base-files", "busybox", "ubus"],
+  "expected_binaries": ["ubus", "free", "df"],
+  "required_hardware": [],
+  "status_probe": "software",
+  "risk_level": "INFO",
+  "enabled": true,
+  "actions": [
+    {"id": "system.refresh", "class": "INFO", "enabled": true},
+    {"id": "system.memory", "class": "INFO", "enabled": true},
+    {"id": "storage.mounts", "class": "INFO", "enabled": true},
+    {"id": "packages.count", "class": "INFO", "enabled": true}
+  ],
+  "help_text": "These actions read current state and never write configuration."
+}

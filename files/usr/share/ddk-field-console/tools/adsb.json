@@ -1,0 +1,16 @@
+{
+  "id": "adsb",
+  "name": "ADS-B",
+  "category": "SDR / Radio",
+  "description": "ADS-B receiver and decoding utilities.",
+  "package_names": ["readsb", "dump1090", "luci-app-dump1090", "rtl-sdr"],
+  "expected_binaries": ["readsb", "dump1090"],
+  "required_hardware": ["rtl_sdr"],
+  "status_probe": "rtl_sdr",
+  "risk_level": "ACTION",
+  "enabled": false,
+  "actions": [
+    {"id": "adsb.receive", "class": "ACTION", "enabled": false}
+  ],
+  "help_text": "Installed receiver software is not started by the Field Console."
+}

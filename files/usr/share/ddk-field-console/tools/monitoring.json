@@ -1,0 +1,16 @@
+{
+  "id": "monitoring",
+  "name": "Monitoring",
+  "category": "Monitoring",
+  "description": "Existing bandwidth, collectd, process, and Prometheus instrumentation.",
+  "package_names": ["vnstat2", "prometheus-node-exporter-lua", "collectd", "bmon", "iftop", "htop", "nlbwmon"],
+  "expected_binaries": ["vnstat", "bmon", "iftop", "htop", "nlbwmon"],
+  "required_hardware": [],
+  "status_probe": "software",
+  "risk_level": "INFO",
+  "enabled": false,
+  "actions": [
+    {"id": "monitoring.snapshot", "class": "INFO", "enabled": false}
+  ],
+  "help_text": "The console observes existing monitoring availability and does not enable or reconfigure collectors."
+}

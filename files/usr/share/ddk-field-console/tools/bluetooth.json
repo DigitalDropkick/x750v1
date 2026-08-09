@@ -1,0 +1,16 @@
+{
+  "id": "bluetooth",
+  "name": "Bluetooth",
+  "category": "Bluetooth",
+  "description": "Bluetooth controller discovery and future bounded scans.",
+  "package_names": ["bluez-utils", "bluez-utils-extra", "bluez-daemon"],
+  "expected_binaries": ["hciconfig", "hcitool"],
+  "required_hardware": ["bluetooth"],
+  "status_probe": "bluetooth",
+  "risk_level": "SECURITY",
+  "enabled": false,
+  "actions": [
+    {"id": "bluetooth.scan", "class": "SECURITY", "enabled": false}
+  ],
+  "help_text": "Software is distinct from an attached and enabled HCI controller."
+}

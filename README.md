@@ -1,0 +1,112 @@
+# Digital Dropkick Field Console
+
+Production-oriented LuCI control dashboard for the GL.iNet GL-X750 field appliance. Version 1.0 provides live system health, hardware-aware capability state, searchable package inventory, strictly allowlisted INFO actions, and bounded asynchronous reports without adding a daemon or listener.
+
+## Safety status
+
+The source is designed for the exact discovered target documented in [docs/TARGET-ENVIRONMENT.md](docs/TARGET-ENVIRONMENT.md). Deployment refuses a model, architecture, OpenWrt, extroot, free-space, swap, LuCI, or UI preflight mismatch before changing router files.
+
+At initial discovery on 2026-08-09, `/proc/swaps` reported no active swap. After extroot media migration, the swapfile was confirmed active; `deploy.sh` still refuses deployment whenever `/overlay/ddk-install.swap` is not active. The project does not activate, recreate, or modify it.
+
+## Architecture
+
+- Native LuCI menu JSON, authenticated server template, and dependency-free JavaScript.
+- Existing nginx/LuCI authentication and `cgi-io` execution boundary.
+- Short-lived Lua 5.1 helper with an exact action allowlist.
+- JSON tool modules with separate software and hardware state.
+- `/tmp/ddk/` job/report framework with concurrency, size, age, and identity limits.
+- No package install, service, port, firewall rule, CDN, database, or router-side Node/Python runtime.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/SECURITY.md](docs/SECURITY.md).
+
+## Repository layout
+
+```text
+files/                 Exact project-owned router filesystem tree
+scripts/               Local validation and remote install/verify/rollback logic
+docs/                  Target, architecture, security, registry, and roadmap docs
+deploy.sh              Validated one-connection deployment
+verify.sh              Local checks plus remote production verification
+rollback.sh            Restore a timestamped pre-deployment backup
+```
+
+## Local validation
+
+Requirements on the workstation: Bash, Git, Node (syntax only), jq, tar, and SSH.
+
+```sh
+./scripts/validate-local.sh
+```
+
+The validator checks shell syntax, JavaScript syntax, JSON, enabled-action allowlisting, forbidden package/config mutations, asset limits, and whitespace errors.
+
+Lua 5.1 with the target's `nixio` and `luci.jsonc` modules is validated again on the router before the installer writes anything.
+
+## Deployment
+
+The target is intentionally fixed to `root@192.168.8.1`. Run from the repository root:
+
+```sh
+./deploy.sh
+```
+
+The script prompts for the router password through SSH. Do not place the password in an environment variable or command line.
+
+Deployment performs:
+
+1. local validation;
+2. remote target and safety preflight;
+3. staged router-side syntax/JSON validation;
+4. timestamped backup to `/root/ddk-backups/<timestamp>-field-console-v1/`;
+5. atomic installation of only allowlisted project files;
+6. exact LuCI cache-file removal;
+7. direct status/capability smoke tests.
+
+The installer sends rpcd its native reload signal so it recognizes the new ACL. No service is restarted and the router is not rebooted.
+
+## Dashboard
+
+After deployment and normal LuCI login:
+
+```text
+http://192.168.8.1/cgi-bin/luci/admin/ddk/overview
+```
+
+The top-level LuCI entry is **Digital Dropkick**.
+
+## Verification
+
+```sh
+./verify.sh
+```
+
+Verification covers identity, extroot, swap, installed files, Lua/shell/JSON syntax, live APIs, all INFO actions, injection rejection, generic-PID rejection, traversal rejection, asynchronous jobs, system reports, GL.iNet UI, LuCI, dashboard route, Tailscale, protected configuration hashes, listener absence, memory, disk, and recent errors.
+
+The authenticated visual page and mobile layout should also be opened after deployment. Automated review may use a short-lived, narrowly scoped test session that is destroyed immediately; passwords and persistent browser sessions must never be exported.
+
+## Rollback
+
+Use the latest successful deployment backup:
+
+```sh
+./rollback.sh
+```
+
+Or select the exact path printed by deployment:
+
+```sh
+./rollback.sh /root/ddk-backups/20260809T170000Z-field-console-v1
+```
+
+Rollback restores every pre-existing target file, removes only files recorded as newly created by this project, removes empty project directories, invalidates LuCI's exact menu index cache, and reloads rpcd ACLs. It does not factory reset, restart services, or touch UCI/network configuration.
+
+## Adding tools
+
+See [docs/ADDING-A-TOOL.md](docs/ADDING-A-TOOL.md). Adding a manifest cannot enable execution by itself.
+
+## Known phase-one limits
+
+- DISRUPTIVE and SECURITY actions are placeholders only.
+- Tool hardware detection is conservative and documents ambiguity.
+- Reports are transient across reboot and have a 24-hour cleanup horizon.
+- The browser polls only active jobs; there is no router-side polling process.

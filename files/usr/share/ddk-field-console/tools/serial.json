@@ -1,0 +1,17 @@
+{
+  "id": "serial",
+  "name": "USB & Serial",
+  "category": "Serial",
+  "description": "Serial terminals, bridges, and concentrator tooling.",
+  "package_names": ["picocom", "ser2net", "conserver", "gensio-bin"],
+  "expected_binaries": ["picocom", "ser2net", "conserver"],
+  "required_hardware": ["serial"],
+  "status_probe": "serial",
+  "risk_level": "ACTION",
+  "enabled": false,
+  "actions": [
+    {"id": "serial.inspect", "class": "INFO", "enabled": false},
+    {"id": "serial.session", "class": "ACTION", "enabled": false}
+  ],
+  "help_text": "Serial nodes are detected independently from whether they are safe to open. Modem ports must not be seized."
+}

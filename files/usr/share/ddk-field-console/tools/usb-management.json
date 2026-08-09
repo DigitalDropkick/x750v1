@@ -1,0 +1,18 @@
+{
+  "id": "usb-management",
+  "name": "USB Hardware",
+  "category": "USB & Serial",
+  "description": "USB inventory, hub power, and USB/IP tooling.",
+  "package_names": ["usbutils", "uhubctl", "usbip", "usbip-client", "usbip-server"],
+  "expected_binaries": ["lsusb", "uhubctl", "usbip"],
+  "required_hardware": ["usb"],
+  "status_probe": "usb",
+  "risk_level": "DISRUPTIVE",
+  "enabled": false,
+  "actions": [
+    {"id": "usb.inventory", "class": "INFO", "enabled": false},
+    {"id": "usb.power", "class": "DISRUPTIVE", "enabled": false},
+    {"id": "usbip.attach", "class": "DISRUPTIVE", "enabled": false}
+  ],
+  "help_text": "Hub power and USB/IP attachment can disconnect extroot or the modem and remain disabled."
+}

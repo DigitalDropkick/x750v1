@@ -1,0 +1,17 @@
+{
+  "id": "cellular",
+  "name": "Cellular / Modem",
+  "category": "Cellular",
+  "description": "Quectel/QMI modem information and future bounded diagnostics.",
+  "package_names": ["qmi-utils", "uqmi", "qcsuper", "libqmi"],
+  "expected_binaries": ["qmicli", "uqmi", "qcsuper"],
+  "required_hardware": ["cellular_modem"],
+  "status_probe": "cellular_modem",
+  "risk_level": "ACTION",
+  "enabled": false,
+  "actions": [
+    {"id": "cellular.identity", "class": "INFO", "enabled": false},
+    {"id": "cellular.raw_command", "class": "DISRUPTIVE", "enabled": false}
+  ],
+  "help_text": "The detected EC25-AF is operational infrastructure; raw AT/QMI execution is intentionally unavailable."
+}

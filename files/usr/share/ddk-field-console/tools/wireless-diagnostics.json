@@ -1,0 +1,17 @@
+{
+  "id": "wireless-diagnostics",
+  "name": "Wi-Fi Diagnostics",
+  "category": "Wi-Fi",
+  "description": "Survey, monitor, and wireless analysis utilities.",
+  "package_names": ["aircrack-ng", "airmon-ng", "horst", "wavemon", "iw", "iwinfo"],
+  "expected_binaries": ["aircrack-ng", "airmon-ng", "horst", "wavemon", "iw", "iwinfo"],
+  "required_hardware": [],
+  "status_probe": "software",
+  "risk_level": "SECURITY",
+  "enabled": false,
+  "actions": [
+    {"id": "wireless.survey", "class": "INFO", "enabled": false},
+    {"id": "wireless.monitor", "class": "SECURITY", "enabled": false}
+  ],
+  "help_text": "Monitor-mode changes can disrupt connectivity and remain disabled."
+}

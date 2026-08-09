@@ -1,0 +1,17 @@
+{
+  "id": "network-info",
+  "name": "Network Interface Status",
+  "category": "Network Diagnostics",
+  "description": "Current interfaces and route tables through fixed INFO actions.",
+  "package_names": ["ip-full", "busybox"],
+  "expected_binaries": ["ip"],
+  "required_hardware": [],
+  "status_probe": "software",
+  "risk_level": "INFO",
+  "enabled": true,
+  "actions": [
+    {"id": "network.interfaces", "class": "INFO", "enabled": true},
+    {"id": "network.routes", "class": "INFO", "enabled": true}
+  ],
+  "help_text": "Read-only link, address, and route output."
+}

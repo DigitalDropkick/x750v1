@@ -1,0 +1,733 @@
+#!/usr/bin/lua
+
+-- Digital Dropkick Field Console backend.
+-- Browser input selects exact allowlist entries; it never becomes shell syntax.
+
+local fs = require "nixio.fs"
+local json = require "luci.jsonc"
+local nixio = require "nixio"
+
+local TOOL_ROOT = "/usr/share/ddk-field-console/tools"
+local JOB_ROOT = "/tmp/ddk/jobs"
+local REPORT_ROOT = "/tmp/ddk/reports"
+local MAX_CAPTURE = 131072
+local MAX_STDERR = 32768
+local MAX_ACTIVE_JOBS = 2
+local MAX_RETAINED_JOBS = 20
+local JOB_MAX_AGE = 4 * 60 * 60
+local REPORT_MAX_AGE = 24 * 60 * 60
+
+local function trim(value)
+	return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function respond(ok, data, message, code)
+	io.write(json.stringify({
+		ok = ok and true or false,
+		data = data,
+		message = message,
+		code = code
+	}) or '{"ok":false,"message":"JSON encoding failed"}')
+	io.write("\n")
+	os.exit(ok and 0 or 1)
+end
+
+local function read_limited(path, limit)
+	local handle = io.open(path, "rb")
+	if not handle then
+		return nil, false
+	end
+	local value = handle:read(limit or MAX_CAPTURE) or ""
+	local extra = handle:read(1)
+	handle:close()
+	return value, extra ~= nil
+end
+
+local function write_file(path, value)
+	local handle = io.open(path, "wb")
+	if not handle then
+		return false
+	end
+	handle:write(value or "")
+	handle:close()
+	return true
+end
+
+local function shell_quote(value)
+	return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
+end
+
+local function capture(command, limit)
+	-- All callers pass source-code constants. No request value reaches this string.
+	local handle = io.popen("LC_ALL=C timeout 12 sh -c " .. shell_quote(command) .. " 2>&1")
+	if not handle then
+		return "", false
+	end
+	local chunks = {}
+	local total = 0
+	local cap = limit or MAX_CAPTURE
+	local truncated = false
+	while total < cap do
+		local chunk = handle:read(math.min(4096, cap - total))
+		if not chunk then
+			break
+		end
+		chunks[#chunks + 1] = chunk
+		total = total + #chunk
+	end
+	if total >= cap then
+		-- Drain without retaining so a verbose child cannot block in pclose().
+		while true do
+			local discarded = handle:read(4096)
+			if not discarded then break end
+			truncated = true
+		end
+	end
+	handle:close()
+	return table.concat(chunks), truncated
+end
+
+local function parse_json(value)
+	if not value or value == "" then
+		return nil
+	end
+	local ok, parsed = pcall(json.parse, value)
+	return ok and parsed or nil
+end
+
+local function release_value(name)
+	local body = fs.readfile("/etc/openwrt_release") or ""
+	return body:match(name .. "='([^']*)'") or ""
+end
+
+local function meminfo()
+	local values = {}
+	for line in (fs.readfile("/proc/meminfo") or ""):gmatch("[^\n]+") do
+		local key, number = line:match("^([^:]+):%s*(%d+)")
+		if key and number then
+			values[key] = tonumber(number) * 1024
+		end
+	end
+	return values
+end
+
+local package_cache
+local package_map_cache
+
+local function package_inventory()
+	if package_cache then
+		return package_cache, package_map_cache
+	end
+
+	local packages = {}
+	local package_map = {}
+	local body = (fs.readfile("/usr/lib/opkg/status") or "") .. "\n\n"
+	for paragraph in body:gmatch("(.-)\n\n") do
+		local name = paragraph:match("\n?Package:%s*([^\n]+)")
+		local version = paragraph:match("\nVersion:%s*([^\n]+)")
+		local status = paragraph:match("\nStatus:%s*([^\n]+)")
+		status = trim(status)
+		if name and status:match("^%S+%s+%S+%s+installed$") then
+			name = trim(name)
+			if not package_map[name] then
+				package_map[name] = true
+				packages[#packages + 1] = {
+					name = name,
+					version = trim(version),
+					category = false
+				}
+			end
+		end
+	end
+
+	local function classify(name)
+		local lower = name:lower()
+		if lower:match("^luci%-") then
+			return "LuCI"
+		elseif lower:match("^kmod%-") or lower:match("^kernel") then
+			return "Kernel"
+		elseif lower:match("^python") or lower:match("^python3%-") then
+			return "Python"
+		elseif lower:match("^lib") or lower:match("%-libs?$") then
+			return "Libraries"
+		elseif lower:match("collectd") or lower:match("prometheus") or lower:match("vnstat") or
+		       lower:match("nlbw") or lower:match("rrd") or lower == "bmon" or
+		       lower == "iftop" or lower == "htop" then
+			return "Monitoring"
+		elseif lower:match("usb") or lower:match("serial") or lower:match("bluetooth") or
+		       lower:match("gps") or lower:match("rtl") or lower:match("sdr") or
+		       lower:match("modbus") or lower:match("pcsc") or lower:match("fido") or
+		       lower:match("yubi") or lower:match("camera") or lower:match("mjpg") or
+		       lower:match("v4l") or lower:match("adb") or lower:match("imobile") or
+		       lower:match("flashrom") or lower:match("openocd") or lower:match("avrdude") or
+		       lower:match("dfu") or lower:match("canutils") then
+			return "Hardware"
+		elseif lower:match("nmap") or lower:match("network") or lower:match("netif") or
+		       lower:match("tcp") or lower:match("wifi") or lower:match("wireless") or
+		       lower:match("dns") or lower:match("dhcp") or lower:match("snmp") or
+		       lower:match("tailscale") or lower:match("vpn") or lower:match("firewall") or
+		       lower:match("iproute") or lower:match("arp%-") then
+			return "Networking"
+		end
+		return "Applications"
+	end
+
+	for _, item in ipairs(packages) do
+		item.category = classify(item.name)
+	end
+	table.sort(packages, function(a, b) return a.name < b.name end)
+	package_cache = packages
+	package_map_cache = package_map
+	return packages, package_map
+end
+
+local function binary_exists(name)
+	if type(name) ~= "string" or not name:match("^[A-Za-z0-9_+%.%-/]+$") then
+		return false
+	end
+	if name:sub(1, 1) == "/" then
+		return fs.access(name, "x") and true or false
+	end
+	for _, prefix in ipairs({ "/usr/bin/", "/usr/sbin/", "/bin/", "/sbin/" }) do
+		if fs.access(prefix .. name, "x") then
+			return true
+		end
+	end
+	return false
+end
+
+local function list_device_nodes(pattern)
+	local result = {}
+	local iterator = fs.dir("/dev")
+	if iterator then
+		for name in iterator do
+			if name:match(pattern) then
+				result[#result + 1] = "/dev/" .. name
+			end
+		end
+	end
+	table.sort(result)
+	return result
+end
+
+local function interface_list()
+	local output = capture("ip -o link show")
+	local result = {}
+	for line in output:gmatch("[^\n]+") do
+		local name = line:match("^%d+:%s+([^:]+):")
+		if name then
+			result[#result + 1] = {
+				name = name:gsub("@.*$", ""),
+				state = line:match("%sstate%s+(%S+)") or "UNKNOWN"
+			}
+		end
+	end
+	return result
+end
+
+local function usb_lines()
+	local output = binary_exists("lsusb") and capture("lsusb") or ""
+	local lines = {}
+	for line in output:gmatch("[^\n]+") do
+		if trim(line) ~= "" then
+			lines[#lines + 1] = trim(line)
+		end
+	end
+	return lines, output:lower()
+end
+
+local function has_dir_entry(path, pattern)
+	local iterator = fs.dir(path)
+	if not iterator then
+		return false
+	end
+	for name in iterator do
+		if name:match(pattern) then
+			return true
+		end
+	end
+	return false
+end
+
+local function hardware_snapshot()
+	local usb, usb_text = usb_lines()
+	local serial = list_device_nodes("^ttyUSB%d+$")
+	for _, node in ipairs(list_device_nodes("^ttyACM%d+$")) do
+		serial[#serial + 1] = node
+	end
+	table.sort(serial)
+	local video = list_device_nodes("^video%d+$")
+	local i2c = list_device_nodes("^i2c%-%d+$")
+	local spi = list_device_nodes("^spidev")
+	local can_output = capture("ip -o link show type can")
+	local can = {}
+	for line in can_output:gmatch("[^\n]+") do
+		local name = line:match("^%d+:%s+([^:]+):")
+		if name then can[#can + 1] = name:gsub("@.*$", "") end
+	end
+
+	local classes = {
+		usb = #usb > 0,
+		serial = #serial > 0,
+		cellular_modem = usb_text:match("quectel") ~= nil or usb_text:match("2c7c:") ~= nil,
+		video = #video > 0,
+		rtl_sdr = usb_text:match("0bda:283") ~= nil or usb_text:match("rtl283") ~= nil,
+		can = #can > 0,
+		bluetooth = has_dir_entry("/sys/class/bluetooth", "^hci%d+$"),
+		i2c = #i2c > 0,
+		spi = #spi > 0,
+		gps = usb_text:match("u%-blox") ~= nil or usb_text:match("gnss") ~= nil or usb_text:match("gps") ~= nil,
+		android = usb_text:match("android") ~= nil or usb_text:match("google") ~= nil or usb_text:match("samsung") ~= nil,
+		apple_mobile = usb_text:match("05ac:") ~= nil or usb_text:match("apple") ~= nil,
+		smartcard = usb_text:match("smart card") ~= nil or usb_text:match("yubico") ~= nil or usb_text:match("yubikey") ~= nil or usb_text:match("ccid") ~= nil,
+		programmer = usb_text:match("j%-link") ~= nil or usb_text:match("cmsis") ~= nil or usb_text:match("ftdi") ~= nil or usb_text:match("stmicro") ~= nil or usb_text:match("atmel") ~= nil,
+		usb_storage = fs.stat("/sys/block/sda") ~= nil
+	}
+
+	return {
+		usb_devices = usb,
+		serial_devices = serial,
+		video_devices = video,
+		can_interfaces = can,
+		i2c_devices = i2c,
+		spi_devices = spi,
+		classes = classes
+	}
+end
+
+local function ubus_object(command)
+	local output = capture(command)
+	return parse_json(output) or {}
+end
+
+local function first_ipv4(status)
+	local addresses = status["ipv4-address"]
+	if type(addresses) == "table" and type(addresses[1]) == "table" then
+		return addresses[1].address or ""
+	end
+	return ""
+end
+
+local function system_status()
+	local board = ubus_object("ubus call system board")
+	local memory = meminfo()
+	local uptime_body = fs.readfile("/proc/uptime") or "0"
+	local uptime = tonumber(uptime_body:match("^(%S+)")) or 0
+	local load_body = fs.readfile("/proc/loadavg") or "0 0 0"
+	local l1, l5, l15 = load_body:match("^(%S+)%s+(%S+)%s+(%S+)")
+	local storage_line = ""
+	local storage_output = capture("df -kP /")
+	for line in storage_output:gmatch("[^\n]+") do
+		if not line:match("^Filesystem") then storage_line = line end
+	end
+	local _, total_k, used_k, available_k, percent, mountpoint = storage_line:match("^(%S+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%%%s+(%S+)")
+	local packages = package_inventory()
+	local lan = ubus_object("ubus call network.interface.lan status")
+	local wan = ubus_object("ubus call network.interface.wan status")
+	local dns = {}
+	for line in (fs.readfile("/tmp/resolv.conf.d/resolv.conf.auto") or ""):gmatch("[^\n]+") do
+		local server = line:match("^nameserver%s+(%S+)")
+		if server then dns[#dns + 1] = server end
+	end
+	local tailscale_installed = binary_exists("tailscale")
+	local tailscale_pids = trim(capture("pidof tailscaled"))
+	local tailscale_ip = tailscale_installed and trim(capture("tailscale ip -4")) or ""
+	local tailscale_version = tailscale_installed and trim((capture("tailscale version")):match("[^\n]+")) or ""
+	local swap_total = memory.SwapTotal or 0
+	local hardware = hardware_snapshot()
+
+	return {
+		generated_at = os.time(),
+		system = {
+			hostname = trim(fs.readfile("/proc/sys/kernel/hostname")),
+			model = board.model or "GL.iNet GL-X750",
+			openwrt = release_value("DISTRIB_DESCRIPTION"),
+			kernel = trim(capture("uname -r")),
+			uptime_seconds = math.floor(uptime),
+			load = { tonumber(l1) or 0, tonumber(l5) or 0, tonumber(l15) or 0 },
+			memory = {
+				total = memory.MemTotal or 0,
+				available = memory.MemAvailable or 0,
+				free = memory.MemFree or 0
+			},
+			swap = {
+				total = swap_total,
+				used = math.max(0, swap_total - (memory.SwapFree or 0)),
+				active = swap_total > 0
+			},
+			storage = {
+				total = (tonumber(total_k) or 0) * 1024,
+				used = (tonumber(used_k) or 0) * 1024,
+				available = (tonumber(available_k) or 0) * 1024,
+				percent = tonumber(percent) or 0,
+				mountpoint = mountpoint or "/"
+			},
+			package_count = #packages
+		},
+		network = {
+			lan_ip = first_ipv4(lan),
+			wan_interface = wan.l3_device or wan.device or "",
+			wan_up = wan.up and true or false,
+			wan_ip = first_ipv4(wan),
+			default_route = trim((capture("ip route show default")):match("[^\n]+")),
+			dns = dns,
+			interfaces = interface_list()
+		},
+		remote_access = {
+			tailscale_installed = tailscale_installed,
+			tailscale_running = tailscale_pids ~= "",
+			tailscale_ip = tailscale_ip,
+			tailscale_version = tailscale_version
+		},
+		hardware = hardware
+	}
+end
+
+local valid_probe_ids = {
+	software = true, usb = true, serial = true, cellular_modem = true,
+	video = true, rtl_sdr = true, can = true, bluetooth = true,
+	i2c = true, spi = true, gps = true, android = true,
+	apple_mobile = true, smartcard = true, programmer = true,
+	usb_storage = true
+}
+
+local function string_array(value)
+	if type(value) ~= "table" then return {} end
+	local result = {}
+	for _, item in ipairs(value) do
+		if type(item) == "string" then result[#result + 1] = item end
+	end
+	return result
+end
+
+local function load_capabilities()
+	local _, package_map = package_inventory()
+	local hardware = hardware_snapshot()
+	local names = {}
+	local iterator = fs.dir(TOOL_ROOT)
+	if iterator then
+		for name in iterator do
+			if name:match("^[a-z0-9][a-z0-9_.%-]+%.json$") then names[#names + 1] = name end
+		end
+	end
+	table.sort(names)
+
+	local modules = {}
+	for _, name in ipairs(names) do
+		local manifest = parse_json(fs.readfile(TOOL_ROOT .. "/" .. name))
+		if type(manifest) == "table" and type(manifest.id) == "string" and
+		   manifest.id:match("^[a-z0-9][a-z0-9_.%-]+$") and type(manifest.name) == "string" and
+		   type(manifest.category) == "string" then
+			local package_names = string_array(manifest.package_names)
+			local binaries = string_array(manifest.expected_binaries)
+			local required = string_array(manifest.required_hardware)
+			local matched_packages = {}
+			local matched_binaries = {}
+			for _, package_name in ipairs(package_names) do
+				if package_map[package_name] then matched_packages[#matched_packages + 1] = package_name end
+			end
+			for _, binary in ipairs(binaries) do
+				if binary_exists(binary) then matched_binaries[#matched_binaries + 1] = binary end
+			end
+			local software_installed = #matched_packages > 0 or #matched_binaries > 0
+			local missing_hardware = {}
+			local detected_hardware = {}
+			for _, class in ipairs(required) do
+				if hardware.classes[class] then
+					detected_hardware[#detected_hardware + 1] = class
+				else
+					missing_hardware[#missing_hardware + 1] = class
+				end
+			end
+			local state
+			if not software_installed then
+				state = "UNAVAILABLE"
+			elseif #missing_hardware > 0 then
+				state = manifest.no_device_state == "READY / NO DEVICE" and "READY / NO DEVICE" or "HARDWARE REQUIRED"
+			elseif manifest.enabled == true then
+				state = "READY"
+			else
+				state = "NOT CONFIGURED"
+			end
+			local probe = type(manifest.status_probe) == "string" and manifest.status_probe or "software"
+			if not valid_probe_ids[probe] then probe = "software" end
+			modules[#modules + 1] = {
+				id = manifest.id,
+				name = manifest.name,
+				category = manifest.category,
+				description = manifest.description or "",
+				package_names = package_names,
+				expected_binaries = binaries,
+				required_hardware = required,
+				status_probe = probe,
+				risk_level = manifest.risk_level or "INFO",
+				console_enabled = manifest.enabled == true,
+				actions = type(manifest.actions) == "table" and manifest.actions or {},
+				help_text = manifest.help_text or "",
+				software = {
+					installed = software_installed,
+					matched_packages = matched_packages,
+					matched_binaries = matched_binaries
+				},
+				hardware = {
+					required = #required > 0,
+					present = #missing_hardware == 0,
+					detected = detected_hardware,
+					missing = missing_hardware
+				},
+				state = state
+			}
+		end
+	end
+	return modules
+end
+
+local info_actions = {
+	["system.refresh"] = { label = "System Status", command = "uname -a; uptime; free; df -h /" },
+	["network.interfaces"] = { label = "Interfaces", command = "ip -o link show; ip -o addr show" },
+	["network.routes"] = { label = "Routes", command = "ip route show; ip -6 route show" },
+	["hardware.usb"] = { label = "USB Devices", command = "lsusb" },
+	["hardware.serial"] = { label = "Serial Devices", command = "ls -l /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true" },
+	["remote.tailscale"] = { label = "Tailscale Status", command = "tailscale version; tailscale ip -4; pidof tailscaled >/dev/null && echo 'tailscaled: running' || echo 'tailscaled: not running'" },
+	["storage.mounts"] = { label = "Storage and Mounts", command = "df -hT; printf '\\nMounts:\\n'; mount" },
+	["system.memory"] = { label = "Memory and Swap", command = "free; printf '\\n/proc/swaps:\\n'; cat /proc/swaps" },
+	["packages.count"] = { label = "Installed Package Count", command = "opkg list-installed | wc -l" }
+}
+
+local function valid_job_id(value)
+	return type(value) == "string" and value:match("^job%-%d+%-%d+$") ~= nil
+end
+
+local function valid_report_id(value)
+	return type(value) == "string" and value:match("^report%-%d+%-%d+$") ~= nil
+end
+
+local function remove_tree(path)
+	if not path:match("^/tmp/ddk/jobs/job%-%d+%-%d+$") then return false end
+	local iterator = fs.dir(path)
+	if iterator then
+		for name in iterator do
+			if name ~= "." and name ~= ".." then
+				local child = path .. "/" .. name
+				local stat = fs.stat(child)
+				if stat and stat.type == "dir" then remove_tree(child) else fs.unlink(child) end
+			end
+		end
+	end
+	fs.rmdir(path)
+	return true
+end
+
+local function job_state(job_id)
+	local base = JOB_ROOT .. "/" .. job_id
+	local status = trim(fs.readfile(base .. "/status"))
+	if status == "" then return nil end
+	local stdout, stdout_truncated = read_limited(base .. "/stdout", MAX_CAPTURE)
+	local stderr, stderr_truncated = read_limited(base .. "/stderr", MAX_STDERR)
+	return {
+		id = job_id,
+		status = status,
+		pid = tonumber(trim(fs.readfile(base .. "/pid"))),
+		metadata = parse_json(fs.readfile(base .. "/metadata.json")) or {},
+		stdout = stdout or "",
+		stderr = stderr or "",
+		stdout_truncated = stdout_truncated,
+		stderr_truncated = stderr_truncated
+	}
+end
+
+local function cleanup_transient()
+	local now = os.time()
+	local retained = {}
+	local iterator = fs.dir(JOB_ROOT)
+	if iterator then
+		for name in iterator do
+			if valid_job_id(name) then
+				local path = JOB_ROOT .. "/" .. name
+				local stat = fs.stat(path)
+				local state = trim(fs.readfile(path .. "/status"))
+				local active = state == "queued" or state == "running" or state == "stopping"
+				local mtime = stat and stat.mtime or now
+				if not active and now - mtime > JOB_MAX_AGE then
+					remove_tree(path)
+				else
+					retained[#retained + 1] = { name = name, mtime = mtime, active = active }
+				end
+			end
+		end
+	end
+	table.sort(retained, function(a, b) return a.mtime > b.mtime end)
+	for index = MAX_RETAINED_JOBS + 1, #retained do
+		if not retained[index].active then remove_tree(JOB_ROOT .. "/" .. retained[index].name) end
+	end
+
+	iterator = fs.dir(REPORT_ROOT)
+	if iterator then
+		for name in iterator do
+			local report_id = name:match("^(report%-%d+%-%d+)%.txt$")
+			if report_id then
+				local path = REPORT_ROOT .. "/" .. name
+				local stat = fs.stat(path)
+				if stat and now - (stat.mtime or now) > REPORT_MAX_AGE then fs.unlink(path) end
+			end
+		end
+	end
+end
+
+local job_actions = {
+	["diagnostic.demo"] = { worker = "demo", label = "Read-only asynchronous proof", class = "INFO" },
+	["report.system"] = { worker = "system_report", label = "DDK System Report", class = "INFO" }
+}
+
+local function active_job_count()
+	local count = 0
+	local iterator = fs.dir(JOB_ROOT)
+	if iterator then
+		for name in iterator do
+			if valid_job_id(name) then
+				local state = trim(fs.readfile(JOB_ROOT .. "/" .. name .. "/status"))
+				if state == "queued" or state == "running" or state == "stopping" then count = count + 1 end
+			end
+		end
+	end
+	return count
+end
+
+local function start_job(action_id)
+	local spec = job_actions[action_id]
+	if not spec then return nil, "Unknown or disabled job action" end
+	fs.mkdirr(JOB_ROOT)
+	fs.mkdirr(REPORT_ROOT)
+	fs.chmod("/tmp/ddk", "0700")
+	fs.chmod(JOB_ROOT, "0700")
+	fs.chmod(REPORT_ROOT, "0700")
+	cleanup_transient()
+	if active_job_count() >= MAX_ACTIVE_JOBS then return nil, "Two DDK jobs are already active" end
+
+	local job_id = string.format("job-%d-%d", os.time(), nixio.getpid())
+	local job_dir = JOB_ROOT .. "/" .. job_id
+	if fs.stat(job_dir) then return nil, "Generated job ID collision" end
+	fs.mkdir(job_dir, "0700")
+	local report_id = spec.worker == "system_report" and job_id:gsub("^job%-", "report-") or nil
+	local metadata = {
+		id = job_id,
+		action_id = action_id,
+		label = spec.label,
+		class = spec.class,
+		created_at = os.time(),
+		report_id = report_id
+	}
+	write_file(job_dir .. "/status", "queued\n")
+	write_file(job_dir .. "/stdout", "")
+	write_file(job_dir .. "/stderr", "")
+	write_file(job_dir .. "/metadata.json", json.stringify(metadata) .. "\n")
+	fs.chmod(job_dir, "0700")
+
+	-- Both interpolated values are generated or exact server-side allowlist literals.
+	local command = string.format("/usr/libexec/ddk-job-worker %s %s >/dev/null 2>&1 &", job_id, spec.worker)
+	local result = os.execute(command)
+	if result ~= 0 and result ~= true then
+		write_file(job_dir .. "/status", "failed\n")
+		write_file(job_dir .. "/stderr", "Worker launch failed\n")
+		return nil, "Worker launch failed"
+	end
+	return job_state(job_id)
+end
+
+local function list_jobs()
+	cleanup_transient()
+	local jobs = {}
+	local iterator = fs.dir(JOB_ROOT)
+	if iterator then
+		for name in iterator do
+			if valid_job_id(name) then
+				local state = job_state(name)
+				if state then jobs[#jobs + 1] = state end
+			end
+		end
+	end
+	table.sort(jobs, function(a, b)
+		return (a.metadata.created_at or 0) > (b.metadata.created_at or 0)
+	end)
+	return jobs
+end
+
+local function stop_job(job_id)
+	if not valid_job_id(job_id) then return nil, "Invalid DDK job ID" end
+	local state = job_state(job_id)
+	if not state then return nil, "Job not found" end
+	if state.status ~= "queued" and state.status ~= "running" then return nil, "Job is not active" end
+	local pid = tonumber(state.pid)
+	if not pid or pid < 2 then return nil, "Worker PID is unavailable" end
+	local cmdline = fs.readfile("/proc/" .. pid .. "/cmdline") or ""
+	cmdline = cmdline:gsub("%z", " ")
+	if not cmdline:match("/usr/libexec/ddk%-job%-worker") or not cmdline:find(job_id, 1, true) then
+		return nil, "PID does not belong to this DDK job"
+	end
+	local killed = nixio.kill(pid, 15)
+	if not killed then return nil, "Unable to signal DDK worker" end
+	write_file(JOB_ROOT .. "/" .. job_id .. "/status", "stopping\n")
+	return job_state(job_id)
+end
+
+local function list_reports()
+	cleanup_transient()
+	local reports = {}
+	local iterator = fs.dir(REPORT_ROOT)
+	if iterator then
+		for name in iterator do
+			local report_id = name:match("^(report%-%d+%-%d+)%.txt$")
+			if report_id then
+				local stat = fs.stat(REPORT_ROOT .. "/" .. name)
+				reports[#reports + 1] = {
+					id = report_id,
+					size = stat and stat.size or 0,
+					created_at = stat and stat.mtime or 0
+				}
+			end
+		end
+	end
+	table.sort(reports, function(a, b) return a.created_at > b.created_at end)
+	return reports
+end
+
+local verb = arg[1]
+
+if verb == "status" and #arg == 1 then
+	respond(true, system_status())
+elseif verb == "capabilities" and #arg == 1 then
+	respond(true, load_capabilities())
+elseif verb == "packages" and #arg == 1 then
+	local packages = package_inventory()
+	respond(true, packages)
+elseif verb == "info" and #arg == 2 then
+	local action_id = arg[2]
+	local spec = info_actions[action_id]
+	if not spec then respond(false, nil, "Unknown or disabled INFO action", "ACTION_NOT_ALLOWED") end
+	local output, truncated = capture(spec.command, MAX_CAPTURE)
+	respond(true, { action_id = action_id, class = "INFO", label = spec.label, output = output, truncated = truncated })
+elseif verb == "job" and arg[2] == "list" and #arg == 2 then
+	respond(true, list_jobs())
+elseif verb == "job" and arg[2] == "start" and #arg == 3 then
+	local state, err = start_job(arg[3])
+	if not state then respond(false, nil, err, "JOB_START_REJECTED") end
+	respond(true, state)
+elseif verb == "job" and arg[2] == "status" and #arg == 3 then
+	if not valid_job_id(arg[3]) then respond(false, nil, "Invalid DDK job ID", "INVALID_JOB_ID") end
+	local state = job_state(arg[3])
+	if not state then respond(false, nil, "Job not found", "JOB_NOT_FOUND") end
+	respond(true, state)
+elseif verb == "job" and arg[2] == "stop" and #arg == 3 then
+	local state, err = stop_job(arg[3])
+	if not state then respond(false, nil, err, "JOB_STOP_REJECTED") end
+	respond(true, state)
+elseif verb == "report" and arg[2] == "list" and #arg == 2 then
+	respond(true, list_reports())
+elseif verb == "report" and arg[2] == "view" and #arg == 3 then
+	if not valid_report_id(arg[3]) then respond(false, nil, "Invalid report ID", "INVALID_REPORT_ID") end
+	local content, truncated = read_limited(REPORT_ROOT .. "/" .. arg[3] .. ".txt", MAX_CAPTURE)
+	if not content then respond(false, nil, "Report not found", "REPORT_NOT_FOUND") end
+	respond(true, { id = arg[3], content = content, truncated = truncated })
+else
+	respond(false, nil, "Invalid command or argument count", "INVALID_REQUEST")
+end

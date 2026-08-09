@@ -1,0 +1,17 @@
+{
+  "id": "sdr-radio",
+  "name": "SDR / Radio",
+  "category": "SDR / Radio",
+  "description": "RTL-SDR, rtl_433, AIS, and radio-control utilities.",
+  "package_names": ["rtl-sdr", "rtl_433", "rtl-ais", "hamlib"],
+  "expected_binaries": ["rtl_test", "rtl_433", "rtl_ais", "rigctl"],
+  "required_hardware": ["rtl_sdr"],
+  "status_probe": "rtl_sdr",
+  "risk_level": "ACTION",
+  "enabled": false,
+  "actions": [
+    {"id": "radio.rtl433", "class": "ACTION", "enabled": false},
+    {"id": "radio.ais", "class": "ACTION", "enabled": false}
+  ],
+  "help_text": "Software is installed; an RTL-SDR USB identifier must be present before receiver jobs are enabled."
+}

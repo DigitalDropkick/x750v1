@@ -1,0 +1,17 @@
+{
+  "id": "packet-capture",
+  "name": "Capture & Traffic",
+  "category": "Packet Capture",
+  "description": "Packet capture, replay, flow export, and traffic-analysis utilities.",
+  "package_names": ["tcpdump", "tcpreplay", "netsniff-ng", "dnstop", "nfdump", "softflowd", "hping3"],
+  "expected_binaries": ["tcpdump", "tcpreplay", "netsniff-ng", "dnstop"],
+  "required_hardware": [],
+  "status_probe": "software",
+  "risk_level": "SECURITY",
+  "enabled": false,
+  "actions": [
+    {"id": "capture.start", "class": "SECURITY", "enabled": false},
+    {"id": "capture.replay", "class": "DISRUPTIVE", "enabled": false}
+  ],
+  "help_text": "Capture interfaces, filters, duration, size, and retention must be deliberately bounded before activation."
+}

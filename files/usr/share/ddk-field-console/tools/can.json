@@ -1,0 +1,17 @@
+{
+  "id": "can",
+  "name": "CAN Bus",
+  "category": "CAN",
+  "description": "CAN interface inspection and future bounded capture/transmit workflows.",
+  "package_names": ["canutils"],
+  "expected_binaries": ["candump", "cansend"],
+  "required_hardware": ["can"],
+  "status_probe": "can",
+  "risk_level": "DISRUPTIVE",
+  "enabled": false,
+  "actions": [
+    {"id": "can.capture", "class": "INFO", "enabled": false},
+    {"id": "can.transmit", "class": "DISRUPTIVE", "enabled": false}
+  ],
+  "help_text": "canutils is installed, but no CAN interface was detected during discovery."
+}

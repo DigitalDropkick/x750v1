@@ -1,0 +1,17 @@
+{
+  "id": "modbus-industrial",
+  "name": "Industrial / Modbus",
+  "category": "Industrial",
+  "description": "Modbus, precision-time, serial gateway, and NTRIP utilities.",
+  "package_names": ["mbtools", "mbusd", "libmodbus", "linuxptp", "ntripcaster", "ntripclient", "ntripserver"],
+  "expected_binaries": ["mbpoll", "mbusd", "ptp4l", "ntripclient"],
+  "required_hardware": ["serial"],
+  "status_probe": "serial",
+  "risk_level": "ACTION",
+  "enabled": false,
+  "actions": [
+    {"id": "industrial.modbus_read", "class": "ACTION", "enabled": false},
+    {"id": "industrial.modbus_write", "class": "DISRUPTIVE", "enabled": false}
+  ],
+  "help_text": "Bus, unit, register, function, and serial parameters require strict typed validation. Writes remain disabled."
+}

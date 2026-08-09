@@ -1,0 +1,17 @@
+{
+  "id": "automation",
+  "name": "Automation / MQTT",
+  "category": "Automation",
+  "description": "MQTT client, event-trigger, and relay/control tooling.",
+  "package_names": ["mosquitto-client-ssl", "triggerhappy", "crelay"],
+  "expected_binaries": ["mosquitto_pub", "mosquitto_sub", "thd", "crelay"],
+  "required_hardware": [],
+  "status_probe": "software",
+  "risk_level": "ACTION",
+  "enabled": false,
+  "actions": [
+    {"id": "automation.mqtt_publish", "class": "ACTION", "enabled": false},
+    {"id": "automation.relay", "class": "DISRUPTIVE", "enabled": false}
+  ],
+  "help_text": "Broker destinations, topics, payloads, credentials, and relay targets require separate allowlists."
+}

@@ -1,0 +1,17 @@
+{
+  "id": "firmware-programming",
+  "name": "Firmware / Embedded",
+  "category": "Firmware Programming",
+  "description": "Flash, JTAG/SWD, MCU bootloader, DFU, and EEPROM tooling.",
+  "package_names": ["flashrom-usb", "openocd", "avrdude", "dfu-util", "dfu-programmer", "stm32flash", "bossa", "lpc21isp", "ftdi_eeprom"],
+  "expected_binaries": ["flashrom", "openocd", "avrdude", "dfu-util", "stm32flash", "bossac", "lpc21isp", "ftdi_eeprom"],
+  "required_hardware": ["programmer"],
+  "status_probe": "programmer",
+  "risk_level": "DISRUPTIVE",
+  "enabled": false,
+  "actions": [
+    {"id": "firmware.identify", "class": "INFO", "enabled": false},
+    {"id": "firmware.write", "class": "DISRUPTIVE", "enabled": false}
+  ],
+  "help_text": "Programming actions require per-tool device, image, voltage, and confirmation safeguards."
+}

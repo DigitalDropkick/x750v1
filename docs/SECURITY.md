@@ -1,0 +1,89 @@
+# Security Model
+
+## Trust boundary
+
+The Field Console is mounted below LuCI's authenticated `admin` tree. Live data calls use the existing `cgi-io` session boundary. There is no unauthenticated DDK CGI, web root, API port, or reverse-proxy rule.
+
+LuCI static JavaScript, CSS, and non-secret module descriptions may be web-readable like other LuCI assets. They contain no credentials and cannot execute actions without an authenticated `cgi-io` call.
+
+## Action allowlisting
+
+The browser invokes one executable only:
+
+```text
+/usr/libexec/ddk-console
+```
+
+The first argument is a fixed verb. Subsequent arguments must match an exact action table or strict generated-ID grammar. Unknown verbs, extra arguments, shell syntax, paths, and numeric PIDs are rejected.
+
+The browser cannot submit:
+
+- an executable path;
+- a shell command or fragment;
+- arbitrary flags;
+- an output path;
+- a generic PID;
+- a report filesystem path.
+
+The backend's `capture()` receives only source-code constants. A request value selects a table record but is never concatenated into a command.
+
+## Registry isolation
+
+Manifest `actions` and `status_probe` values are descriptive. The backend validates symbolic probe IDs and ignores unknown probes. A manifest cannot create a runnable backend action.
+
+## Argument validation
+
+Phase one accepts:
+
+- exact INFO action IDs;
+- exact job action IDs;
+- job IDs matching `job-<digits>-<digits>`;
+- report IDs matching `report-<digits>-<digits>`.
+
+There are no browser-provided network targets, interfaces, filenames, device nodes, PIDs, package names, or flags.
+
+## Job controls
+
+- The helper generates the job ID and worker task name.
+- At most two jobs may be active.
+- A stop request supplies a generated job ID, not a PID.
+- Before `TERM`, the helper reads its own PID file and confirms `/proc/<pid>/cmdline` contains both the DDK worker path and exact job ID.
+- No other signal or generic kill endpoint exists.
+- stdout is limited to 128 KiB and stderr to 32 KiB.
+- Cleanup traverses only validated DDK-owned `/tmp/ddk/jobs/job-*` directories and report names.
+
+## Reports and sensitive information
+
+The system report intentionally excludes:
+
+- UCI configuration bodies;
+- Wi-Fi PSKs;
+- passwords or password hashes;
+- private keys and certificates;
+- API or Tailscale auth keys;
+- Tailscale peer lists;
+- application logs and customer payloads.
+
+It includes read-only system identity, resource state, interface/address/route information, Tailscale self version/IP, USB/device presence, package names, and hashes—not contents—of protected configuration files.
+
+Reports live outside `/www` under mode-restricted `/tmp/ddk/reports/`. Authenticated helper calls return report content for view/download.
+
+## WAN and service posture
+
+The project creates no listener and makes no firewall, nginx, uhttpd, ttyd, network, wireless, cellular, or Tailscale change. Verification searches for any DDK listener and checks protected configuration hashes.
+
+Existing listeners found during discovery are out of scope; this project neither endorses nor changes them.
+
+## CSRF and session assumptions
+
+The template client uses LuCI's existing authenticated `cgi-io` request format (the same format as `fs.exec_direct()`), which carries the dispatcher-provided session identifier and enforces exact command ACLs. No custom cookie, token, or authentication store exists. The application never reads or exports the user's session cookie.
+
+## Security tests
+
+Local validation checks enabled-action consistency and forbidden mutation patterns. Router verification actively attempts:
+
+- shell metacharacters inside an action ID;
+- a generic numeric PID stop;
+- report path traversal.
+
+It requires rejection and confirms the injection marker was not created.

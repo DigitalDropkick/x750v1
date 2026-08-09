@@ -1,0 +1,16 @@
+{
+  "id": "network-discovery",
+  "name": "Network Discovery",
+  "category": "Network Diagnostics",
+  "description": "Host, route, reachability, DNS, LLDP, and SNMP discovery tools.",
+  "package_names": ["nmap-full", "netdiscover", "arp-scan", "fping", "mtr-nojson", "httping", "bind-dig", "lldpd", "snmp-utils"],
+  "expected_binaries": ["nmap", "arp-scan", "fping", "dig"],
+  "required_hardware": [],
+  "status_probe": "software",
+  "risk_level": "SECURITY",
+  "enabled": false,
+  "actions": [
+    {"id": "network.quick_scan", "class": "SECURITY", "enabled": false}
+  ],
+  "help_text": "Discovery targets and rate limits require a separate authorization and validation design."
+}

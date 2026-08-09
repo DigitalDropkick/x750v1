@@ -1,0 +1,16 @@
+{
+  "id": "throughput",
+  "name": "Throughput & Live Traffic",
+  "category": "Network Diagnostics",
+  "description": "On-demand throughput and interactive traffic inspection.",
+  "package_names": ["iperf3", "bmon", "iftop", "vnstat2"],
+  "expected_binaries": ["iperf3", "bmon", "iftop", "vnstat"],
+  "required_hardware": [],
+  "status_probe": "software",
+  "risk_level": "ACTION",
+  "enabled": false,
+  "actions": [
+    {"id": "throughput.client_test", "class": "ACTION", "enabled": false}
+  ],
+  "help_text": "A future client-only iperf workflow must allowlist destination and duration; it must never start a WAN server."
+}

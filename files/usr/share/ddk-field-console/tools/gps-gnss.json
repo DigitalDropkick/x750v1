@@ -1,0 +1,17 @@
+{
+  "id": "gps-gnss",
+  "name": "GPS / GNSS / RTK",
+  "category": "GPS",
+  "description": "GNSS clients, gpsd, RTK processing, and NTRIP utilities.",
+  "package_names": ["gpsd", "gpsd-clients", "gpsd-utils", "rtkrcv", "ntripcaster", "ntripclient", "ntripserver"],
+  "expected_binaries": ["gpsd", "cgps", "rtkrcv", "ntripclient"],
+  "required_hardware": ["gps"],
+  "status_probe": "gps",
+  "risk_level": "ACTION",
+  "enabled": false,
+  "actions": [
+    {"id": "gps.snapshot", "class": "INFO", "enabled": false},
+    {"id": "gps.ntrip", "class": "ACTION", "enabled": false}
+  ],
+  "help_text": "A serial node alone is not treated as a confirmed GNSS receiver."
+}

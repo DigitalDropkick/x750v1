@@ -1,0 +1,17 @@
+{
+  "id": "camera",
+  "name": "Camera / Video",
+  "category": "Camera",
+  "description": "Still capture, streaming, motion, and V4L utilities.",
+  "package_names": ["fswebcam", "mjpg-streamer", "motion", "v4l-utils", "v4l2rtspserver", "v4l2tools"],
+  "expected_binaries": ["fswebcam", "mjpg_streamer", "motion", "v4l2-ctl"],
+  "required_hardware": ["video"],
+  "status_probe": "video",
+  "risk_level": "ACTION",
+  "enabled": false,
+  "actions": [
+    {"id": "camera.snapshot", "class": "ACTION", "enabled": false},
+    {"id": "camera.stream", "class": "DISRUPTIVE", "enabled": false}
+  ],
+  "help_text": "No `/dev/video*` device was present during discovery. The console never starts a camera listener automatically."
+}

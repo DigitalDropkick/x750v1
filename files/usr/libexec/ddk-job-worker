@@ -1,0 +1,136 @@
+#!/bin/sh
+
+set -eu
+umask 077
+
+job_id="${1:-}"
+task="${2:-}"
+job_root="/tmp/ddk/jobs"
+report_root="/tmp/ddk/reports"
+
+job_numbers="${job_id#job-}"
+job_epoch="${job_numbers%%-*}"
+job_pid="${job_numbers#*-}"
+[ "$job_numbers" != "$job_id" ] || exit 64
+[ "$job_epoch" != "$job_numbers" ] || exit 64
+case "$job_epoch" in ''|*[!0-9]*) exit 64 ;; esac
+case "$job_pid" in ''|*[!0-9]*) exit 64 ;; esac
+case "$task" in
+	demo|system_report) ;;
+	*) exit 64 ;;
+esac
+
+job_dir="$job_root/$job_id"
+[ -d "$job_dir" ] || exit 66
+[ -f "$job_dir/metadata.json" ] || exit 66
+
+status_set() {
+	status_value="$1"
+	printf '%s\n' "$status_value" > "$job_dir/status.next"
+	mv "$job_dir/status.next" "$job_dir/status"
+}
+
+stop_job() {
+	# Invoked asynchronously by the signal trap.
+	# shellcheck disable=SC2317
+	status_set stopped
+	# shellcheck disable=SC2317
+	printf '%s\n' 'Worker stopped by an authenticated DDK request.' >> "$job_dir/stderr"
+	# shellcheck disable=SC2317
+	exit 143
+}
+
+trap stop_job HUP INT TERM
+printf '%s\n' "$$" > "$job_dir/pid"
+: > "$job_dir/stdout"
+: > "$job_dir/stderr"
+status_set running
+
+result=0
+
+if [ "$task" = "demo" ]; then
+	demo_tmp="$job_dir/stdout.next"
+	{
+		printf '%s\n' 'DIGITAL DROPKICK ASYNCHRONOUS READ-ONLY PROOF'
+		printf 'Started (UTC): '
+		date -u
+		printf '%s\n' 'The worker is detached from the LuCI request.'
+		sleep 2
+		printf '\nKernel: '
+		uname -r
+		printf 'Uptime: '
+		cut -d ' ' -f 1 /proc/uptime
+		printf 'Interfaces: '
+		ip -o link show | wc -l
+		printf 'Installed packages: '
+		opkg list-installed | wc -l
+		printf 'Completed (UTC): '
+		date -u
+	} > "$demo_tmp" 2> "$job_dir/stderr" || result=$?
+	head -c 131072 "$demo_tmp" > "$job_dir/stdout"
+	rm -f "$demo_tmp"
+else
+	report_id="report-${job_id#job-}"
+	report_tmp="$report_root/$report_id.txt.next"
+	report_path="$report_root/$report_id.txt"
+	mkdir -p "$report_root"
+	chmod 700 /tmp/ddk "$report_root" 2>/dev/null || true
+	{
+		printf '%s\n' 'DIGITAL DROPKICK FIELD CONSOLE — SYSTEM REPORT'
+		printf '%s\n' 'Read-only and sanitized: no configuration bodies, credentials, keys, tokens, or peer lists.'
+		printf 'Generated (UTC): '
+		date -u
+		printf '\n[IDENTITY]\n'
+		ubus call system board
+		uname -a
+		printf '\n[UPTIME AND LOAD]\n'
+		cat /proc/uptime
+		cat /proc/loadavg
+		printf '\n[MEMORY AND SWAP]\n'
+		free
+		cat /proc/swaps
+		printf '\n[STORAGE]\n'
+		df -hT
+		mount
+		printf '\n[NETWORK INTERFACES AND ROUTES]\n'
+		ip -o link show
+		ip -o addr show
+		ip route show
+		printf '\n[DNS SERVERS]\n'
+		awk '/^nameserver/{print}' /tmp/resolv.conf.d/resolv.conf.auto 2>/dev/null || true
+		printf '\n[TAILSCALE SELF]\n'
+		if command -v tailscale >/dev/null 2>&1; then
+			tailscale version
+			tailscale ip -4
+			if pidof tailscaled >/dev/null 2>&1; then printf '%s\n' 'tailscaled: running'; else printf '%s\n' 'tailscaled: not running'; fi
+		else
+			printf '%s\n' 'tailscale: not installed'
+		fi
+		printf '\n[USB AND DEVICE NODES]\n'
+		if command -v lsusb >/dev/null 2>&1; then lsusb; fi
+		ls -l /dev/ttyUSB* /dev/ttyACM* /dev/video* /dev/i2c-* /dev/spidev* 2>/dev/null || true
+		ip -details link show type can 2>/dev/null || true
+		printf '\n[INSTALLED PACKAGE COUNT]\n'
+		opkg list-installed | wc -l
+		printf '\n[INSTALLED PACKAGE NAMES]\n'
+		opkg list-installed | awk '{print $1}' | sort
+		printf '\n[PROTECTED CONFIGURATION HASHES — CONTENTS NOT INCLUDED]\n'
+		sha256sum /etc/config/network /etc/config/firewall /etc/config/wireless /etc/config/uhttpd /etc/config/rpcd 2>/dev/null || true
+	} > "$report_tmp" 2> "$job_dir/stderr" || result=$?
+	head -c 131072 "$report_tmp" > "$report_path"
+	rm -f "$report_tmp"
+	chmod 600 "$report_path"
+	printf 'Report ready: %s\n' "$report_id" > "$job_dir/stdout"
+fi
+
+head -c 32768 "$job_dir/stderr" > "$job_dir/stderr.next" 2>/dev/null || true
+mv "$job_dir/stderr.next" "$job_dir/stderr" 2>/dev/null || true
+
+if [ "$result" -eq 0 ]; then
+	status_set complete
+else
+	printf 'Worker exit code: %s\n' "$result" >> "$job_dir/stderr"
+	status_set failed
+fi
+
+exit "$result"

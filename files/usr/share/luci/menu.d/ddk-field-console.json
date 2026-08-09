@@ -1,0 +1,59 @@
+{
+	"admin/ddk": {
+		"title": "Digital Dropkick",
+		"order": 15,
+		"action": {
+			"type": "firstchild",
+			"preferred": "overview",
+			"recurse": true
+		},
+		"depends": {
+			"acl": [ "ddk-field-console" ]
+		}
+	},
+
+	"admin/ddk/overview": {
+		"title": "Overview",
+		"order": 10,
+		"action": {
+			"type": "template",
+			"path": "ddk/shell"
+		}
+	},
+
+	"admin/ddk/tools": {
+		"title": "Tool Registry",
+		"order": 20,
+		"action": {
+			"type": "template",
+			"path": "ddk/shell"
+		}
+	},
+
+	"admin/ddk/packages": {
+		"title": "Package Inventory",
+		"order": 30,
+		"action": {
+			"type": "template",
+			"path": "ddk/shell"
+		}
+	},
+
+	"admin/ddk/jobs": {
+		"title": "Jobs & Reports",
+		"order": 40,
+		"action": {
+			"type": "template",
+			"path": "ddk/shell"
+		}
+	},
+
+	"admin/ddk/settings": {
+		"title": "Settings",
+		"order": 50,
+		"action": {
+			"type": "template",
+			"path": "ddk/shell"
+		}
+	}
+}
