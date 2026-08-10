@@ -49,12 +49,13 @@
 		return node;
 	}
 
-	function button(label, className, handler, disabled) {
+	function button(label, className, handler, disabled, title) {
 		return h('button', {
 			type: 'button',
 			class: 'ddk-button' + (className ? ' ' + className : ''),
 			onclick: handler,
-			disabled: disabled || null
+			disabled: disabled || null,
+			title: title || null
 		}, label);
 	}
 
@@ -547,6 +548,11 @@
 	function renderTool(module, output) {
 		var packageText = module.software.matched_packages.length ? module.software.matched_packages.join(', ') : 'No matching package';
 		var hardwareText = !module.hardware.required ? 'Not required' : module.hardware.present ? module.hardware.detected.join(', ') : 'Missing: ' + module.hardware.missing.join(', ');
+		var blockers = (module.actions || []).filter(function(action) {
+			return action.enabled !== true && typeof action.unavailable_reason === 'string' && action.unavailable_reason;
+		}).map(function(action) {
+			return h('p', { class: 'ddk-tool-blocker' }, h('strong', {}, 'Unavailable action: ' + action.id + '. '), action.unavailable_reason);
+		});
 		var actions = (module.actions || []).map(function(action) {
 			var modeCounts = module.mode_counts || {};
 			var modeReady = action.hardware_mode === 'normal' ? Number(modeCounts.normal || 0) > 0 : action.hardware_mode === 'recovery' ? Number(modeCounts.recovery || 0) + Number(modeCounts.dfu || 0) > 0 : action.hardware_mode === 'any' ? Number(modeCounts.normal || 0) + Number(modeCounts.recovery || 0) + Number(modeCounts.dfu || 0) > 0 : action.hardware_mode === 'storage' ? !!module.action_ready : action.hardware_mode === 'relay' ? Number(modeCounts.relay || 0) > 0 : action.hardware_mode === 'openocd' || action.hardware_mode === 'avrdude' || action.hardware_mode === 'dfu' || action.hardware_mode === 'serial_programmer' ? Number(modeCounts[action.hardware_mode] || 0) > 0 : true;
@@ -599,11 +605,12 @@
 				}
 				catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); }
 			} : null;
-			return button(action.id, action.class === 'SECURITY' ? 'ddk-button-security' : action.class === 'ACTION' || action.class === 'DISRUPTIVE' ? 'ddk-button-action' : 'ddk-button-secondary', handler, !operatorEnabled && !infoEnabled && !jobEnabled && !discoveryEnabled && !captureEnabled && !rtl433Enabled && !cameraEnabled && !gpsEnabled && !canEnabled);
+			var disabled = !operatorEnabled && !infoEnabled && !jobEnabled && !discoveryEnabled && !captureEnabled && !rtl433Enabled && !cameraEnabled && !gpsEnabled && !canEnabled;
+			return button(action.id, action.class === 'SECURITY' ? 'ddk-button-security' : action.class === 'ACTION' || action.class === 'DISRUPTIVE' ? 'ddk-button-action' : 'ddk-button-secondary', handler, disabled, action.enabled !== true ? action.unavailable_reason : '');
 		});
 		return h('article', { class: 'ddk-tool' },
 			h('div', { class: 'ddk-tool-head' }, h('div', {}, h('span', { class: 'ddk-card-kicker' }, module.category), h('h3', {}, module.name)), statePill(module.state)),
-			h('div', { class: 'ddk-tool-body' }, h('p', { class: 'ddk-tool-description' }, module.description), h('p', { class: 'ddk-tool-detail' }, h('strong', {}, 'Software: '), module.software.installed ? 'Installed' : 'Unavailable'), h('p', { class: 'ddk-tool-detail' }, h('strong', {}, 'Packages: '), packageText), h('p', { class: 'ddk-tool-detail' }, h('strong', {}, 'Hardware: '), hardwareText), h('p', { class: 'ddk-tool-detail' }, h('strong', {}, 'Risk: '), module.risk_level), h('p', { class: 'ddk-tool-detail' }, module.help_text), h('div', { class: 'ddk-tool-actions' }, actions.length ? actions : statePill('NO ACTIONS'))));
+			h('div', { class: 'ddk-tool-body' }, h('p', { class: 'ddk-tool-description' }, module.description), h('p', { class: 'ddk-tool-detail' }, h('strong', {}, 'Software: '), module.software.installed ? 'Installed' : 'Unavailable'), h('p', { class: 'ddk-tool-detail' }, h('strong', {}, 'Packages: '), packageText), h('p', { class: 'ddk-tool-detail' }, h('strong', {}, 'Hardware: '), hardwareText), h('p', { class: 'ddk-tool-detail' }, h('strong', {}, 'Risk: '), module.risk_level), h('p', { class: 'ddk-tool-detail' }, module.help_text), blockers, h('div', { class: 'ddk-tool-actions' }, actions.length ? actions : statePill('NO ACTIONS'))));
 	}
 
 	async function renderTools() {
@@ -618,7 +625,7 @@
 		var output = h('section', { class: 'ddk-output' });
 		var cards = modules.map(function(module) {
 			var node = renderTool(module, output); grid.appendChild(node);
-			return { node: node, module: module, search: [ module.name, module.category, module.description, module.package_names.join(' '), module.expected_binaries.join(' '), module.required_hardware.join(' ') ].join(' ').toLowerCase() };
+			return { node: node, module: module, search: [ module.name, module.category, module.description, module.package_names.join(' '), module.expected_binaries.join(' '), module.required_hardware.join(' '), (module.actions || []).map(function(action) { return action.unavailable_reason || ''; }).join(' ') ].join(' ').toLowerCase() };
 		});
 		function filter() {
 			var query = search.value.toLowerCase(), visible = 0;

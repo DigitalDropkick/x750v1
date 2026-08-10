@@ -1,5 +1,7 @@
 # Camera Still Snapshot
 
+> Historical version 1.7 fixed-profile acceptance record. Version 2.1 supersedes the browser/profile restrictions below with structured still controls and a separate confirmed temporary authenticated stream action while keeping packaged camera services disabled. See [OPERATOR-MODE.md](OPERATOR-MODE.md) and [PHASE4-OPERATOR.md](PHASE4-OPERATOR.md).
+
 Version 1.7 adds one hardware-gated `camera.still_snapshot` ACTION. It uses the already-installed `fswebcam` and V4L2 tools. It does not install a package, start a service, or create a listener.
 
 ## Hardware gate

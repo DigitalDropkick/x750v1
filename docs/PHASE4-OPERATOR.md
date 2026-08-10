@@ -43,3 +43,5 @@ MQTT payload/password, YubiKey secret, camera password, and NTRIP password are h
 - Live hardware execution remains pending for currently unattached RTL-SDR, UVC camera, GNSS, Bluetooth, smartcard/YubiKey, relay, CAN, and general serial devices. The production no-device paths fail before opening a native target and clean all owned state.
 
 These are runtime or architecture constraints. `ACTION`, `SECURITY`, and `DISRUPTIVE` classification is not itself a blocker.
+
+Phase 5 turns this limitation list into an action-level manifest and GUI contract and verifies the full release inventory. See [PHASE5-ACCEPTANCE.md](PHASE5-ACCEPTANCE.md).

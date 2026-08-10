@@ -188,6 +188,10 @@ Exact `--help`/help output was inspected for the invoked options. `pcscd` advert
 
 The target has no RTL-SDR, UVC camera, external GNSS/general serial, Bluetooth HCI, smartcard/YubiKey, compatible relay, or CAN hardware attached. The installed `canutils` record has no executable payload, `mbpoll` is absent, USB/IP reports no usable controller, and the only controllable USB-hub root contains the EC25/extroot path. Both radios participate in active management/client networking. These facts drive the no-device gates and remaining limitations in [PHASE4-OPERATOR.md](PHASE4-OPERATOR.md); no package, service, driver, radio mode, USB power state, or protected configuration was changed during the audit.
 
+## Phase 5 production acceptance
+
+Phase 5 was deployed on 2026-08-10 with preinstall snapshot `/root/ddk-backups/20260810T210034Z-field-console-v1`. Target verification passed 50 checks with no warnings, including the complete 24-module/59-action contract, 53 enabled actions, 38 structured actions, and exact technical reasons for six unavailable actions. Authenticated browser acceptance passed at 1440 px, 390 px, and 320 px with every blocker visible and no external request, overflow, or runtime error. All 47 deployed files matched source byte for byte; the router returned to idle with no DDK worker, private input, proof upload, helper, or temporary listener. No package, reboot, service restart, or protected configuration change occurred.
+
 ## Network and remote-access baseline
 
 - LAN: `br-lan`, `192.168.8.1/24`, up.

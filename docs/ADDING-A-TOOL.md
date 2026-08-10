@@ -65,6 +65,7 @@ A migrated action resembles:
 | `actions` | Exact descriptive IDs plus class and enabled state. |
 | `actions[].execution` | `job` for asynchronous native work. |
 | `actions[].parameter_schema` | `operator-v1` for the shared structured transport. |
+| `actions[].unavailable_reason` | Required bounded concrete technical blocker when an action is intentionally unavailable; forbidden on enabled actions. |
 | `help_text` | Honest current behavior, technical limits, and hardware state. |
 
 Supported hardware symbols are `usb`, `serial`, `cellular_modem`, `video`, `rtl_sdr`, `can`, `bluetooth`, `i2c`, `spi`, `gps`, `android`, `apple_mobile`, `smartcard`, `programmer`, and `usb_storage`.
@@ -115,12 +116,13 @@ Never accept an output path from the browser. If the action consumes firmware, i
 
 ## 7. Update review lists and GUI
 
-List enabled actions in exactly one class file:
+List each enabled non-INFO action in exactly one class file:
 
-- `scripts/enabled-info-actions.txt`
 - `scripts/enabled-action-ids.txt`
 - `scripts/enabled-security-actions.txt`
 - `scripts/enabled-disruptive-actions.txt`
+
+INFO actions still require an exact backend entry and tests but do not need a separate review file. List every intentionally unavailable action in `scripts/unavailable-action-ids.txt` and give that manifest action a concrete `unavailable_reason`. Run `scripts/audit-operator-release.sh` to verify the complete registry/backends/planners/review-list relationship.
 
 Use the reusable schema renderer and prepared review panel in `console-app.js`. Add one control in the appropriate pages, ensure absent hardware disables only actions that truly require it, display native errors/artifacts, and verify mobile/desktop layouts.
 

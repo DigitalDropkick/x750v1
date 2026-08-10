@@ -348,6 +348,8 @@ body.ddk-page {
 .ddk-tool-description { min-height: 2.9em; margin-bottom: 10px; color: var(--ddk-muted); font-size: .75rem; }
 .ddk-tool-detail { margin: 4px 0; color: #c7cdd4; font-size: .7rem; overflow-wrap: anywhere; }
 .ddk-tool-detail strong { color: var(--ddk-muted); font-weight: 600; }
+.ddk-tool-blocker { margin: 8px 0 0; padding: 7px 9px; border-left: 2px solid var(--ddk-error); background: #1a1112; color: #d7bfc1; font-size: .68rem; line-height: 1.45; overflow-wrap: anywhere; }
+.ddk-tool-blocker strong { color: #f0d7d9; }
 .ddk-tool-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: auto; padding-top: 10px; }
 
 .ddk-table-wrap { overflow: auto; border: 1px solid var(--ddk-line); }

@@ -45,6 +45,15 @@
 - Recorded exact remaining blockers for CAN transmit, Modbus writes, USB power/attach, Wi-Fi monitor-mode changes, and raw cellular commands in `docs/PHASE4-OPERATOR.md`.
 - Deployed Phase 4 with rollback snapshot `/root/ddk-backups/20260810T200750Z-field-console-v1`; 49 production checks passed with 0 warnings, authenticated desktop/mobile browser acceptance passed all Phase 4 controls, six safe native workflow families executed, the MQTT failure path proved secret redaction/cleanup, and all 47 deployed files matched source byte for byte with no residual worker/tool/listener/upload.
 
+### Phase 5 release closure
+
+- Added a dynamic release audit for all 24 modules and 59 exact actions: 53 enabled, 38 structured, two reviewed fixed-profile jobs, and six technically unavailable.
+- Required every unavailable action to carry a bounded action-level technical reason and added a separately reviewed unavailable-action inventory.
+- Displayed exact blockers beside disabled controls and in their accessible titles; browser acceptance now checks all six disclosures.
+- Corrected current hardware-selection documentation and explicitly labeled superseded v1 fixed-profile pages as historical acceptance records.
+- Added a target-side inventory contract so deployed verification fails on action duplication, schema/enabled drift, undocumented blockers, or an unexpected unavailable action.
+- Deployed Phase 5 with rollback snapshot `/root/ddk-backups/20260810T210034Z-field-console-v1`; 50 production checks passed with 0 warnings, authenticated 1440/390/320 px browser acceptance verified all six blocker disclosures, all 47 deployed files matched source, and no worker/private input/proof upload/helper/listener remained.
+
 ### Validation and release status
 
 - Updated local policy validation so `ACTION`, `SECURITY`, and reviewed `DISRUPTIVE` actions may be enabled when fully wired; removed tests whose purpose was to enforce the obsolete GUI-disabled/SSH-only policy.

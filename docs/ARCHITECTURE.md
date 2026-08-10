@@ -58,7 +58,7 @@ Hardware and software are reported separately:
 - `state`: derived as `UNAVAILABLE`, `HARDWARE REQUIRED`, `READY / NO DEVICE`, `NOT CONFIGURED`, or `READY`.
 - `console_enabled`: whether the module has intentionally wired console behavior.
 
-Not-yet-migrated actions remain visible as roadmap entries. The manifest cannot create an executable action by itself; Operator Mode also requires a schema/builder, exact backend mapping, worker, review-list entry, GUI, and tests. Risk class does not make an otherwise reviewed action non-runnable.
+Technically unavailable actions remain visible with an action-level `unavailable_reason`; the GUI displays that concrete blocker beside the disabled control. The manifest cannot create an executable action by itself; Operator Mode also requires a schema/builder, exact backend mapping, worker, review-list entry, GUI, and tests. Risk class does not make an otherwise reviewed action non-runnable. The Phase 5 release audit verifies all module/action IDs, enabled-class lists, structured planners/backends, preserved fixed jobs, and the exact unavailable inventory.
 
 ## INFO action flow
 

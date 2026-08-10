@@ -2,7 +2,7 @@
   "id": "can",
   "name": "CAN Bus",
   "category": "CAN",
-  "description": "One bounded passive SocketCAN frame snapshot plus a disabled transmit placeholder.",
+  "description": "One bounded passive SocketCAN frame snapshot with exact transmit-runtime readiness reporting.",
   "package_names": ["canutils"],
   "expected_binaries": ["candump", "cansend"],
   "required_hardware": ["can"],
@@ -11,7 +11,7 @@
   "enabled": true,
   "actions": [
     {"id": "can.capture", "class": "ACTION", "execution": "job", "enabled": true},
-    {"id": "can.transmit", "class": "DISRUPTIVE", "execution": "job", "enabled": false}
+    {"id": "can.transmit", "class": "DISRUPTIVE", "execution": "job", "enabled": false, "unavailable_reason": "No physical canN interface is attached, and the installed canutils package record provides neither candump nor cansend. Structured configuration/transmit requires those exact runtimes, approved CAN hardware, and bus-impact acceptance."}
   ],
   "help_text": "This target currently has neither a physical canN nor candump/cansend payload. Structured receive, configuration, and confirmed transmit require those exact runtimes plus approved hardware and bus-impact tests."
 }

@@ -4,6 +4,10 @@
 
 Version 2.0 completed the earlier base-console plan and remains the preserved rollback baseline. Version 2.1 implements the shared architecture plus Phase 1-4 tool migrations, including industrial/Modbus read, Bluetooth/smartcard, monitoring, automation, replay, ADS-B/AIS, camera stream, and NTRIP. Live acceptance remains conditional on approved attached hardware; exact remaining runtime/topology/rollback blockers are maintained in [PHASE4-OPERATOR.md](PHASE4-OPERATOR.md).
 
+### Phase 5 — v2.1 release closure
+
+Phase 5 adds no fake substitute for missing hardware or executables. It audits all 59 action IDs, requires action-level technical reasons for the six unavailable operations, makes those reasons visible beside disabled GUI controls, reconciles current documentation with the completed Operator Mode migration, and repeats full local, target, browser, parity, cleanup, and rollback acceptance. See [PHASE5-ACCEPTANCE.md](PHASE5-ACCEPTANCE.md).
+
 ## Release phases
 
 ### Phase 2A — Appliance hardening and serial attribution (implemented in 1.3.0)

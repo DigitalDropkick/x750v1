@@ -11,7 +11,7 @@
   "enabled": true,
   "actions": [
     {"id": "cellular.snapshot", "class": "INFO", "execution": "job", "enabled": true},
-    {"id": "cellular.raw_command", "class": "DISRUPTIVE", "enabled": false}
+    {"id": "cellular.raw_command", "class": "DISRUPTIVE", "enabled": false, "unavailable_reason": "An arbitrary AT/QMI text box would be a generic device-command endpoint. Additional modem work requires operation-specific schemas, identifier privacy rules, exact EC25 state validation, and tested connectivity recovery/rollback."}
   ],
   "help_text": "The fixed read-only EC25 snapshot remains available. Broader structured QMI/AT workflows need exact modem-command schemas, identifier privacy rules, target binding, state-change confirmation, and connectivity recovery tests."
 }

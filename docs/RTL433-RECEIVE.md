@@ -1,5 +1,7 @@
 # Hardware-Gated RTL-433 Sensor Snapshot
 
+> Historical version 1.6 fixed-profile acceptance record. Version 2.1 supersedes the browser/profile restrictions below with reviewed tuner selection and structured receive controls while preserving the same no-driver, authorization, resource, and cleanup boundaries. See [OPERATOR-MODE.md](OPERATOR-MODE.md).
+
 ## Product boundary
 
 Version 1.6 adds `radio.rtl433_snapshot`, a bounded ACTION workflow for receiving common 433.92 MHz ISM sensor transmissions through one reviewed RTL-SDR dongle. It is not a general SDR frontend, spectrum recorder, raw-sample collector, transmitter, or network radio server.

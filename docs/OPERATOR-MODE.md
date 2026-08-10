@@ -2,7 +2,7 @@
 
 ## Status
 
-Version 2.1 introduces the reusable Operator Mode action contract and currently migrates Nmap, tcpdump, iperf3, RTL-433, UVC still capture, general-purpose serial, GPS/GNSS, Android ADB, and Apple normal/recovery/DFU/restore workflows to it. It also adds an authenticated DDK-controlled input staging boundary consumed by ADB and Apple, plus isolated action-declared extroot workspaces. This source is on the `feature/operator-mode-v2.1` branch and has not been deployed to the production GL-X750. Version 2.0 remains the production-accepted baseline.
+Version 2.1 introduces the reusable Operator Mode action contract across the Phase 1–4 tool families documented here and in [PHASE4-OPERATOR.md](PHASE4-OPERATOR.md). It includes authenticated DDK-controlled input staging, isolated action-declared extroot workspaces, named one-time private inputs, exact family workers, and structured native workflows for the practical installed capabilities. Phases 1–5 are deployed on the production GL-X750; version 2.0 remains the preserved full rollback baseline. Phase 5 closes the release with the final inventory, blocker-disclosure, regression, parity, and idle-state acceptance described in [PHASE5-ACCEPTANCE.md](PHASE5-ACCEPTANCE.md).
 
 Operator Mode does not expose a shell. The browser sends typed values for one exact action ID; the backend validates every value and constructs the native argument vector from server-owned code.
 
@@ -33,6 +33,8 @@ Schemas use reusable field types: `boolean`, `enum`, `target_list`, `integer_lis
 - router, browser, negative-input, cancellation, and artifact tests.
 
 Risk class is presentation and review metadata. `ACTION`, `SECURITY`, and `DISRUPTIVE` do not disable an otherwise reviewed action. `scripts/enabled-disruptive-actions.txt` is the explicit review list for enabled disruptive actions.
+
+An intentionally unavailable action must carry an action-level `unavailable_reason` describing a concrete runtime, hardware-topology, artifact, lifecycle, or rollback blocker. Phase 5 renders that reason beside the disabled control and verifies the exact unavailable inventory. Classification alone is never an acceptable reason.
 
 ## Prepared plans and audit metadata
 

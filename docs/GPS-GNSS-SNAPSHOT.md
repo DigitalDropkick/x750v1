@@ -1,5 +1,7 @@
 # GPS / GNSS Position Snapshot
 
+> Historical fixed-profile acceptance record. Version 2.1 supersedes the browser/profile restrictions below with structured receive controls and a separate confirmed NTRIP action while preserving EC25 exclusion, target revalidation, bounded artifacts, and disabled gpsd posture. See [OPERATOR-MODE.md](OPERATOR-MODE.md) and [PHASE4-OPERATOR.md](PHASE4-OPERATOR.md).
+
 Version 1.8 adds one hardware-gated, receive-only `gps.snapshot` ACTION workflow. It does not start `gpsd`, use NTRIP, change a serial setting, send a receiver command, or make a network request.
 
 ## Hardware gate

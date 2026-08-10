@@ -14,7 +14,7 @@ git diff --check
 [[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '2.1.0' ]] || fail 'source version is not 2.1.0'
 rg -F "X750 / v2.1.0" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 2.1.0'
 rg -F "Field Console version 2.1.0" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 2.1.0'
-bash -n deploy.sh verify.sh rollback.sh configure-swap-autostart.sh rollback-swap-autostart.sh post-reboot-verify.sh scripts/verify-browser-authenticated.sh
+bash -n deploy.sh verify.sh rollback.sh configure-swap-autostart.sh rollback-swap-autostart.sh post-reboot-verify.sh scripts/verify-browser-authenticated.sh scripts/audit-operator-release.sh
 sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh \
 	scripts/router-configure-swap-autostart.sh scripts/router-rollback-swap-autostart.sh \
 	scripts/router-post-reboot-verify.sh files/usr/libexec/ddk-job-worker files/usr/libexec/ddk-apple-worker \
@@ -50,6 +50,9 @@ done < <(find files/www/luci-static/resources -type f -name '*.js' | sort)
 while IFS= read -r file; do
 	jq -e . "$file" >/dev/null
 done < <(find files -type f -name '*.json' | sort)
+
+./scripts/audit-operator-release.sh
+shellcheck scripts/audit-operator-release.sh
 
 if rg -n 'opkg[[:space:]]+upgrade|--force-depends|--force-overwrite' files scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh deploy.sh verify.sh rollback.sh; then
 	fail 'forbidden package operation found'

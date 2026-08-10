@@ -306,6 +306,19 @@ try {
 		const phase4Ids = [ 'monitoring.snapshot', 'wireless.survey', 'usb.inventory', 'forensics.inspect_file', 'capture.replay', 'adsb.receive', 'radio.ais', 'bluetooth.scan', 'automation.mqtt_publish', 'automation.relay', 'industrial.modbus_read', 'auth.inventory', 'auth.program', 'camera.stream', 'gps.ntrip' ];
 		const phase4Direct = [ 'monitoring.snapshot', 'wireless.survey', 'usb.inventory', 'forensics.inspect_file', 'capture.replay', 'automation.mqtt_publish', 'industrial.modbus_read' ];
 		const phase4Hardware = [ 'adsb.receive', 'radio.ais', 'bluetooth.scan', 'automation.relay', 'auth.inventory', 'auth.program', 'camera.stream', 'gps.ntrip' ];
+		const blockerFragments = {
+			'can.transmit': 'provides neither candump nor cansend',
+			'cellular.raw_command': 'generic device-command endpoint',
+			'industrial.modbus_write': 'mbpoll is absent',
+			'usb.power': 'active extroot',
+			'usbip.attach': 'no usable VHCI controller',
+			'wireless.monitor': 'atomic netifd/GL.iNet transaction'
+		};
+		const phase5Blockers = Object.entries(blockerFragments).every(([ id, fragment ]) => {
+			const action = phase4Button(id);
+			const card = action && action.closest('.ddk-tool');
+			return !!action && action.disabled && action.title.includes(fragment) && !!card && card.textContent.includes('Unavailable action: ' + id + '.') && card.textContent.includes(fragment);
+		});
 		return {
 			card: !!card,
 			ready: !!card && card.textContent.includes('READY'),
@@ -345,10 +358,11 @@ try {
 			storageActions: storageActions.length === 4 && storageActions.every(node => node && node.disabled && node.classList.contains('ddk-button-action')) && !!squashfsAction && !squashfsAction.disabled,
 			phase4Visible: phase4Ids.every(id => !!phase4Button(id)),
 			phase4Direct: phase4Direct.every(id => !phase4Button(id).disabled),
-			phase4Hardware: phase4Hardware.every(id => phase4Button(id).disabled)
+			phase4Hardware: phase4Hardware.every(id => phase4Button(id).disabled),
+			phase5Blockers: phase5Blockers && document.querySelectorAll('.ddk-tool-blocker').length === 6
 		};
 	})()`);
-	if (!tools.card || !tools.ready || !tools.button || !tools.enabled || !tools.cellularCard || !tools.cellularReady || !tools.cellularButton || !tools.serialCard || !tools.serialReady || !tools.serialButton || !tools.captureCard || !tools.captureReady || !tools.captureButton || !tools.throughputCard || !tools.throughputButton || !tools.radioCard || !tools.radioHardwareRequired || !tools.radioButtonDisabled || !tools.cameraCard || !tools.cameraHardwareRequired || !tools.cameraButtonDisabled || !tools.gpsCard || !tools.gpsHardwareRequired || !tools.gpsButtonDisabled || !tools.canCard || !tools.canHardwareRequired || !tools.canRuntimeVisible || !tools.canButtonDisabled || !tools.androidCard || !tools.androidActions || !tools.appleCard || !tools.appleActions || !tools.firmwareCard || !tools.firmwareActions || !tools.storageCard || !tools.storageActions || !tools.phase4Visible || !tools.phase4Direct || !tools.phase4Hardware) {
+	if (!tools.card || !tools.ready || !tools.button || !tools.enabled || !tools.cellularCard || !tools.cellularReady || !tools.cellularButton || !tools.serialCard || !tools.serialReady || !tools.serialButton || !tools.captureCard || !tools.captureReady || !tools.captureButton || !tools.throughputCard || !tools.throughputButton || !tools.radioCard || !tools.radioHardwareRequired || !tools.radioButtonDisabled || !tools.cameraCard || !tools.cameraHardwareRequired || !tools.cameraButtonDisabled || !tools.gpsCard || !tools.gpsHardwareRequired || !tools.gpsButtonDisabled || !tools.canCard || !tools.canHardwareRequired || !tools.canRuntimeVisible || !tools.canButtonDisabled || !tools.androidCard || !tools.androidActions || !tools.appleCard || !tools.appleActions || !tools.firmwareCard || !tools.firmwareActions || !tools.storageCard || !tools.storageActions || !tools.phase4Visible || !tools.phase4Direct || !tools.phase4Hardware || !tools.phase5Blockers) {
 		throw new Error(`Tool Registry validation failed: ${JSON.stringify(tools)}`);
 	}
 	for (const operatorProof of [
@@ -450,7 +464,7 @@ try {
 
 	if (browserErrors.length) throw new Error(`Browser errors: ${browserErrors.join(' | ')}`);
 	if (externalRequests.length) throw new Error(`External browser requests were made: ${[ ...new Set(externalRequests) ].join(' | ')}`);
-	console.log('Browser verification passed: /ddk shortcut, five local branded headers and logos, all Phase 4 structured action controls, authenticated upload/seal/hash/delete, preserved private identity workflows, serial-aware Overview at 320px, hardware-gated targets, and responsive controls at 1440px and 390px, with no external requests, horizontal overflow, or runtime errors.');
+	console.log('Browser verification passed: /ddk shortcut, five local branded headers and logos, all Phase 4 structured action controls, all six Phase 5 technical blocker disclosures, authenticated upload/seal/hash/delete, preserved private identity workflows, serial-aware Overview at 320px, hardware-gated targets, and responsive controls at 1440px and 390px, with no external requests, horizontal overflow, or runtime errors.');
 	console.log(`DDK_BROWSER_OVERVIEW=${overviewPath}`);
 	console.log(`DDK_BROWSER_DESKTOP=${desktopPath}`);
 	console.log(`DDK_BROWSER_TOOLS=${toolsPath}`);

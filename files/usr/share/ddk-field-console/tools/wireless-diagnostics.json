@@ -11,7 +11,7 @@
   "enabled": true,
   "actions": [
     {"id": "wireless.survey", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "wireless.monitor", "class": "SECURITY", "enabled": false}
+    {"id": "wireless.monitor", "class": "SECURITY", "enabled": false, "unavailable_reason": "Both physical radios carry active management/client networking, and no action-owned atomic netifd/GL.iNet transaction with proven management recovery exists yet."}
   ],
   "help_text": "Survey selects a current wireless interface and runs exact iwinfo info/scan or iw station dump without reconfiguration. Monitor-mode creation remains unavailable because both physical radios carry active management/client traffic and the installed workflow has no reliable atomic rollback across GL.iNet netifd state."
 }

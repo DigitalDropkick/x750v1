@@ -11,8 +11,8 @@
   "enabled": true,
   "actions": [
     {"id": "usb.inventory", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "usb.power", "class": "DISRUPTIVE", "enabled": false},
-    {"id": "usbip.attach", "class": "DISRUPTIVE", "enabled": false}
+    {"id": "usb.power", "class": "DISRUPTIVE", "enabled": false, "unavailable_reason": "The only controllable physical hub root also carries the active extroot and EC25 modem path. No independently switchable non-critical port can be validated on this topology."},
+    {"id": "usbip.attach", "class": "DISRUPTIVE", "enabled": false, "unavailable_reason": "The installed USB/IP client reports no usable VHCI controller, so there is no reviewed local virtual host-controller target for an attach workflow."}
   ],
   "help_text": "Inventory exposes summary/tree/verbose lsusb output with server-selected devices and bounded artifacts. Power remains unavailable because the only controllable physical root-hub port contains the appliance extroot hub and EC25 path; USB/IP attach remains unavailable because the installed client reports no usable VHCI controller."
 }

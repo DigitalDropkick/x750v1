@@ -11,7 +11,7 @@
   "enabled": true,
   "actions": [
     {"id": "industrial.modbus_read", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "industrial.modbus_write", "class": "DISRUPTIVE", "enabled": false}
+    {"id": "industrial.modbus_write", "class": "DISRUPTIVE", "enabled": false, "unavailable_reason": "The installed mbtools payload contains read-oriented mbcollect/mbrecorder only. mbpoll is absent, and mbusd is a gateway rather than a reliable register-write client."}
   ],
   "help_text": "The exact mbcollect runtime supports bounded master-mode holding-register reads through a DDK-generated config for TCP or reviewed non-EC25 RTU. Register write remains unavailable because this target has no mbpoll payload and mbcollect exposes no write operation; mbusd is a gateway, not a register-write client."
 }

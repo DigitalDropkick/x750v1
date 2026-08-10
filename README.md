@@ -16,6 +16,8 @@ Version 2.1 was deployed to the production GL-X750 on 2026-08-10 after the accep
 
 Phase 4 was deployed on 2026-08-10 with final preinstall snapshot `/root/ddk-backups/20260810T200750Z-field-console-v1`. The final production suite passed 49 checks with no warnings; authenticated browser acceptance covered all 15 Phase 4 actions at desktop, 320 px, and 390 px; all 47 deployed files matched source byte for byte; protected configurations remained unchanged; and no DDK worker, native tool, private input, sealed proof upload, or temporary listener remained. Safe native acceptance completed monitoring, Wi-Fi, USB, Modbus-read, sealed-file forensics, and one-packet loopback replay workflows. MQTT’s deliberately closed local endpoint surfaced the native error while proving private payload/password redaction and cleanup.
 
+Phase 5 closes the v2.1 release with a derived 24-module/59-action inventory, action-level technical reasons for all six unavailable operations, and visible disabled-control blocker disclosures. Production acceptance passed 50 checks with 0 warnings, authenticated 1440/390/320 px browser verification, 47-file byte parity, and final idle/private/upload cleanup. Its rollback snapshot is `/root/ddk-backups/20260810T210034Z-field-console-v1`. See [docs/PHASE5-ACCEPTANCE.md](docs/PHASE5-ACCEPTANCE.md).
+
 ## Architecture
 
 - Native LuCI menu JSON, authenticated server template, and dependency-free JavaScript.
@@ -28,7 +30,7 @@ Phase 4 was deployed on 2026-08-10 with final preinstall snapshot `/root/ddk-bac
 - Local, optimized brand assets only; no website runtime, tracker, external font, CDN, or network request.
 - No package install, service, port, firewall rule, database, or router-side Node/Python runtime.
 
-See [docs/OPERATOR-MODE.md](docs/OPERATOR-MODE.md), [docs/PHASE4-OPERATOR.md](docs/PHASE4-OPERATOR.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/SECURITY.md](docs/SECURITY.md), [docs/ANDROID-ADB.md](docs/ANDROID-ADB.md), [docs/APPLE-OPERATOR.md](docs/APPLE-OPERATOR.md), [docs/FIRMWARE-STORAGE-OPERATOR.md](docs/FIRMWARE-STORAGE-OPERATOR.md), [docs/DEVICE-IDENTITY.md](docs/DEVICE-IDENTITY.md), [docs/SSH-TOOL-HANDOFFS.md](docs/SSH-TOOL-HANDOFFS.md), [docs/BRAND-SYSTEM.md](docs/BRAND-SYSTEM.md), [docs/PACKET-CAPTURE.md](docs/PACKET-CAPTURE.md), [docs/RTL433-RECEIVE.md](docs/RTL433-RECEIVE.md), [docs/CAMERA-SNAPSHOT.md](docs/CAMERA-SNAPSHOT.md), [docs/GPS-GNSS-SNAPSHOT.md](docs/GPS-GNSS-SNAPSHOT.md), and [docs/CAN-PASSIVE-CAPTURE.md](docs/CAN-PASSIVE-CAPTURE.md).
+See [docs/OPERATOR-MODE.md](docs/OPERATOR-MODE.md), [docs/PHASE4-OPERATOR.md](docs/PHASE4-OPERATOR.md), [docs/PHASE5-ACCEPTANCE.md](docs/PHASE5-ACCEPTANCE.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/SECURITY.md](docs/SECURITY.md), [docs/ANDROID-ADB.md](docs/ANDROID-ADB.md), [docs/APPLE-OPERATOR.md](docs/APPLE-OPERATOR.md), [docs/FIRMWARE-STORAGE-OPERATOR.md](docs/FIRMWARE-STORAGE-OPERATOR.md), [docs/DEVICE-IDENTITY.md](docs/DEVICE-IDENTITY.md), [docs/SSH-TOOL-HANDOFFS.md](docs/SSH-TOOL-HANDOFFS.md), [docs/BRAND-SYSTEM.md](docs/BRAND-SYSTEM.md), [docs/PACKET-CAPTURE.md](docs/PACKET-CAPTURE.md), [docs/RTL433-RECEIVE.md](docs/RTL433-RECEIVE.md), [docs/CAMERA-SNAPSHOT.md](docs/CAMERA-SNAPSHOT.md), [docs/GPS-GNSS-SNAPSHOT.md](docs/GPS-GNSS-SNAPSHOT.md), and [docs/CAN-PASSIVE-CAPTURE.md](docs/CAN-PASSIVE-CAPTURE.md).
 
 ## Repository layout
 
@@ -52,7 +54,7 @@ Requirements on the workstation: Bash, Git, Node (syntax only), jq, tar, and SSH
 ./scripts/validate-local.sh
 ```
 
-The validator checks shell and JavaScript syntax, JSON, action/manifests review lists, Operator Mode schemas/builders/workers, fixed executable mappings, parameter and artifact boundaries, identity-classifier limits, private-output declarations, forbidden package/config mutations, exact brand assets and budgets, absence of remote presentation references, general asset limits, and whitespace errors.
+The validator checks shell and JavaScript syntax, JSON, action/manifests review lists, Operator Mode schemas/builders/workers, fixed executable mappings, parameter and artifact boundaries, identity-classifier limits, private-output declarations, forbidden package/config mutations, exact brand assets and budgets, absence of remote presentation references, general asset limits, and whitespace errors. It also runs the Phase 5 release audit across all 59 actions and their exact enabled/structured/unavailable contracts.
 
 Lua 5.1 with the target's `nixio` and `luci.jsonc` modules is validated again on the router before the installer writes anything.
 

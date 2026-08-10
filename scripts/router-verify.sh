@@ -129,6 +129,62 @@ sh -n /usr/libexec/ddk-phase4-worker || fail 'Phase 4 worker syntax check failed
 find /usr/share/ddk-field-console/tools -type f -name '*.json' | while IFS= read -r file; do jsonfilter -i "$file" -e '@' >/dev/null; done
 pass 'router-side Lua, shell, and JSON syntax'
 
+release_action_count=0
+release_enabled_count=0
+release_structured_count=0
+release_unavailable_count=0
+release_action_ids=''
+release_unavailable_ids=''
+for release_manifest in /usr/share/ddk-field-console/tools/*.json; do
+	release_index=0
+	while :; do
+		release_action_id="$(jsonfilter -i "$release_manifest" -e "@.actions[$release_index].id" 2>/dev/null || true)"
+		[ -n "$release_action_id" ] || break
+		case "$release_action_id" in *[!a-z0-9._-]*) fail "release action ID is invalid: $release_action_id" ;; esac
+		case "
+$release_action_ids" in *"
+$release_action_id
+"*) fail "release action ID is duplicated: $release_action_id" ;; esac
+		release_action_ids="$release_action_ids$release_action_id
+"
+		release_action_count=$((release_action_count + 1))
+		release_enabled="$(jsonfilter -i "$release_manifest" -e "@.actions[$release_index].enabled" 2>/dev/null || true)"
+		release_schema="$(jsonfilter -i "$release_manifest" -e "@.actions[$release_index].parameter_schema" 2>/dev/null || true)"
+		case "$release_enabled" in
+			true)
+				release_enabled_count=$((release_enabled_count + 1))
+				[ -z "$(jsonfilter -i "$release_manifest" -e "@.actions[$release_index].unavailable_reason" 2>/dev/null || true)" ] || fail "enabled action carries an unavailable reason: $release_action_id"
+				;;
+			false)
+				release_unavailable_count=$((release_unavailable_count + 1))
+				release_unavailable_ids="$release_unavailable_ids$release_action_id
+"
+				release_reason="$(jsonfilter -i "$release_manifest" -e "@.actions[$release_index].unavailable_reason" 2>/dev/null || true)"
+				[ "${#release_reason}" -ge 40 ] && [ "${#release_reason}" -le 512 ] || fail "unavailable action lacks a bounded technical reason: $release_action_id"
+				;;
+			*) fail "release action has no explicit enabled boolean: $release_action_id" ;;
+		esac
+		if [ -n "$release_schema" ]; then
+			[ "$release_enabled" = true ] || fail "unavailable action advertises an executable schema: $release_action_id"
+			[ "$release_schema" = operator-v1 ] || fail "release action has an unknown parameter schema: $release_action_id"
+			[ "$(jsonfilter -i "$release_manifest" -e "@.actions[$release_index].execution" 2>/dev/null || true)" = job ] || fail "structured action is not a job: $release_action_id"
+			release_structured_count=$((release_structured_count + 1))
+		fi
+		release_index=$((release_index + 1))
+	done
+done
+[ "$release_action_count" -eq 59 ] || fail "deployed release action count changed: $release_action_count"
+[ "$release_enabled_count" -eq 53 ] || fail "deployed enabled action count changed: $release_enabled_count"
+[ "$release_structured_count" -eq 38 ] || fail "deployed structured action count changed: $release_structured_count"
+[ "$release_unavailable_count" -eq 6 ] || fail "deployed unavailable action count changed: $release_unavailable_count"
+for release_unavailable_id in can.transmit cellular.raw_command industrial.modbus_write usb.power usbip.attach wireless.monitor; do
+	case "
+$release_unavailable_ids" in *"
+$release_unavailable_id
+"*) ;; *) fail "reviewed unavailable action is missing: $release_unavailable_id" ;; esac
+done
+pass 'complete v2.1 action inventory and explicit technical blockers'
+
 LC_ALL=C /usr/bin/nmap --version 2>&1 | grep -Fq 'Nmap version 7.91 ' || fail 'Nmap version is not reviewed 7.91'
 tcpdump_version="$(LC_ALL=C /usr/sbin/tcpdump --version 2>&1 || true)"
 printf '%s\n' "$tcpdump_version" | grep -Fq 'tcpdump version 4.9.3' || fail 'tcpdump version is not reviewed 4.9.3'
