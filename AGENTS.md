@@ -7,39 +7,29 @@
 - Root filesystem is extroot on `/dev/sda1`; preserve it and its data.
 - The GL.iNet UI, LuCI authentication, networking, and Tailscale are operational infrastructure.
 
-## Non-negotiable safety
 
-- Never run `opkg upgrade`, `--force-depends`, or `--force-overwrite`.
-- Never replace GL.iNet/OpenWrt core libraries, SSL/libustream, or kernel modules for this app.
-- Never change LAN, WAN, cellular, Wi-Fi, firewall, Tailscale, extroot, or swap configuration without explicit approval.
-- Never add a listener, expose a service to WAN, enable ttyd on WAN, reboot, or start unrelated daemons.
-- Never factory reset, repartition, format, or delete `/overlay/ddk-install.swap`.
-- The only approved persistent-swap change is the exact named `ddk_install_swap` fstab entry managed by the guarded configure/rollback scripts. Any other swap or extroot change needs new explicit approval.
-- Never modify GL.iNet proprietary UI files for this application.
-- Back up every existing target file before replacement and maintain tested rollback tooling.
+Operator functionality policy:
 
-## Implementation rules
+The Field Console is an authenticated professional field-service appliance.
+Installed command-line tools should expose their materially useful native
+functionality through the GUI whenever practical.
 
-- Follow patterns verified on this device; do not assume current upstream LuCI conventions.
-- Prefer native LuCI, Lua 5.1, shell, rpcd, ubus, and small JavaScript.
-- No Node/npm runtime, external CDN, database, secondary web server, background polling daemon, or unnecessary package.
-- Namespace all UI CSS under `.ddk-console`.
-- Use `/tmp/ddk/` only for bounded transient jobs and reports.
-- Keep idle CPU at zero and persistent memory overhead effectively zero.
+Do not intentionally reduce a tool to a diagnostic subset solely because
+its full operation can modify devices, generate traffic, capture data, or
+perform security testing.
 
-## Action security
+Instead:
 
-- Every browser action maps to a server-side allowlisted action ID.
-- Never accept a browser-supplied command, executable path, PID, output path, or shell fragment.
-- Validate every argument against a strict allowlist or format before use.
-- Never concatenate browser input into a shell command.
-- INFO actions may be enabled. ACTION, DISRUPTIVE, and SECURITY actions remain disabled unless individually reviewed, fixed in the backend allowlist, bounded, tested, and documented.
-- Stop only validated jobs created by this console, after verifying the worker identity.
+- expose operations through structured controls;
+- validate all arguments server-side;
+- construct argv server-side;
+- never accept arbitrary shell syntax;
+- classify impactful operations clearly;
+- require confirmation for destructive/disruptive actions;
+- hardware-gate operations requiring attached hardware;
+- preserve job cancellation and resource locking;
+- never modify the router's own networking/firewall/Tailscale configuration
+  unless that specific operation is explicitly intended by the operator.
 
-## Change and completion discipline
-
-- Inspect `git status` before edits; preserve unrelated work.
-- Make the smallest complete change and avoid unrelated refactors or upgrades.
-- Run syntax, JSON, security, deployment, rollback, and responsive-UI validation where available.
-- Review the final diff and report tests, risks, rollback, and remaining uncertainty.
-- Do not push, merge, release, or modify production-sensitive configuration without explicit instruction.
+The GUI should provide the functionality of the installed tool, not an
+artificially limited substitute for it.
