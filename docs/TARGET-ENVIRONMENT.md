@@ -83,6 +83,16 @@ Authenticated Chrome verification passed the `/ddk` redirect, camera-artifact AC
 
 The final acceptance snapshot reported 44,320 KiB available RAM, load averages 1.73 / 1.58 / 1.28, 27,694,340 KiB free on extroot, and the 262,140 KiB swapfile active with 4,904 KiB used at priority `-2`. Tailscale remained running and GL.iNet UI/LuCI authentication remained healthy. Live GNSS fix/cancellation and CAN receive/cancellation/bus-impact acceptance remain pending approved hardware; CAN additionally requires a separately reviewed `candump` availability decision.
 
+### Version 2.0 Burn Two live acceptance
+
+The private mobile/programmer identity and native-CLI handoff release was deployed on 2026-08-09 with pre-change v1.9 backup `/root/ddk-backups/20260810T011634Z-field-console-v1`. Deployment passed target identity, architecture/OpenWrt, extroot, active swap, free-space, native LuCI, installed-tool, protected-hash, and staged syntax gates. It reloaded only rpcd ACLs; no service was restarted and the router was not rebooted.
+
+The comprehensive suite passed 37 checks with no warnings. It exercised all six new INFO actions, exact argument rejection, customer-identifier/report separation, positive Android/Apple/SEGGER fixtures, negative Apple Bluetooth/generic FTDI fixtures, and every prior bounded workflow. No identity action created a DDK job, and no mobile/programmer utility, ADB/mobile listener, DDK listener, or idle worker remained. All nine protected configuration files remained byte-identical and normalized listener state matched the pre-deployment snapshot.
+
+Authenticated Chrome verification passed the `/ddk` redirect, camera-artifact ACL isolation, all five local brand scenes, explicit identity confirmation/output, and complete native-CLI handoffs at 320 px, 390 px, and desktop widths. It observed no external request, runtime error, or horizontal overflow. Visual review found the mobile and desktop views coherent and readable. All 40 deployed files matched source byte for byte.
+
+The final acceptance snapshot reported 46,344 KiB available RAM, load averages 1.19 / 1.35 / 1.21, 27,693,796 KiB free on extroot, and the 262,140 KiB swapfile active with 5,424 KiB used. Tailscale remained running at PID 6910. Zero DDK workers, related device-tool processes, or listeners on ADB/mobile ports 5037 and 27015 were present. These metrics are point-in-time evidence. Live device-specific acceptance remains pending approved Android, Apple, and programmer hardware; no customer device was attached during this release gate.
+
 ## Native LuCI conventions
 
 This firmware contains both generations of LuCI application structure:

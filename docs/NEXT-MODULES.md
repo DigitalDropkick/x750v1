@@ -90,6 +90,8 @@ The no-device/missing-runtime acceptance gate passed as part of the v1.9 Burn On
 
 `firmware.identify` identifies reviewed programmers without opening them or invoking a tool. `firmware.operator_guide` reports executable readiness and hands full use to SSH with voltage, targeting, backup, hashing, verification, and recovery guidance. Browser-based read/write/erase/debug remains disabled. Any future one-click operation still requires its own manifest, exact target selection, power model, image validation, rollback, and hardware acceptance.
 
+The combined v2 acceptance gate passed on 2026-08-09: 37 production checks completed with no warnings; authenticated browser validation passed at 320 px, 390 px, and desktop widths; every one of the 40 deployed files matched source; protected configurations and listener state remained unchanged; and no device utility, DDK worker, or new listener remained. Hardware-specific classification acceptance is intentionally still pending approved devices.
+
 ## Recommended next work
 
 1. Attach an approved Android device and verify normal/ADB/fastboot descriptor behavior without customer data retention.

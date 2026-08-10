@@ -22,7 +22,10 @@
 - Local shell, JavaScript, JSON, allowlist, mutation, identity-boundary, asset, and size validation passes.
 - Synthetic tests on the router's Lua 5.1/nixio stack accept reviewed Android ADB, Apple recovery, and SEGGER fixtures while rejecting Apple Bluetooth and generic FTDI false positives.
 - The staged v2 backend completed live sysfs status/capability calls and all six new INFO actions without changing DDK job count, related process state, or ADB/mobile listener state.
-- Production deployment, comprehensive verification, authenticated browser acceptance, source parity, and final health evidence are recorded after the v2 release gate.
+- Production verification passed 37 checks with 0 warnings, including all six new INFO actions, private-identity/report separation, injection and extra-argument rejection, synthetic positive/negative fixtures, prior bounded workflows, protected configuration, UI endpoints, and absence of residual device-tool processes or listeners.
+- Authenticated browser verification passed at 320 px, 390 px, and desktop widths. Identity confirmation/output and full native-CLI handoffs worked; all five local brand scenes loaded; no external request, runtime error, or horizontal overflow occurred; and visual review found the layouts coherent and readable.
+- All 40 deployed project files matched source byte for byte and normalized listener state matched the pre-deployment snapshot. The v1.9 rollback backup is `/root/ddk-backups/20260810T011634Z-field-console-v1`.
+- Live customer-device classification remains pending approved Android, Apple, and programmer hardware. The production no-device state reports honestly and invokes none of those tools.
 
 ## 1.9.0 — 2026-08-09
 
