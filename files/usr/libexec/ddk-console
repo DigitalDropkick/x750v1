@@ -480,6 +480,63 @@ local function gps_probe()
 	return probe
 end
 
+local function can_probe()
+	local probe = {
+		ready = false,
+		hardware_present = false,
+		capture_binary_present = binary_exists("/usr/bin/candump"),
+		reason = "REVIEWED PHYSICAL CAN INTERFACE NOT DETECTED",
+		reviewed_count = 0,
+		interfaces = {}
+	}
+	local iterator = fs.dir("/sys/class/net")
+	local candidate
+	if iterator then
+		for name in iterator do
+			if name:match("^can%d+$") then
+				local base = "/sys/class/net/" .. name
+				local device_path = fs.realpath(base .. "/device") or ""
+				local network_type = trim(fs.readfile(base .. "/type"))
+				local flags_text = trim(fs.readfile(base .. "/flags"))
+				local flags = tonumber(flags_text)
+				local reviewed = network_type == "280" and device_path:match("^/sys/devices/") ~= nil and flags ~= nil
+				if reviewed then
+					candidate = {
+						name = name,
+						operstate = trim(fs.readfile(base .. "/operstate")),
+						flags = flags_text,
+						up = flags % 2 == 1,
+						device_path = device_path
+					}
+					probe.interfaces[#probe.interfaces + 1] = candidate
+				end
+			end
+		end
+	end
+	table.sort(probe.interfaces, function(a, b) return a.name < b.name end)
+	probe.reviewed_count = #probe.interfaces
+	probe.hardware_present = probe.reviewed_count > 0
+
+	if probe.reviewed_count == 0 then
+		if not probe.capture_binary_present then
+			probe.reason = "CAN INTERFACE NOT DETECTED; CANDUMP EXECUTABLE UNAVAILABLE"
+		end
+	elseif probe.reviewed_count > 1 then
+		probe.reason = "MULTIPLE REVIEWED PHYSICAL CAN INTERFACES DETECTED"
+	elseif not probe.capture_binary_present then
+		probe.reason = "CANDUMP EXECUTABLE UNAVAILABLE"
+	elseif candidate and not candidate.up then
+		probe.reason = "REVIEWED CAN INTERFACE IS DOWN; CONSOLE WILL NOT CONFIGURE IT"
+	elseif candidate then
+		probe.ready = true
+		probe.reason = "READY - ONE UP PHYSICAL CAN INTERFACE"
+		probe.interface = candidate.name
+		probe.operstate = candidate.operstate
+		probe.flags = candidate.flags
+	end
+	return probe
+end
+
 local function serial_attribution()
 	local nodes = list_device_nodes("^ttyUSB%d+$")
 	for _, node in ipairs(list_device_nodes("^ttyACM%d+$")) do
@@ -593,18 +650,15 @@ local function hardware_snapshot()
 	local rtl_sdr = rtl_sdr_probe()
 	local camera = camera_probe()
 	local gps = gps_probe()
+	local can = can_probe()
 	local serial, serial_summary = serial_attribution()
 	local serial_nodes = {}
 	for _, device in ipairs(serial) do serial_nodes[#serial_nodes + 1] = device.node end
 	local video = list_device_nodes("^video%d+$")
 	local i2c = list_device_nodes("^i2c%-%d+$")
 	local spi = list_device_nodes("^spidev")
-	local can_output = capture("ip -o link show type can")
-	local can = {}
-	for line in can_output:gmatch("[^\n]+") do
-		local name = line:match("^%d+:%s+([^:]+):")
-		if name then can[#can + 1] = name:gsub("@.*$", "") end
-	end
+	local can_interfaces = {}
+	for _, item in ipairs(can.interfaces) do can_interfaces[#can_interfaces + 1] = item.name end
 
 	local classes = {
 		usb = #usb > 0,
@@ -613,7 +667,7 @@ local function hardware_snapshot()
 		cellular_modem = usb_text:match("quectel") ~= nil or usb_text:match("2c7c:") ~= nil,
 		video = camera.ready,
 		rtl_sdr = rtl_sdr.ready,
-		can = #can > 0,
+		can = can.hardware_present,
 		bluetooth = has_dir_entry("/sys/class/bluetooth", "^hci%d+$"),
 		i2c = #i2c > 0,
 		spi = #spi > 0,
@@ -633,7 +687,8 @@ local function hardware_snapshot()
 		video_devices = video,
 		camera = camera,
 		gps = gps,
-		can_interfaces = can,
+		can = can,
+		can_interfaces = can_interfaces,
 		i2c_devices = i2c,
 		spi_devices = spi,
 		rtl_sdr = rtl_sdr,
@@ -802,6 +857,10 @@ local function load_capabilities()
 			if manifest.id == "gps-gnss" and manifest.enabled == true then
 				action_ready = hardware.gps.ready
 				readiness_reason = hardware.gps.reason
+				if software_installed and #missing_hardware == 0 and not action_ready then state = "NOT CONFIGURED" end
+			elseif manifest.id == "can" and manifest.enabled == true then
+				action_ready = hardware.can.ready
+				readiness_reason = hardware.can.reason
 				if software_installed and #missing_hardware == 0 and not action_ready then state = "NOT CONFIGURED" end
 			end
 			modules[#modules + 1] = {
@@ -995,6 +1054,14 @@ local job_actions = {
 		singleton = true,
 		required_hardware = "gps",
 		resource = "gps"
+	},
+	["can.capture"] = {
+		worker = "can_capture",
+		label = "Passive CAN Frame Snapshot",
+		class = "ACTION",
+		singleton = true,
+		required_hardware = "can",
+		resource = "can"
 	}
 }
 
@@ -1066,6 +1133,9 @@ local function start_job(action_id)
 		local probe = gps_probe()
 		if not probe.ready then return nil, "Reviewed USB GNSS hardware is not ready: " .. probe.reason end
 		if trim(capture("pidof gpsd")) ~= "" then return nil, "gpsd is active; the console will not compete for its GNSS device" end
+	elseif spec.required_hardware == "can" then
+		local probe = can_probe()
+		if not probe.ready then return nil, "Passive CAN capture is not ready: " .. probe.reason end
 	end
 	fs.mkdirr(JOB_ROOT)
 	fs.mkdirr(REPORT_ROOT)

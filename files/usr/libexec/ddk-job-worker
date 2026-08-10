@@ -16,7 +16,7 @@ job_pid="${job_numbers#*-}"
 case "$job_epoch" in ''|*[!0-9]*) exit 64 ;; esac
 case "$job_pid" in ''|*[!0-9]*) exit 64 ;; esac
 case "$task" in
-	demo|system_report|nmap_lan_discovery|cellular_snapshot|tcpdump_lan_metadata|rtl433_snapshot|camera_snapshot|gps_snapshot) ;;
+	demo|system_report|nmap_lan_discovery|cellular_snapshot|tcpdump_lan_metadata|rtl433_snapshot|camera_snapshot|gps_snapshot|can_capture) ;;
 	*) exit 64 ;;
 esac
 
@@ -53,6 +53,7 @@ stop_job() {
 			"$job_dir"/tcpdump.stderr "$job_dir"/rtl433.output "$job_dir"/rtl433.stderr \
 			"$job_dir"/camera.info "$job_dir"/camera.stderr \
 			"$job_dir"/gnss.raw "$job_dir"/gnss.decoded "$job_dir"/gnss.stderr \
+			"$job_dir"/can.frames "$job_dir"/can.stderr \
 			"$job_dir"/snapshot.jpg "$job_dir"/snapshot.jpg.next
 		# shellcheck disable=SC2317
 		status_set stopped
@@ -639,6 +640,83 @@ elif [ "$task" = "gps_snapshot" ]; then
 		rm -f "$gnss_raw" "$gnss_decoded" "$gnss_error"
 		head -c 32768 "$job_dir/stdout" > "$job_dir/stdout.next"
 		mv "$job_dir/stdout.next" "$job_dir/stdout"
+elif [ "$task" = "can_capture" ]; then
+	can_interface=""
+	can_interface_count=0
+	for can_class in /sys/class/net/can[0-9]*; do
+		[ -e "$can_class" ] || continue
+		can_name="$(basename "$can_class")"
+		can_number="${can_name#can}"
+		case "$can_number" in ''|*[!0-9]*) continue ;; esac
+		[ "$(cat "$can_class/type" 2>/dev/null || true)" = '280' ] || continue
+		can_device_path="$(readlink -f "$can_class/device" 2>/dev/null || true)"
+		case "$can_device_path" in /sys/devices/*) ;; *) continue ;; esac
+		can_interface_count=$((can_interface_count + 1))
+		can_interface="$can_name"
+	done
+	[ "$can_interface_count" -eq 1 ] || task_fail 'Exactly one reviewed physical CAN interface named canN is required.'
+	case "$can_interface" in can[0-9]*) ;; *) task_fail 'The server-derived CAN interface failed its strict name check.' ;; esac
+	can_number="${can_interface#can}"
+	case "$can_number" in ''|*[!0-9]*) task_fail 'The server-derived CAN interface failed its numeric suffix check.' ;; esac
+	[ -x /usr/bin/candump ] || task_fail 'candump is unavailable at the reviewed path; the console did not attempt installation or package replacement.'
+
+	can_flags_before="$(cat "/sys/class/net/$can_interface/flags" 2>/dev/null || true)"
+	case "$can_flags_before" in 0x[0-9a-fA-F]*) ;; *) task_fail 'The reviewed CAN interface flags are unavailable.' ;; esac
+	can_flags_value=$((can_flags_before))
+	[ $((can_flags_value & 1)) -eq 1 ] || task_fail 'The reviewed CAN interface is down; the console will not configure or raise it.'
+	can_operstate="$(cat "/sys/class/net/$can_interface/operstate" 2>/dev/null || true)"
+	can_frames="$job_dir/can.frames"
+	can_error="$job_dir/can.stderr"
+	rm -f "$can_frames" "$can_error"
+	{
+		printf '%s\n' 'DIGITAL DROPKICK - PASSIVE CAN FRAME SNAPSHOT'
+		printf 'Interface: %s (server-derived physical SocketCAN interface)\n' "$can_interface"
+		printf 'Initial state: %s; flags: %s\n' "$can_operstate" "$can_flags_before"
+		printf '%s\n' 'Privacy: arbitration IDs and data bytes can expose vehicle, equipment, sensor, or control state'
+		printf '%s\n' 'Safety: receive only; no cansend, cangen, interface setup, bitrate change, restart, or transmit flag'
+		printf '%s\n' 'Limits: 20-second inactivity/window ceiling, 128 frames, one CAN job, 64 KiB final text output'
+		printf 'Started (UTC): '
+		date -u
+		printf '\n[RECEIVED FRAMES]\n'
+	} > "$job_dir/stdout"
+
+	(
+		# POSIX file-size units are 512-byte blocks: 112 blocks cap child output at 56 KiB.
+		ulimit -f 112
+		exec /usr/bin/timeout 25 /usr/bin/candump -L -n 128 -T 20000 "$can_interface"
+	) > "$can_frames" 2> "$can_error" &
+	child_pid=$!
+	can_result=0
+	wait "$child_pid" 2>/dev/null || can_result=$?
+	child_pid=""
+	can_flags_after="$(cat "/sys/class/net/$can_interface/flags" 2>/dev/null || true)"
+	if [ "$can_flags_after" != "$can_flags_before" ]; then
+		head -c 4096 "$can_error" >> "$job_dir/stderr"
+		printf 'CAN interface flags changed unexpectedly: %s before / %s after.\n' "$can_flags_before" "$can_flags_after" >> "$job_dir/stderr"
+		result=65
+	elif [ "$can_result" -ne 0 ]; then
+		head -c 4096 "$can_error" >> "$job_dir/stderr"
+		printf 'Bounded candump exited with code %s.\n' "$can_result" >> "$job_dir/stderr"
+		result="$can_result"
+	else
+		can_bytes="$(wc -c < "$can_frames" 2>/dev/null || printf 0)"
+		case "$can_bytes" in ''|*[!0-9]*) can_bytes=0 ;; esac
+		if [ "$can_bytes" -gt 0 ]; then
+			head -c 57344 "$can_frames" >> "$job_dir/stdout"
+		else
+			printf '%s\n' 'No CAN frames were observed during the bounded receive window.' >> "$job_dir/stdout"
+		fi
+		{
+			printf '\n[CAPTURE COMPLETE]\n'
+			printf 'Received output bytes: %s\n' "$can_bytes"
+			printf 'Interface flags: %s before / %s after\n' "$can_flags_before" "$can_flags_after"
+			printf 'Completed (UTC): '
+			date -u
+		} >> "$job_dir/stdout"
+	fi
+	rm -f "$can_frames" "$can_error"
+	head -c 65536 "$job_dir/stdout" > "$job_dir/stdout.next"
+	mv "$job_dir/stdout.next" "$job_dir/stdout"
 elif [ "$task" = "camera_snapshot" ]; then
 	[ -x /usr/bin/fswebcam ] || task_fail 'fswebcam is not installed at the reviewed path; the console did not attempt installation.'
 	[ -x /usr/bin/v4l2-ctl ] || task_fail 'v4l2-ctl is not installed at the reviewed path; the console did not attempt installation.'

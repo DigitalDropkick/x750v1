@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.9.0 — 2026-08-09
+
+### Added
+
+- Phase 3E `can.capture` ACTION workflow with exactly-one physical `canN`, `IFF_UP`, `/usr/bin/candump`, singleton, and shared-resource gates.
+- Fixed receive-only `candump -L -n 128 -T 20000` profile with a 25-second independent wall limit, 56-KiB child ceiling, 64-KiB final ceiling, DDK-owned cancellation, and interface-flag comparison.
+- Explicit UI authorization/privacy confirmation, hardware/runtime readiness reason, and [passive CAN documentation](docs/CAN-PASSIVE-CAPTURE.md).
+
+### Safety and compatibility
+
+- The browser cannot select an interface, bitrate, filter, frame count, duration, output, command, or flag. `cansend`, generation, replay, ISO-TP transmit, link setup, bitrate changes, and persistent capture logs are absent.
+- The target's existing `canutils` 2021.08.0-2 record contains no payload, `/usr/bin/candump` is absent, and no CAN interface exists. Version 1.9 reports those facts and stays disabled; it installs, repairs, replaces, and forces nothing.
+- GPS/GNSS v1.8, all previous workflows, protected configuration hashes, LuCI authentication, GL.iNet UI, Tailscale, extroot, swap, and zero-idle-process architecture remain unchanged.
+
+### Validation status
+
+- Local shell, JavaScript, JSON, action-registry, mutation, CAN transmit/configuration prohibition, asset, and size validation passes.
+- Live CAN receive, cancellation, output-format, and bus-impact acceptance remain pending an approved adapter, an already-configured physical `canN`, and a reviewed `candump` executable. Backend/worker refusal and missing-runtime visibility are production-testable now.
+
 ## 1.8.0 — 2026-08-09
 
 ### Added

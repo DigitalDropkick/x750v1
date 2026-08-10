@@ -203,6 +203,28 @@ if printf '%s\n' "$gps_worker_section" | rg -n -- 'cat[[:space:]]+"?\$gnss_(raw|
 	fail 'GPS/GNSS worker exposes raw receiver input instead of whitelisted position fields'
 fi
 
+can_worker_section="$(sed -n '/elif \[ "$task" = "can_capture" \]/,/elif \[ "$task" = "camera_snapshot" \]/p' "$capture_worker")"
+[[ "$(printf '%s\n' "$can_worker_section" | rg -c 'exec /usr/bin/timeout 25 /usr/bin/candump -L -n 128 -T 20000 "\$can_interface"')" -eq 1 ]] || fail 'reviewed passive candump command is missing or duplicated'
+for can_guard in \
+	'/sys/class/net/can[0-9]*' \
+	"= '280'" \
+	'/sys/devices/*' \
+	'Exactly one reviewed physical CAN interface named canN is required.' \
+	'can_number="${can_interface#can}"' \
+	'can_flags_value=$((can_flags_before))' \
+	'$((can_flags_value & 1)) -eq 1' \
+	'ulimit -f 112' \
+	'can_flags_after="$(cat "/sys/class/net/$can_interface/flags"' \
+	'if [ "$can_flags_after" != "$can_flags_before" ]' \
+	'head -c 57344 "$can_frames"' \
+	'head -c 65536 "$job_dir/stdout"'
+do
+	rg -F -- "$can_guard" "$capture_worker" >/dev/null || fail "CAN safety guard is missing: $can_guard"
+done
+if printf '%s\n' "$can_worker_section" | rg -n -- '/usr/bin/(cansend|cangen|canplayer|isotpsend)|(^|[;&|])[[:space:]]*(cansend|cangen|canplayer|isotpsend|ip[[:space:]]+link[[:space:]]+set|ifconfig|tc)([[:space:]]|$)|(^|[[:space:]])candump[[:space:]].*(^|[[:space:]])-l([[:space:]]|$)'; then
+	fail 'CAN worker contains transmit, replay, interface mutation, traffic control, or persistent-log behavior'
+fi
+
 while IFS= read -r file; do
 	size="$(wc -c < "$file")"
 	[[ "$size" -le 131072 ]] || fail "oversized router asset: $file ($size bytes)"

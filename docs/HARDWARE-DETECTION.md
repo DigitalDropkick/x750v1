@@ -12,7 +12,7 @@ Hardware probes are read-only, on-demand, and conservative. They never start a d
 | Cellular modem | Capability state uses Quectel/`2c7c` USB presence. The enabled snapshot additionally requires exact `2c7c:0125`, `/dev/cdc-wdm0`, `qmi_wwan`, and attributed `wwan0`. |
 | Video / UVC camera | Ready only when exactly one USB video device resolves through sysfs to `uvcvideo`, USB interface class `0e`, a valid VID:PID, and exactly one primary node with sysfs index `0`. The action separately confirms `Video Capture` with bounded `v4l2-ctl`. |
 | RTL-SDR | Ready only when sysfs contains exactly one reviewed `0bda:2832` or `0bda:2838` device, its USB serial passes the strict character/length policy, and no interface driver is attached. |
-| CAN | `ip -o link show type can` returns an interface. |
+| CAN | Exactly one `canN` netdev reports ARPHRD_CAN type `280`, resolves to a physical sysfs device, is already `IFF_UP`, and `/usr/bin/candump` exists. Hardware presence and capture-runtime readiness are reported separately. |
 | Bluetooth | `/sys/class/bluetooth/hci[0-9]+` exists. |
 | I2C | Existing `/dev/i2c-*` nodes. |
 | SPI | Existing `/dev/spidev*` nodes. |
@@ -32,6 +32,7 @@ Hardware probes are read-only, on-demand, and conservative. They never start a d
 - A compatible-looking RTL-SDR with a different VID:PID remains unreviewed and cannot enable the receiver. Multiple approved dongles are deliberately ambiguous and also remain unavailable until a future explicit selection model exists.
 - A UVC device with several nodes is accepted only when exactly one node reports sysfs index `0`. Multiple physical UVC devices or multiple primary nodes are deliberately ambiguous. The worker then confirms V4L2 capture capability and refuses a node already open by another process.
 - Hardware presence is not service health. The console does not start gpsd, Bluetooth, camera, SDR, CAN, or serial services to improve a status color.
+- CAN detection rejects `vcanN`, `slcanN`, renamed/multiple/down interfaces, and missing `candump`. It never raises or configures an interface to improve readiness.
 - Installed kernel support is not equivalent to attached hardware.
 - Android detection does not run `adb devices`, because doing so may start the ADB server.
 - GPS detection does not infer GNSS from an arbitrary serial port. Multiple receivers/nodes, a busy node, an unreviewed driver, or the EC25-AF fail closed. The snapshot does not start `gpsd` or reconfigure the port.

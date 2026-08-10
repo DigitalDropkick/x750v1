@@ -2,16 +2,16 @@
   "id": "can",
   "name": "CAN Bus",
   "category": "CAN",
-  "description": "CAN interface inspection and future bounded capture/transmit workflows.",
+  "description": "One bounded passive SocketCAN frame snapshot plus a disabled transmit placeholder.",
   "package_names": ["canutils"],
   "expected_binaries": ["candump", "cansend"],
   "required_hardware": ["can"],
   "status_probe": "can",
-  "risk_level": "DISRUPTIVE",
-  "enabled": false,
+  "risk_level": "ACTION",
+  "enabled": true,
   "actions": [
-    {"id": "can.capture", "class": "INFO", "enabled": false},
-    {"id": "can.transmit", "class": "DISRUPTIVE", "enabled": false}
+    {"id": "can.capture", "class": "ACTION", "execution": "job", "enabled": true},
+    {"id": "can.transmit", "class": "DISRUPTIVE", "execution": "job", "enabled": false}
   ],
-  "help_text": "canutils is installed, but no CAN interface was detected during discovery."
+  "help_text": "Capture requires exactly one already-up physical canN interface and /usr/bin/candump. This target currently has neither; the console never configures bitrate/link state and never transmits."
 }

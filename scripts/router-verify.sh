@@ -28,8 +28,8 @@ model="$(ubus call system board | jsonfilter -e '@.model')"
 [ "$model" = 'GL.iNet GL-X750' ] || fail "target identity changed: $model"
 pass 'GL-X750 target identity'
 
-[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.8.0' ] || fail 'Field Console version is not 1.8.0'
-pass 'Field Console version 1.8.0'
+[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.9.0' ] || fail 'Field Console version is not 1.9.0'
+pass 'Field Console version 1.9.0'
 
 mount | grep -q '^/dev/sda1 on /overlay type ext4 ' || fail 'extroot is not active on /dev/sda1'
 pass 'extroot remains active'
@@ -521,6 +521,84 @@ else
 	pass 'GPS/GNSS backend/worker gates, privacy cleanup, and no-device refusal path'
 fi
 
+can_manifest=/usr/share/ddk-field-console/tools/can.json
+[ "$(jsonfilter -i "$can_manifest" -e '@.enabled')" = 'true' ] || fail 'CAN module is not enabled'
+[ "$(jsonfilter -i "$can_manifest" -e '@.actions[0].id')" = 'can.capture' ] || fail 'passive CAN action ID is incorrect'
+[ "$(jsonfilter -i "$can_manifest" -e '@.actions[0].class')" = 'ACTION' ] || fail 'passive CAN capture lost its ACTION classification'
+[ "$(jsonfilter -i "$can_manifest" -e '@.actions[0].execution')" = 'job' ] || fail 'passive CAN capture execution mode is incorrect'
+[ "$(jsonfilter -i "$can_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'passive CAN capture is not explicitly enabled'
+[ "$(jsonfilter -i "$can_manifest" -e '@.actions[1].class')" = 'DISRUPTIVE' ] || fail 'CAN transmit placeholder lost its DISRUPTIVE classification'
+[ "$(jsonfilter -i "$can_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'CAN transmit was unexpectedly enabled'
+opkg status canutils 2>/dev/null | grep -Fq 'Status: install user installed' || fail 'the existing canutils package record is unavailable'
+pass 'reviewed passive CAN manifest and installed package record'
+
+if /usr/libexec/ddk-console job start 'can.capture;touch' 2>/dev/null | json_ok; then
+	fail 'malformed CAN action ID was accepted'
+fi
+if /usr/libexec/ddk-console job start can.capture can0 2>/dev/null | json_ok; then
+	fail 'a browser-supplied CAN interface was accepted'
+fi
+
+can_status="$(/usr/libexec/ddk-console status)"
+can_capabilities="$(/usr/libexec/ddk-console capabilities)"
+can_ready="$(printf '%s' "$can_status" | jsonfilter -e '@.data.hardware.can.ready')"
+can_hardware_present="$(printf '%s' "$can_status" | jsonfilter -e '@.data.hardware.can.hardware_present')"
+can_binary_present="$(printf '%s' "$can_status" | jsonfilter -e '@.data.hardware.can.capture_binary_present')"
+can_reason="$(printf '%s' "$can_status" | jsonfilter -e '@.data.hardware.can.reason')"
+can_state="$(printf '%s' "$can_capabilities" | jsonfilter -e '@.data[@.id="can"].state')"
+can_action_ready="$(printf '%s' "$can_capabilities" | jsonfilter -e '@.data[@.id="can"].action_ready')"
+[ "$(printf '%s' "$can_capabilities" | jsonfilter -e '@.data[@.id="can"].console_enabled')" = 'true' ] || fail 'CAN console module is not enabled'
+if [ "$can_ready" = 'true' ]; then
+	[ "$can_hardware_present" = 'true' ] || fail 'ready CAN interface is not marked present'
+	[ "$can_binary_present" = 'true' ] || fail 'ready CAN capture lacks candump'
+	[ "$can_state" = 'READY' ] || fail "ready CAN interface has inconsistent capability state: $can_state"
+	[ "$can_action_ready" = 'true' ] || fail 'ready CAN interface did not enable the reviewed action'
+	warn 'one up physical CAN interface and candump are ready; live frame capture requires explicit authorization in the UI'
+else
+	[ "$can_action_ready" = 'false' ] || fail 'unready CAN action was exposed as ready'
+	if [ "$can_hardware_present" = 'false' ]; then
+		[ "$can_state" = 'HARDWARE REQUIRED' ] || fail "absent CAN interface has incorrect state: $can_state"
+	else
+		[ "$can_state" = 'NOT CONFIGURED' ] || fail "present but unready CAN interface has incorrect state: $can_state"
+	fi
+	if [ "$can_binary_present" = 'false' ]; then
+		printf '%s' "$can_reason" | grep -Fq 'CANDUMP EXECUTABLE UNAVAILABLE' || fail 'missing candump is not visible in CAN readiness state'
+	fi
+	can_jobs_before="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
+	can_rejection="$(/usr/libexec/ddk-console job start can.capture 2>/dev/null || true)"
+	[ "$(printf '%s' "$can_rejection" | jsonfilter -e '@.ok')" = 'false' ] || fail 'unready CAN capture was not rejected'
+	printf '%s' "$can_rejection" | jsonfilter -e '@.message' | grep -Fq 'Passive CAN capture is not ready' || fail 'CAN readiness rejection message is missing'
+	can_jobs_after="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
+	[ "$can_jobs_before" = "$can_jobs_after" ] || fail 'rejected CAN capture created a transient job'
+
+	can_worker_probe_id="job-$(date +%s)-$$"
+	can_worker_probe_dir="/tmp/ddk/jobs/$can_worker_probe_id"
+	[ ! -e "$can_worker_probe_dir" ] || fail 'generated CAN worker-probe ID collided'
+	mkdir "$can_worker_probe_dir"
+	chmod 700 "$can_worker_probe_dir"
+	printf '%s\n' queued > "$can_worker_probe_dir/status"
+	printf '%s\n' '{}' > "$can_worker_probe_dir/metadata.json"
+	: > "$can_worker_probe_dir/stdout"
+	: > "$can_worker_probe_dir/stderr"
+	can_worker_result=0
+	/usr/libexec/ddk-job-worker "$can_worker_probe_id" can_capture >/dev/null 2>&1 || can_worker_result=$?
+	can_worker_status="$(cat "$can_worker_probe_dir/status" 2>/dev/null || true)"
+	can_worker_error="$(cat "$can_worker_probe_dir/stderr" 2>/dev/null || true)"
+	rm -f "$can_worker_probe_dir/pid" "$can_worker_probe_dir/status" "$can_worker_probe_dir/metadata.json" \
+		"$can_worker_probe_dir/stdout" "$can_worker_probe_dir/stderr" "$can_worker_probe_dir/can.frames" "$can_worker_probe_dir/can.stderr"
+	rmdir "$can_worker_probe_dir"
+	[ "$can_worker_result" -eq 65 ] || fail "independent CAN worker gate returned $can_worker_result instead of 65"
+	[ "$can_worker_status" = 'failed' ] || fail "independent CAN worker gate ended in state: $can_worker_status"
+	if [ "$can_hardware_present" = 'false' ]; then
+		printf '%s' "$can_worker_error" | grep -Fq 'Exactly one reviewed physical CAN interface named canN is required.' || fail 'independent CAN hardware rejection evidence is missing'
+	elif [ "$can_binary_present" = 'false' ]; then
+		printf '%s' "$can_worker_error" | grep -Fq 'candump is unavailable at the reviewed path' || fail 'independent CAN executable rejection evidence is missing'
+	fi
+	if pidof candump cansend cangen canplayer >/dev/null 2>&1; then fail 'CAN rejection started or left a CAN utility process'; fi
+	if find /tmp/ddk/jobs -maxdepth 2 -type f -name 'can.frames' | grep -q .; then fail 'CAN no-device verification left captured frames'; fi
+	pass 'CAN backend/worker gates, missing-runtime visibility, and no-device refusal path'
+fi
+
 report_payload="$(/usr/libexec/ddk-console job start report.system)"
 printf '%s' "$report_payload" | json_ok || fail 'system report job did not start'
 report_job="$(printf '%s' "$report_payload" | jsonfilter -e '@.data.id')"
@@ -576,7 +654,7 @@ if netstat -lntup 2>/dev/null | grep -q 'ddk'; then fail 'a DDK listener exists'
 # BusyBox on this target has no standalone pgrep.
 # shellcheck disable=SC2009
 if ps w | grep '[d]dk-job-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
-if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver gpsd gpsdecode >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
+if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver gpsd gpsdecode candump cansend cangen canplayer >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
 pass 'no DDK listener or idle operation worker exists'
 
 available_kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"
