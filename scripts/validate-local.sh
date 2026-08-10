@@ -11,6 +11,9 @@ fail() {
 }
 
 git diff --check
+[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '2.0.0' ]] || fail 'source version is not 2.0.0'
+rg -F "X750 / v2.0.0" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 2.0.0'
+rg -F "Field Console version 2.0.0" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 2.0.0'
 bash -n deploy.sh verify.sh rollback.sh configure-swap-autostart.sh rollback-swap-autostart.sh post-reboot-verify.sh scripts/verify-browser-authenticated.sh
 sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh \
 	scripts/router-configure-swap-autostart.sh scripts/router-rollback-swap-autostart.sh \
@@ -111,6 +114,54 @@ while IFS= read -r action || [[ -n "$action" ]]; do
 	enabled_count="$(jq -r --arg id "$action" '[.actions[] | select(.id == $id and .class == "ACTION" and .enabled == true)] | length' files/usr/share/ddk-field-console/tools/*.json | awk '{sum += $1} END{print sum+0}')"
 	[[ "$enabled_count" -eq 1 ]] || fail "reviewed ACTION is missing or duplicated: $action"
 done < scripts/enabled-action-ids.txt
+
+identity_module=files/usr/share/ddk-field-console/usb-identity.lua
+[[ -f "$identity_module" ]] || fail 'USB identity classifier is missing'
+for identity_guard in \
+	'/sys/bus/usb/devices' \
+	'ff:42:01' \
+	'ff:42:03' \
+	'06:01:01' \
+	'05ac' \
+	'1366' \
+	'result.inspected_count >= 64' \
+	'#device.interfaces >= 16' \
+	'root:find("..", 1, true)'
+do
+	rg -F -- "$identity_guard" "$identity_module" >/dev/null || fail "USB identity guard is missing: $identity_guard"
+done
+
+for identity_manifest in android-repair apple-repair firmware-programming; do
+	manifest="files/usr/share/ddk-field-console/tools/$identity_manifest.json"
+	[[ "$(jq -r '.enabled' "$manifest")" == true ]] || fail "identity module is not enabled: $identity_manifest"
+	[[ "$(jq -r '.no_device_state' "$manifest")" == 'READY / NO DEVICE' ]] || fail "identity no-device state is unsafe: $identity_manifest"
+	[[ "$(jq '[.actions[] | select(.class == "INFO" and .enabled == true)] | length' "$manifest")" -eq 2 ]] || fail "identity INFO action count is incorrect: $identity_manifest"
+	[[ "$(jq '[.actions[] | select(.class == "DISRUPTIVE" and .enabled == false)] | length' "$manifest")" -eq 1 ]] || fail "disruptive identity-module placeholder was enabled: $identity_manifest"
+done
+
+for identity_action in \
+	android.identify android.operator_guide \
+	apple.identify apple.operator_guide \
+	firmware.identify firmware.operator_guide
+do
+	rg -F "[\"$identity_action\"]" files/usr/libexec/ddk-console >/dev/null || fail "identity action is missing from the exact backend allowlist: $identity_action"
+done
+
+for identity_guard in \
+	'Policy: sysfs metadata only' \
+	'not written to jobs, reports, logs, or persistent storage' \
+	'The browser does not execute any displayed command' \
+	'No command above was run by this request.'
+do
+	rg -F -- "$identity_guard" files/usr/libexec/ddk-console >/dev/null || fail "identity privacy/handoff guard is missing: $identity_guard"
+done
+
+if rg -n 'capture\([^\n]*(adb|fastboot|usbmuxd|idevice|irecovery|idevicerestore|openocd|avrdude|dfu-util|dfu-programmer|flashrom|stm32flash|bossac|lpc21isp|ftdi_eeprom)|worker[[:space:]]*=[[:space:]]*"(android|apple|firmware)' files/usr/libexec/ddk-console; then
+	fail 'a mobile-device or programmer utility was wired into a browser execution path'
+fi
+if rg -n '(^|[[:space:]])(adb|fastboot|usbmuxd|idevice[a-z_]*|irecovery|idevicerestore|openocd|avrdude|dfu-util|dfu-programmer|flashrom|stm32flash|bossac|lpc21isp|ftdi_eeprom)([[:space:]]|$)' files/usr/libexec/ddk-job-worker; then
+	fail 'the DDK job worker can invoke a mobile-device or programmer utility'
+fi
 
 capture_worker=files/usr/libexec/ddk-job-worker
 [[ "$(rg -c '/usr/sbin/tcpdump -i br-lan' "$capture_worker")" -eq 1 ]] || fail 'reviewed tcpdump command is missing or duplicated'

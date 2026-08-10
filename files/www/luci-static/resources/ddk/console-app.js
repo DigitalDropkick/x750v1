@@ -154,7 +154,7 @@
 				h('span', { class: 'ddk-eyebrow' }, 'LOCAL REPAIR · SERIOUS SYSTEMS'),
 				h('h2', {}, section || 'FIELD CONSOLE'),
 				h('p', {}, description || 'GL-X750 field appliance control surface')),
-			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v1.9.0')));
+			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v2.0.0')));
 	}
 
 	function sectionHeading(title, detail) {
@@ -297,6 +297,38 @@
 		return exec([ 'job', 'start', 'can.capture' ]);
 	}
 
+	var privateIdentityActions = {
+		'android.identify': {
+			name: 'Android USB identity',
+			disabled: 'ADB server, shell, pairing, install, backup, reboot, bootloader, recovery, and filesystem access'
+		},
+		'apple.identify': {
+			name: 'Apple mobile USB identity',
+			disabled: 'usbmuxd, pairing, trust, device services, recovery commands, restore, and filesystem access'
+		},
+		'firmware.identify': {
+			name: 'firmware programmer USB identity',
+			disabled: 'probe connection, target power, debug, read, write, erase, verify, reset, and firmware utilities'
+		}
+	};
+
+	function confirmPrivateIdentity(actionId) {
+		var policy = privateIdentityActions[actionId];
+		if (!policy) return false;
+		return window.confirm(
+			'Show ' + policy.name + ' metadata?\n\n' +
+			'Privacy: USB manufacturer, product, topology, interface classes, drivers, and customer-device serial identifier may appear\n' +
+			'Source: sanitized read-only sysfs metadata; no device node is opened\n' +
+			'Browser-disabled: ' + policy.disabled + '\n' +
+			'Retention: authenticated browser response only; not written to jobs, reports, logs, or persistent storage'
+		);
+	}
+
+	function runPrivateIdentity(actionId, target) {
+		if (!confirmPrivateIdentity(actionId)) return;
+		runInfo(actionId, target);
+	}
+
 	async function startToolJob(actionId) {
 		if (actionId !== 'cellular.snapshot')
 			throw new Error('The requested tool job did not match the DDK client allowlist.');
@@ -339,10 +371,10 @@
 				card('Memory & Storage', 'RESOURCES', [ row('Physical memory', formatBytes(system.memory.total)), row('Available memory', formatBytes(system.memory.available)), meter('Memory pressure', memoryUsed, system.memory.total, formatBytes(memoryUsed) + ' used'), row('Swap total / used', formatBytes(system.swap.total) + ' / ' + formatBytes(system.swap.used)), row('Root free', formatBytes(system.storage.available)), meter('Root storage', system.storage.used, system.storage.total, system.storage.percent + '% used') ]),
 				card('Network', 'CONNECTIVITY', [ row('LAN IP', network.lan_ip), row('WAN state', network.wan_up ? 'UP' : 'DOWN'), row('WAN interface', network.wan_interface), row('WAN IP', network.wan_ip), row('Default route', network.default_route), row('DNS', network.dns.join(', ')), row('Attached interfaces', network.interfaces.length) ]),
 				card('Remote Access', 'TAILSCALE', [ row('Installed', remote.tailscale_installed ? 'YES' : 'NO'), row('Process', remote.tailscale_running ? 'RUNNING' : 'NOT RUNNING'), row('Tailscale IP', remote.tailscale_ip), row('Version', remote.tailscale_version), h('div', { class: 'ddk-alert ddk-alert-info' }, 'Observation only — no Tailscale setting is read or modified.') ], 'ddk-card-wide'),
-				card('Hardware Presence', 'LIVE PROBES', [ row('USB devices', hardware.usb_devices.length), row('Serial attribution', serialText), row('Serial nodes', hardware.serial_devices.length ? hardware.serial_devices.join(', ') : 'NONE'), row('Video nodes', hardware.video_devices.length ? hardware.video_devices.join(', ') : 'NONE'), row('UVC camera', hardware.camera ? hardware.camera.reason : 'NOT DETECTED'), row('RTL-SDR', hardware.rtl_sdr ? hardware.rtl_sdr.reason : hardware.classes.rtl_sdr ? 'READY' : 'NOT DETECTED'), row('GPS / GNSS', hardware.gps ? hardware.gps.reason : 'NOT DETECTED'), row('CAN', hardware.can ? hardware.can.reason : 'NOT DETECTED'), row('CAN interfaces', hardware.can_interfaces.length ? hardware.can_interfaces.join(', ') : 'NONE'), row('Bluetooth controller', hardware.classes.bluetooth ? 'DETECTED' : 'NOT DETECTED'), row('I2C / SPI', hardware.i2c_devices.length + ' / ' + hardware.spi_devices.length) ], 'ddk-card-wide')),
+				card('Hardware Presence', 'LIVE PROBES', [ row('USB devices', hardware.usb_devices.length), row('Serial attribution', serialText), row('Serial nodes', hardware.serial_devices.length ? hardware.serial_devices.join(', ') : 'NONE'), row('Video nodes', hardware.video_devices.length ? hardware.video_devices.join(', ') : 'NONE'), row('UVC camera', hardware.camera ? hardware.camera.reason : 'NOT DETECTED'), row('RTL-SDR', hardware.rtl_sdr ? hardware.rtl_sdr.reason : hardware.classes.rtl_sdr ? 'READY' : 'NOT DETECTED'), row('GPS / GNSS', hardware.gps ? hardware.gps.reason : 'NOT DETECTED'), row('CAN', hardware.can ? hardware.can.reason : 'NOT DETECTED'), row('CAN interfaces', hardware.can_interfaces.length ? hardware.can_interfaces.join(', ') : 'NONE'), row('Android identity', hardware.identity ? hardware.identity.android.reason : 'NOT DETECTED'), row('Apple mobile identity', hardware.identity ? hardware.identity.apple_mobile.reason : 'NOT DETECTED'), row('Programmer identity', hardware.identity ? hardware.identity.programmer.reason : 'NOT DETECTED'), row('Bluetooth controller', hardware.classes.bluetooth ? 'DETECTED' : 'NOT DETECTED'), row('I2C / SPI', hardware.i2c_devices.length + ' / ' + hardware.spi_devices.length) ], 'ddk-card-wide')),
 			sectionHeading('Capability Matrix', modules.length + ' modular tool groups'),
 			h('div', { class: 'ddk-cap-grid' }, capabilitySummary(modules)),
-			sectionHeading('Safe Phase-One Actions', 'Fixed INFO allowlist only'),
+			sectionHeading('Immediate Read-only Actions', 'Fixed INFO allowlist only'),
 			h('section', { class: 'ddk-card ddk-card-full' }, h('div', { class: 'ddk-card-body' },
 				h('div', { class: 'ddk-action-row' }, actions.map(function(action) { return button(action[0], 'ddk-button-secondary', function() { runInfo(action[1], output); }); }), h('a', { class: 'ddk-button', href: config.base + '/jobs' }, 'Generate DDK System Report')))),
 			output);
@@ -354,6 +386,7 @@
 		var actions = (module.actions || []).map(function(action) {
 			var jobEnabled = module.console_enabled && action.enabled && action.class === 'INFO' && action.execution === 'job' && action.id === 'cellular.snapshot';
 			var infoEnabled = module.console_enabled && action.enabled && action.class === 'INFO' && action.execution !== 'job';
+			var privateIdentity = infoEnabled && !!privateIdentityActions[action.id];
 			var discoveryEnabled = module.console_enabled && action.enabled && action.class === 'SECURITY' && action.id === 'network.nmap_lan_discovery';
 			var captureEnabled = module.console_enabled && action.enabled && action.class === 'SECURITY' && action.execution === 'job' && action.id === 'capture.lan_metadata_snapshot';
 			var rtl433Action = module.console_enabled && action.enabled && action.class === 'ACTION' && action.execution === 'job' && action.id === 'radio.rtl433_snapshot';
@@ -364,7 +397,7 @@
 			var gpsEnabled = gpsAction && module.action_ready;
 			var canAction = module.console_enabled && action.enabled && action.class === 'ACTION' && action.execution === 'job' && action.id === 'can.capture';
 			var canEnabled = canAction && module.action_ready;
-			var handler = infoEnabled ? function() { runInfo(action.id, output); } : jobEnabled ? async function() {
+			var handler = privateIdentity ? function() { runPrivateIdentity(action.id, output); } : infoEnabled ? function() { runInfo(action.id, output); } : jobEnabled ? async function() {
 				try {
 					var job = await startToolJob(action.id);
 					if (job) showModal('Cellular Snapshot Started', h('div', {}, h('p', {}, 'The bounded read-only job is running as ' + job.id + '.'), h('p', {}, h('a', { class: 'ddk-button', href: config.base + '/jobs' }, 'Open Jobs & Reports'))));
@@ -437,7 +470,7 @@
 			count.textContent = visible + ' of ' + cards.length + ' modules';
 		}
 		search.addEventListener('input', filter); category.addEventListener('change', filter); state.addEventListener('change', filter);
-		app.replaceChildren(brand('TOOL REGISTRY', 'Software inventory separated from live hardware presence'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'A manifest can describe a future action, but only the backend allowlist can execute one. Cellular is fixed and read-only; Nmap and LAN capture require confirmation; RTL-433, camera, GPS, and passive CAN snapshots require reviewed live hardware/runtime readiness.'), h('div', { class: 'ddk-toolbar' }, search, category, state), h('div', { class: 'ddk-table-meta' }, count, h('span', {}, 'Hardware probes are read-only')), grid, output);
+		app.replaceChildren(brand('TOOL REGISTRY', 'Software inventory separated from live hardware presence'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'A manifest can describe a future action, but only the backend allowlist can execute one. Mobile-device and programmer identity are sysfs-only and never invoke repair or flash utilities; cellular is fixed and read-only; bounded capture workflows retain their reviewed hardware and authorization gates.'), h('div', { class: 'ddk-toolbar' }, search, category, state), h('div', { class: 'ddk-table-meta' }, count, h('span', {}, 'Hardware probes are read-only')), grid, output);
 	}
 
 	async function renderPackages() {
@@ -562,14 +595,15 @@
 			[ 'Authentication', 'Inherited from the existing LuCI sysauth session. No public DDK endpoint.' ],
 			[ 'Network exposure', 'No listener, nginx/uhttpd rule, firewall rule, or WAN binding is created.' ],
 			[ 'Action policy', 'Exact server-side action IDs only. Browser command strings and executable paths are rejected.' ],
-			[ 'Arguments', 'Only known action IDs and generated DDK job/report IDs are accepted. Nmap, packet, cellular, RTL-433, camera, GPS, and CAN device/profile parameters are server-derived or fixed.' ],
+			[ 'Arguments', 'Only known action IDs and generated DDK job/report IDs are accepted. Nmap, packet, cellular, RTL-433, camera, GPS, CAN, mobile identity, and programmer identity parameters are server-derived or fixed.' ],
+			[ 'Private identity', 'Android, Apple mobile, and programmer snapshots read sanitized sysfs only and persist only in authenticated browser memory.' ],
 			[ 'Jobs', 'Maximum 2 active, 20 retained, 4-hour job cleanup, bounded stdout/stderr.' ],
 			[ 'Camera artifacts', 'One 256 KiB JPEG maximum, mode 0600 under its DDK job, authenticated native LuCI download only.' ],
 			[ 'Reports', 'Stored in /tmp, 128 KiB maximum view, 24-hour cleanup, no secret configuration dumps.' ],
 			[ 'Idle footprint', 'No DDK daemon, database, timer, analytics, or background poller runs on the router.' ],
-			[ 'Configuration', 'This page is deliberately read-only in phase one.' ]
+			[ 'Configuration', 'Version 2.0 remains deliberately read-only; full device-tool operations are handed off to SSH.' ]
 		];
-		app.replaceChildren(brand('SETTINGS', 'Production safety posture and operating limits'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'There are no mutable web settings in version 1.9. The approved swap boot entry is managed only by guarded command-line tooling.'), h('div', { class: 'ddk-posture' }, posture.map(function(item) { return h('div', { class: 'ddk-posture-item' }, h('strong', {}, item[0]), h('span', {}, item[1])); })), sectionHeading('Explicitly Disabled', 'Requires future deliberate wiring'), card('Operating Boundaries', 'LOCKED', [ row('DISRUPTIVE actions', 'DISABLED'), row('SECURITY actions', 'BOUNDED LAN DISCOVERY + METADATA CAPTURE'), row('ACTION workflows', 'HARDWARE-GATED RTL-433 + CAMERA + GPS + PASSIVE CAN'), row('CAN interface setup / bitrate / transmit', 'NOT IMPLEMENTED'), row('GPSD / NTRIP / serial reconfiguration', 'NOT IMPLEMENTED'), row('Camera streaming / Motion / RTSP', 'NOT IMPLEMENTED'), row('Cellular mutations / identifiers', 'NOT IMPLEMENTED'), row('Arbitrary targets / filters / flags', 'REJECTED'), row('Raw I/Q / PCAP / packet replay', 'NOT IMPLEMENTED'), row('Network radio output / rtl_tcp start', 'NOT IMPLEMENTED'), row('Generic PID stop', 'NOT IMPLEMENTED'), row('Persistent logs', 'NOT IMPLEMENTED'), row('WAN service exposure', 'NOT IMPLEMENTED') ], 'ddk-card-full'));
+		app.replaceChildren(brand('SETTINGS', 'Production safety posture and operating limits'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'There are no mutable web settings in version 2.0. The approved swap boot entry is managed only by guarded command-line tooling.'), h('div', { class: 'ddk-posture' }, posture.map(function(item) { return h('div', { class: 'ddk-posture-item' }, h('strong', {}, item[0]), h('span', {}, item[1])); })), sectionHeading('Explicitly Disabled', 'Requires future deliberate wiring'), card('Operating Boundaries', 'LOCKED', [ row('DISRUPTIVE actions', 'DISABLED'), row('SECURITY actions', 'BOUNDED LAN DISCOVERY + METADATA CAPTURE'), row('ACTION workflows', 'HARDWARE-GATED RTL-433 + CAMERA + GPS + PASSIVE CAN'), row('ADB / device shell / pairing / install', 'NOT IMPLEMENTED'), row('Apple pairing / recovery / restore', 'NOT IMPLEMENTED'), row('Firmware read / write / erase / debug', 'NOT IMPLEMENTED'), row('CAN interface setup / bitrate / transmit', 'NOT IMPLEMENTED'), row('GPSD / NTRIP / serial reconfiguration', 'NOT IMPLEMENTED'), row('Camera streaming / Motion / RTSP', 'NOT IMPLEMENTED'), row('Cellular mutations / identifiers', 'NOT IMPLEMENTED'), row('Arbitrary targets / filters / flags', 'REJECTED'), row('Raw I/Q / PCAP / packet replay', 'NOT IMPLEMENTED'), row('Network radio output / rtl_tcp start', 'NOT IMPLEMENTED'), row('Generic PID stop', 'NOT IMPLEMENTED'), row('Persistent logs', 'NOT IMPLEMENTED'), row('WAN service exposure', 'NOT IMPLEMENTED') ], 'ddk-card-full'));
 	}
 
 	var renderers = { overview: renderOverview, tools: renderTools, packages: renderPackages, jobs: renderJobs, settings: renderSettings };

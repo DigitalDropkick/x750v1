@@ -2,16 +2,18 @@
   "id": "firmware-programming",
   "name": "Firmware / Embedded",
   "category": "Firmware Programming",
-  "description": "Flash, JTAG/SWD, MCU bootloader, DFU, and EEPROM tooling.",
+  "description": "Read-only USB programmer identity with flash, JTAG/SWD, MCU bootloader, DFU, and EEPROM operations held disabled.",
   "package_names": ["flashrom-usb", "openocd", "avrdude", "dfu-util", "dfu-programmer", "stm32flash", "bossa", "lpc21isp", "ftdi_eeprom"],
   "expected_binaries": ["flashrom", "openocd", "avrdude", "dfu-util", "stm32flash", "bossac", "lpc21isp", "ftdi_eeprom"],
   "required_hardware": ["programmer"],
   "status_probe": "programmer",
   "risk_level": "DISRUPTIVE",
-  "enabled": false,
+  "enabled": true,
+  "no_device_state": "READY / NO DEVICE",
   "actions": [
-    {"id": "firmware.identify", "class": "INFO", "enabled": false},
+    {"id": "firmware.identify", "class": "INFO", "execution": "info", "enabled": true},
+    {"id": "firmware.operator_guide", "class": "INFO", "execution": "info", "enabled": true},
     {"id": "firmware.write", "class": "DISRUPTIVE", "enabled": false}
   ],
-  "help_text": "Programming actions require per-tool device, image, voltage, and confirmation safeguards."
+  "help_text": "Identification reads sanitized sysfs USB metadata only and never invokes a programmer. Read, write, erase, debug, recovery, and power operations require separate future safeguards."
 }

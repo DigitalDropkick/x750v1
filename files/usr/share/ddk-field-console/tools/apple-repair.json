@@ -2,17 +2,18 @@
   "id": "apple-repair",
   "name": "Apple / iOS Repair",
   "category": "Device Repair",
-  "description": "libimobiledevice, recovery, and restore utilities.",
+  "description": "Private, transient Apple mobile USB identity with recovery and restore utilities held disabled.",
   "package_names": ["libimobiledevice-utils", "idevicerestore", "irecovery"],
   "expected_binaries": ["ideviceinfo", "idevicerestore", "irecovery"],
   "required_hardware": ["apple_mobile"],
   "status_probe": "apple_mobile",
   "risk_level": "DISRUPTIVE",
-  "enabled": false,
+  "enabled": true,
   "no_device_state": "READY / NO DEVICE",
   "actions": [
-    {"id": "apple.identify", "class": "INFO", "enabled": false},
+    {"id": "apple.identify", "class": "INFO", "execution": "info", "enabled": true},
+    {"id": "apple.operator_guide", "class": "INFO", "execution": "info", "enabled": true},
     {"id": "apple.restore", "class": "DISRUPTIVE", "enabled": false}
   ],
-  "help_text": "Restore and recovery operations can alter attached devices and remain disabled."
+  "help_text": "Identification reads sanitized sysfs USB metadata only. It never invokes usbmuxd, idevice tools, recovery, or restore; all device-changing operations remain disabled."
 }

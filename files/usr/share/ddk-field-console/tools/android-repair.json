@@ -2,17 +2,18 @@
   "id": "android-repair",
   "name": "Android / ADB",
   "category": "Device Repair",
-  "description": "Android device detection and future explicit repair workflows.",
+  "description": "Private, transient Android USB identity plus future explicit repair workflows.",
   "package_names": ["adb"],
   "expected_binaries": ["adb"],
   "required_hardware": ["android"],
   "status_probe": "android",
   "risk_level": "ACTION",
-  "enabled": false,
+  "enabled": true,
   "no_device_state": "READY / NO DEVICE",
   "actions": [
-    {"id": "android.devices", "class": "INFO", "enabled": false},
+    {"id": "android.identify", "class": "INFO", "execution": "info", "enabled": true},
+    {"id": "android.operator_guide", "class": "INFO", "execution": "info", "enabled": true},
     {"id": "android.shell", "class": "DISRUPTIVE", "enabled": false}
   ],
-  "help_text": "ADB is installed. Detection does not start the ADB daemon, and no Android USB signature is currently present."
+  "help_text": "Identification reads sanitized sysfs USB metadata only. It never invokes ADB, starts the ADB server, opens the device, or retains customer identifiers."
 }

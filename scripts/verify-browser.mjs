@@ -169,7 +169,7 @@ try {
 	await waitUntil(async () => evaluate(pageSession, '!!document.querySelector("#ddk-app .ddk-brand") && !document.querySelector("#ddk-app .ddk-loading")'), 15000, 'Timed out rendering the shortcut destination.');
 	const shortcut = await evaluate(pageSession, `({
 		path: location.pathname,
-		version: document.body.textContent.includes('X750 / v1.9.0'),
+		version: document.body.textContent.includes('X750 / v2.0.0'),
 		serial: document.body.textContent.includes('4 nodes · 4 MODEM RESERVED · 0 GENERAL'),
 		overflow: document.documentElement.scrollWidth > window.innerWidth,
 		login: document.body.textContent.includes('Authorization Required')
@@ -197,7 +197,7 @@ try {
 		throw new Error(`Compact Overview validation failed: ${JSON.stringify(compactOverview)}`);
 	}
 	await validateBrand(pageSession, 'overview');
-	const overviewPath = await screenshot(pageSession, 'ddk-v190-overview-320.png');
+	const overviewPath = await screenshot(pageSession, 'ddk-v200-overview-320.png');
 
 	await openPage(pageSession, 'jobs', 1440, 1000);
 	await waitForJobs(pageSession);
@@ -211,7 +211,7 @@ try {
 		const canButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Passive CAN Frame Snapshot');
 		return {
 			login: document.body.textContent.includes('Authorization Required'),
-			version: document.body.textContent.includes('X750 / v1.9.0'),
+			version: document.body.textContent.includes('X750 / v2.0.0'),
 			button: !!button,
 			enabled: !!button && !button.disabled,
 			cellular: !!cellularButton && !cellularButton.disabled,
@@ -239,7 +239,7 @@ try {
 		throw new Error(`Desktop Jobs validation failed: ${JSON.stringify(desktop)}`);
 	}
 	await validateBrand(pageSession, 'jobs');
-	const desktopPath = await screenshot(pageSession, 'ddk-v190-jobs-desktop.png');
+	const desktopPath = await screenshot(pageSession, 'ddk-v200-jobs-desktop.png');
 
 	await openPage(pageSession, 'tools', 1440, 1000);
 	const tools = await evaluate(pageSession, `(() => {
@@ -259,11 +259,61 @@ try {
 		const gpsButton = gpsCard && Array.from(gpsCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'gps.snapshot');
 		const canCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('CAN Bus') && node.textContent.includes('can.capture'));
 		const canButton = canCard && Array.from(canCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'can.capture');
-		return { card: !!card, ready: !!card && card.textContent.includes('READY'), button: !!button, enabled: !!button && !button.disabled, cellularCard: !!cellularCard, cellularReady: !!cellularCard && cellularCard.textContent.includes('READY'), cellularButton: !!cellularButton && !cellularButton.disabled, serialCard: !!serialCard, serialReady: !!serialCard && serialCard.textContent.includes('READY'), serialButton: !!serialButton && !serialButton.disabled, captureCard: !!captureCard, captureReady: !!captureCard && captureCard.textContent.includes('READY'), captureButton: !!captureButton && !captureButton.disabled && captureButton.classList.contains('ddk-button-security'), radioCard: !!radioCard, radioHardwareRequired: !!radioCard && radioCard.textContent.includes('HARDWARE REQUIRED'), radioButtonDisabled: !!radioButton && radioButton.disabled && radioButton.classList.contains('ddk-button-action'), cameraCard: !!cameraCard, cameraHardwareRequired: !!cameraCard && cameraCard.textContent.includes('HARDWARE REQUIRED'), cameraButtonDisabled: !!cameraButton && cameraButton.disabled && cameraButton.classList.contains('ddk-button-action'), gpsCard: !!gpsCard, gpsHardwareRequired: !!gpsCard && gpsCard.textContent.includes('HARDWARE REQUIRED'), gpsButtonDisabled: !!gpsButton && gpsButton.disabled && gpsButton.classList.contains('ddk-button-action'), canCard: !!canCard, canHardwareRequired: !!canCard && canCard.textContent.includes('HARDWARE REQUIRED'), canRuntimeVisible: !!canCard && canCard.textContent.includes('candump'), canButtonDisabled: !!canButton && canButton.disabled && canButton.classList.contains('ddk-button-action') };
+		const androidCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Android / ADB'));
+		const androidIdentity = androidCard && Array.from(androidCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'android.identify');
+		const androidGuide = androidCard && Array.from(androidCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'android.operator_guide');
+		const androidShell = androidCard && Array.from(androidCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'android.shell');
+		const appleCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Apple / iOS Repair'));
+		const appleIdentity = appleCard && Array.from(appleCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'apple.identify');
+		const appleGuide = appleCard && Array.from(appleCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'apple.operator_guide');
+		const appleRestore = appleCard && Array.from(appleCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'apple.restore');
+		const firmwareCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Firmware / Embedded'));
+		const firmwareIdentity = firmwareCard && Array.from(firmwareCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'firmware.identify');
+		const firmwareGuide = firmwareCard && Array.from(firmwareCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'firmware.operator_guide');
+		const firmwareWrite = firmwareCard && Array.from(firmwareCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'firmware.write');
+		return {
+			card: !!card,
+			ready: !!card && card.textContent.includes('READY'),
+			button: !!button,
+			enabled: !!button && !button.disabled,
+			cellularCard: !!cellularCard,
+			cellularReady: !!cellularCard && cellularCard.textContent.includes('READY'),
+			cellularButton: !!cellularButton && !cellularButton.disabled,
+			serialCard: !!serialCard,
+			serialReady: !!serialCard && serialCard.textContent.includes('READY'),
+			serialButton: !!serialButton && !serialButton.disabled,
+			captureCard: !!captureCard,
+			captureReady: !!captureCard && captureCard.textContent.includes('READY'),
+			captureButton: !!captureButton && !captureButton.disabled && captureButton.classList.contains('ddk-button-security'),
+			radioCard: !!radioCard,
+			radioHardwareRequired: !!radioCard && radioCard.textContent.includes('HARDWARE REQUIRED'),
+			radioButtonDisabled: !!radioButton && radioButton.disabled && radioButton.classList.contains('ddk-button-action'),
+			cameraCard: !!cameraCard,
+			cameraHardwareRequired: !!cameraCard && cameraCard.textContent.includes('HARDWARE REQUIRED'),
+			cameraButtonDisabled: !!cameraButton && cameraButton.disabled && cameraButton.classList.contains('ddk-button-action'),
+			gpsCard: !!gpsCard,
+			gpsHardwareRequired: !!gpsCard && gpsCard.textContent.includes('HARDWARE REQUIRED'),
+			gpsButtonDisabled: !!gpsButton && gpsButton.disabled && gpsButton.classList.contains('ddk-button-action'),
+			canCard: !!canCard,
+			canHardwareRequired: !!canCard && canCard.textContent.includes('HARDWARE REQUIRED'),
+			canRuntimeVisible: !!canCard && canCard.textContent.includes('candump'),
+			canButtonDisabled: !!canButton && canButton.disabled && canButton.classList.contains('ddk-button-action'),
+			androidCard: !!androidCard && androidCard.textContent.includes('READY / NO DEVICE'),
+			androidActions: !!androidIdentity && !androidIdentity.disabled && !!androidGuide && !androidGuide.disabled && !!androidShell && androidShell.disabled,
+			appleCard: !!appleCard && appleCard.textContent.includes('READY / NO DEVICE'),
+			appleActions: !!appleIdentity && !appleIdentity.disabled && !!appleGuide && !appleGuide.disabled && !!appleRestore && appleRestore.disabled,
+			firmwareCard: !!firmwareCard && firmwareCard.textContent.includes('READY / NO DEVICE'),
+			firmwareActions: !!firmwareIdentity && !firmwareIdentity.disabled && !!firmwareGuide && !firmwareGuide.disabled && !!firmwareWrite && firmwareWrite.disabled
+		};
 	})()`);
-	if (!tools.card || !tools.ready || !tools.button || !tools.enabled || !tools.cellularCard || !tools.cellularReady || !tools.cellularButton || !tools.serialCard || !tools.serialReady || !tools.serialButton || !tools.captureCard || !tools.captureReady || !tools.captureButton || !tools.radioCard || !tools.radioHardwareRequired || !tools.radioButtonDisabled || !tools.cameraCard || !tools.cameraHardwareRequired || !tools.cameraButtonDisabled || !tools.gpsCard || !tools.gpsHardwareRequired || !tools.gpsButtonDisabled || !tools.canCard || !tools.canHardwareRequired || !tools.canRuntimeVisible || !tools.canButtonDisabled) {
+	if (!tools.card || !tools.ready || !tools.button || !tools.enabled || !tools.cellularCard || !tools.cellularReady || !tools.cellularButton || !tools.serialCard || !tools.serialReady || !tools.serialButton || !tools.captureCard || !tools.captureReady || !tools.captureButton || !tools.radioCard || !tools.radioHardwareRequired || !tools.radioButtonDisabled || !tools.cameraCard || !tools.cameraHardwareRequired || !tools.cameraButtonDisabled || !tools.gpsCard || !tools.gpsHardwareRequired || !tools.gpsButtonDisabled || !tools.canCard || !tools.canHardwareRequired || !tools.canRuntimeVisible || !tools.canButtonDisabled || !tools.androidCard || !tools.androidActions || !tools.appleCard || !tools.appleActions || !tools.firmwareCard || !tools.firmwareActions) {
 		throw new Error(`Tool Registry validation failed: ${JSON.stringify(tools)}`);
 	}
+	await evaluate(pageSession, 'window.confirm = () => true');
+	await evaluate(pageSession, "(() => { const card = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Android / ADB')); Array.from(card.querySelectorAll('button')).find(node => node.textContent.trim() === 'android.identify').click(); return true; })()");
+	await waitUntil(async () => evaluate(pageSession, "document.querySelector('.ddk-output')?.textContent.includes('ANDROID USB IDENTITY SNAPSHOT') && document.querySelector('.ddk-output')?.textContent.includes('browser memory only')"), 10000, 'Timed out rendering the private Android identity response.');
+	await evaluate(pageSession, "(() => { const card = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Android / ADB')); Array.from(card.querySelectorAll('button')).find(node => node.textContent.trim() === 'android.operator_guide').click(); return true; })()");
+	await waitUntil(async () => evaluate(pageSession, "document.querySelector('.ddk-output')?.textContent.includes('ANDROID / ADB FULL CLI HANDOFF') && document.querySelector('.ddk-output')?.textContent.includes('adb                INSTALLED') && document.querySelector('.ddk-output')?.textContent.includes('browser does not execute')"), 10000, 'Timed out rendering the Android full CLI handoff.');
 	await validateBrand(pageSession, 'tools');
 	await evaluate(pageSession, `(() => {
 		const cellularCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Cellular / Modem'));
@@ -271,7 +321,7 @@ try {
 		return true;
 	})()`);
 	await new Promise(resolve => setTimeout(resolve, 200));
-	const toolsPath = await screenshot(pageSession, 'ddk-v190-tools-desktop.png');
+	const toolsPath = await screenshot(pageSession, 'ddk-v200-tools-desktop.png');
 
 	for (const page of [ 'packages', 'settings' ]) {
 		await openPage(pageSession, page, 1440, 900);
@@ -279,6 +329,14 @@ try {
 		const overflow = await evaluate(pageSession, 'document.documentElement.scrollWidth > window.innerWidth');
 		if (overflow) throw new Error(`${page} has horizontal document overflow.`);
 	}
+
+	await openPage(pageSession, 'tools', 390, 844);
+	const mobileTools = await evaluate(pageSession, "(() => { const cards = Array.from(document.querySelectorAll('.ddk-tool')); const android = cards.find(node => node.textContent.includes('Android / ADB')); const apple = cards.find(node => node.textContent.includes('Apple / iOS Repair')); const firmware = cards.find(node => node.textContent.includes('Firmware / Embedded')); const touchTargets = [ android, apple, firmware ].flatMap(card => card ? Array.from(card.querySelectorAll('button')) : []); return { overflow: document.documentElement.scrollWidth > window.innerWidth, android: !!android && android.textContent.includes('android.operator_guide'), apple: !!apple && apple.textContent.includes('apple.operator_guide'), firmware: !!firmware && firmware.textContent.includes('firmware.operator_guide'), touch: touchTargets.length === 9 && touchTargets.every(node => node.getBoundingClientRect().height >= 43.5), width: window.innerWidth }; })()");
+	if (mobileTools.overflow || !mobileTools.android || !mobileTools.apple || !mobileTools.firmware || !mobileTools.touch || mobileTools.width !== 390) {
+		throw new Error('Mobile Tool Registry validation failed: ' + JSON.stringify(mobileTools));
+	}
+	await validateBrand(pageSession, 'tools');
+	const mobileToolsPath = await screenshot(pageSession, 'ddk-v200-tools-mobile.png');
 
 	await openPage(pageSession, 'jobs', 390, 844);
 	await waitForJobs(pageSession);
@@ -297,15 +355,16 @@ try {
 		throw new Error(`Mobile Jobs validation failed: ${JSON.stringify(mobile)}`);
 	}
 	await validateBrand(pageSession, 'jobs');
-	const mobilePath = await screenshot(pageSession, 'ddk-v190-jobs-mobile.png');
+	const mobilePath = await screenshot(pageSession, 'ddk-v200-jobs-mobile.png');
 
 	if (browserErrors.length) throw new Error(`Browser errors: ${browserErrors.join(' | ')}`);
 	if (externalRequests.length) throw new Error(`External browser requests were made: ${[ ...new Set(externalRequests) ].join(' | ')}`);
-	console.log('Browser verification passed: /ddk shortcut, five local branded headers and logos, serial-aware Overview at 320px, authenticated Nmap/capture controls, and hardware/runtime-gated RTL-433, camera, GPS/GNSS, and passive CAN controls at 1440px and 390px, with no external requests, horizontal overflow, or runtime errors.');
+	console.log('Browser verification passed: /ddk shortcut, five local branded headers and logos, v2 private identity plus full native-CLI handoff modules, serial-aware Overview at 320px, authenticated Nmap/capture controls, and hardware/runtime-gated RTL-433, camera, GPS/GNSS, and passive CAN controls at 1440px and 390px, with no external requests, horizontal overflow, or runtime errors.');
 	console.log(`DDK_BROWSER_OVERVIEW=${overviewPath}`);
 	console.log(`DDK_BROWSER_DESKTOP=${desktopPath}`);
 	console.log(`DDK_BROWSER_TOOLS=${toolsPath}`);
 	console.log(`DDK_BROWSER_MOBILE=${mobilePath}`);
+	console.log('DDK_BROWSER_TOOLS_MOBILE=' + mobileToolsPath);
 }
 finally {
 	if (socket && socket.readyState === WebSocket.OPEN) socket.close();

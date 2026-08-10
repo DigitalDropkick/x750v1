@@ -4,6 +4,17 @@ set -eu
 
 pass_count=0
 warning_count=0
+identity_fixture=""
+
+cleanup_identity_fixture() {
+	case "$identity_fixture" in
+		/tmp/ddk-usb-identity-test.*) rm -rf -- "$identity_fixture" ;;
+	esac
+	identity_fixture=""
+}
+
+trap cleanup_identity_fixture EXIT
+trap 'exit 130' HUP INT TERM
 
 pass() {
 	pass_count=$((pass_count + 1))
@@ -28,8 +39,8 @@ model="$(ubus call system board | jsonfilter -e '@.model')"
 [ "$model" = 'GL.iNet GL-X750' ] || fail "target identity changed: $model"
 pass 'GL-X750 target identity'
 
-[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.9.0' ] || fail 'Field Console version is not 1.9.0'
-pass 'Field Console version 1.9.0'
+[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '2.0.0' ] || fail 'Field Console version is not 2.0.0'
+pass 'Field Console version 2.0.0'
 
 mount | grep -q '^/dev/sda1 on /overlay type ext4 ' || fail 'extroot is not active on /dev/sda1'
 pass 'extroot remains active'
@@ -45,6 +56,7 @@ for file in \
 	/usr/share/rpcd/acl.d/ddk-field-console.json \
 	/usr/libexec/ddk-console \
 	/usr/libexec/ddk-job-worker \
+	/usr/share/ddk-field-console/usb-identity.lua \
 	/usr/lib/lua/luci/view/ddk/shell.htm \
 	/www/luci-static/resources/ddk/console-app.js \
 	/www/luci-static/resources/ddk/console.css \
@@ -67,6 +79,7 @@ done
 pass 'local Digital Dropkick brand assets are served by the existing web stack'
 
 DDK_LUA_FILE=/usr/libexec/ddk-console lua -e 'assert(loadfile(os.getenv("DDK_LUA_FILE")))' || fail 'Lua backend syntax check failed'
+DDK_IDENTITY_FILE=/usr/share/ddk-field-console/usb-identity.lua lua -e 'assert(loadfile(os.getenv("DDK_IDENTITY_FILE")))' || fail 'USB identity module syntax check failed'
 DDK_TEMPLATE_FILE=/usr/lib/lua/luci/view/ddk/shell.htm lua -e 'local parser = require "luci.template.parser"; assert(parser.parse(os.getenv("DDK_TEMPLATE_FILE")))' || fail 'LuCI template syntax check failed'
 sh -n /usr/libexec/ddk-job-worker || fail 'job worker syntax check failed'
 find /usr/share/ddk-field-console/tools -type f -name '*.json' | while IFS= read -r file; do jsonfilter -i "$file" -e '@' >/dev/null; done
@@ -104,10 +117,98 @@ serial_manifest=/usr/share/ddk-field-console/tools/serial.json
 [ "$(jsonfilter -i "$serial_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'serial session placeholder was unexpectedly enabled'
 pass 'EC25 serial ownership and modem-reserved policy'
 
+for identity_manifest in android-repair apple-repair firmware-programming; do
+	manifest="/usr/share/ddk-field-console/tools/$identity_manifest.json"
+	[ "$(jsonfilter -i "$manifest" -e '@.enabled')" = 'true' ] || fail "identity module is not enabled: $identity_manifest"
+	[ "$(jsonfilter -i "$manifest" -e '@.no_device_state')" = 'READY / NO DEVICE' ] || fail "identity no-device state is incorrect: $identity_manifest"
+	[ "$(jsonfilter -i "$manifest" -e '@.actions[0].class')" = 'INFO' ] || fail "identity action lost INFO classification: $identity_manifest"
+	[ "$(jsonfilter -i "$manifest" -e '@.actions[0].enabled')" = 'true' ] || fail "identity action is disabled: $identity_manifest"
+	[ "$(jsonfilter -i "$manifest" -e '@.actions[1].class')" = 'INFO' ] || fail "operator guide lost INFO classification: $identity_manifest"
+	[ "$(jsonfilter -i "$manifest" -e '@.actions[1].enabled')" = 'true' ] || fail "operator guide is disabled: $identity_manifest"
+	[ "$(jsonfilter -i "$manifest" -e '@.actions[2].class')" = 'DISRUPTIVE' ] || fail "device-changing placeholder lost its risk class: $identity_manifest"
+	[ "$(jsonfilter -i "$manifest" -e '@.actions[2].enabled')" = 'false' ] || fail "device-changing placeholder was unexpectedly enabled: $identity_manifest"
+done
+
+identity_fixture="$(mktemp -d /tmp/ddk-usb-identity-test.XXXXXX)"
+fixture="$identity_fixture/fixture"
+mkdir -p "$fixture/7-1" "$fixture/7-1:1.0" "$fixture/7-2" "$fixture/7-3" "$fixture/7-4" "$fixture/7-5"
+printf %s 18d1 > "$fixture/7-1/idVendor"
+printf %s 4ee7 > "$fixture/7-1/idProduct"
+printf %s Google > "$fixture/7-1/manufacturer"
+printf %s 'Pixel 9' > "$fixture/7-1/product"
+printf %s 'Customer-Android-123' > "$fixture/7-1/serial"
+printf %s 480 > "$fixture/7-1/speed"
+printf %s ff > "$fixture/7-1:1.0/bInterfaceClass"
+printf %s 42 > "$fixture/7-1:1.0/bInterfaceSubClass"
+printf %s 01 > "$fixture/7-1:1.0/bInterfaceProtocol"
+printf %s 00 > "$fixture/7-1:1.0/bInterfaceNumber"
+printf %s 05ac > "$fixture/7-2/idVendor"
+printf %s 12a8 > "$fixture/7-2/idProduct"
+printf %s 'Apple Inc.' > "$fixture/7-2/manufacturer"
+printf %s 'Apple Mobile Device (Recovery Mode)' > "$fixture/7-2/product"
+printf %s '00008020-PRIVATE' > "$fixture/7-2/serial"
+printf %s 1366 > "$fixture/7-3/idVendor"
+printf %s 0105 > "$fixture/7-3/idProduct"
+printf %s SEGGER > "$fixture/7-3/manufacturer"
+printf %s 'J-Link' > "$fixture/7-3/product"
+printf %s 'PROBE-123' > "$fixture/7-3/serial"
+printf %s 05ac > "$fixture/7-4/idVendor"
+printf %s 8290 > "$fixture/7-4/idProduct"
+printf %s 'Apple Inc.' > "$fixture/7-4/manufacturer"
+printf %s 'Bluetooth Host Controller' > "$fixture/7-4/product"
+printf %s 0403 > "$fixture/7-5/idVendor"
+printf %s 6001 > "$fixture/7-5/idProduct"
+printf %s FTDI > "$fixture/7-5/manufacturer"
+printf %s 'FT232R USB UART' > "$fixture/7-5/product"
+DDK_FIXTURE="$fixture" lua - <<'LUA'
+local identity = dofile("/usr/share/ddk-field-console/usb-identity.lua")
+local result = identity.scan(os.getenv("DDK_FIXTURE"))
+assert(#result.android == 1, "Android fixture count")
+assert(result.android[1].identity == "ADB USB INTERFACE", "Android fixture mode")
+assert(#result.apple_mobile == 1, "Apple fixture count")
+assert(result.apple_mobile[1].identity == "RECOVERY MODE DESCRIPTOR", "Apple fixture mode")
+assert(#result.programmer == 1, "programmer fixture count")
+assert(result.programmer[1].identity == "SEGGER J-Link", "programmer fixture identity")
+assert(result.inspected_count == 5, "fixture inspection count")
+LUA
+cleanup_identity_fixture
+pass 'positive USB identity fixtures and conservative false-positive rejection'
+
+identity_jobs_before="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
+identity_processes_before="$(pidof adb usbmuxd idevice_id ideviceinfo idevicepair irecovery idevicerestore openocd avrdude dfu-util dfu-programmer flashrom stm32flash bossac lpc21isp ftdi_eeprom 2>/dev/null || true)"
+identity_listeners_before="$(netstat -lntup 2>/dev/null | grep -E ':(5037|27015)[[:space:]]' || true)"
+for identity_action in android.identify apple.identify firmware.identify; do
+	payload="$(/usr/libexec/ddk-console info "$identity_action")"
+	printf '%s' "$payload" | json_ok || fail "private identity action failed: $identity_action"
+	output="$(printf '%s' "$payload" | jsonfilter -e '@.data.output')"
+	printf '%s' "$output" | grep -Fq 'Policy: sysfs metadata only' || fail "sysfs-only declaration is missing: $identity_action"
+	printf '%s' "$output" | grep -Fq 'not written to jobs, reports, logs, or persistent storage' || fail "private-retention declaration is missing: $identity_action"
+	printf '%s' "$output" | grep -Fq 'Output lifetime: browser memory only' || fail "browser-memory lifetime is missing: $identity_action"
+done
+for guide_action in android.operator_guide apple.operator_guide firmware.operator_guide; do
+	payload="$(/usr/libexec/ddk-console info "$guide_action")"
+	printf '%s' "$payload" | json_ok || fail "full CLI handoff failed: $guide_action"
+	output="$(printf '%s' "$payload" | jsonfilter -e '@.data.output')"
+	printf '%s' "$output" | grep -Fq 'The installed CLI tools retain their full native functionality' || fail "full CLI assurance is missing: $guide_action"
+	printf '%s' "$output" | grep -Fq 'The browser does not execute any displayed command' || fail "non-execution declaration is missing: $guide_action"
+	printf '%s' "$output" | grep -Fq 'No command above was run by this request.' || fail "handoff completion declaration is missing: $guide_action"
+done
+identity_jobs_after="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
+[ "$identity_jobs_before" = "$identity_jobs_after" ] || fail 'an immediate identity/guide action created a DDK job'
+[ "$identity_processes_before" = "$(pidof adb usbmuxd idevice_id ideviceinfo idevicepair irecovery idevicerestore openocd avrdude dfu-util dfu-programmer flashrom stm32flash bossac lpc21isp ftdi_eeprom 2>/dev/null || true)" ] || fail 'identity actions changed a mobile/programmer process state'
+[ "$identity_listeners_before" = "$(netstat -lntup 2>/dev/null | grep -E ':(5037|27015)[[:space:]]' || true)" ] || fail 'identity actions changed an ADB/mobile listener state'
+pass 'private transient identity and full native-CLI handoff actions'
+
 injection_marker=/tmp/ddk-injection-marker
 rm -f "$injection_marker"
 if /usr/libexec/ddk-console info 'network.interfaces;touch /tmp/ddk-injection-marker' 2>/dev/null | json_ok; then
 	fail 'malicious action ID was accepted'
+fi
+if /usr/libexec/ddk-console info 'android.identify;touch /tmp/ddk-injection-marker' 2>/dev/null | json_ok; then
+	fail 'malicious private identity action ID was accepted'
+fi
+if /usr/libexec/ddk-console info android.identify unexpected 2>/dev/null | json_ok; then
+	fail 'an extra private identity argument was accepted'
 fi
 [ ! -e "$injection_marker" ] || fail 'browser action reached a shell'
 if /usr/libexec/ddk-console job stop 1 2>/dev/null | json_ok; then fail 'generic PID stop was accepted'; fi
@@ -616,7 +717,7 @@ done
 report_view="$(/usr/libexec/ddk-console report view "$report_id")"
 printf '%s' "$report_view" | json_ok || fail 'authenticated report view failed'
 report_content="$(printf '%s' "$report_view" | jsonfilter -e '@.data.content')"
-if printf '%s' "$report_content" | grep -Eq 'Latitude:|Longitude:|gnss\.raw|gnss\.decoded'; then fail 'system report contains prohibited precise-location data'; fi
+if printf '%s' "$report_content" | grep -Eq 'Latitude:|Longitude:|gnss\.raw|gnss\.decoded|Serial identifier:|ANDROID USB IDENTITY|APPLE MOBILE USB IDENTITY|FIRMWARE PROGRAMMER USB IDENTITY'; then fail 'system report contains prohibited precise-location or customer-device identity data'; fi
 pass 'sanitized system report generation and view'
 
 root_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1/ || true)"
@@ -654,7 +755,7 @@ if netstat -lntup 2>/dev/null | grep -q 'ddk'; then fail 'a DDK listener exists'
 # BusyBox on this target has no standalone pgrep.
 # shellcheck disable=SC2009
 if ps w | grep '[d]dk-job-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
-if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver gpsd gpsdecode candump cansend cangen canplayer >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
+if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver gpsd gpsdecode candump cansend cangen canplayer adb usbmuxd idevice_id ideviceinfo idevicepair irecovery idevicerestore openocd avrdude dfu-util dfu-programmer flashrom stm32flash bossac lpc21isp ftdi_eeprom >/dev/null 2>&1; then fail 'a bounded-operation or device-management client is unexpectedly active'; fi
 pass 'no DDK listener or idle operation worker exists'
 
 available_kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"

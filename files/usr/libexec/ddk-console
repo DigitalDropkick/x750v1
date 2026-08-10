@@ -6,6 +6,7 @@
 local fs = require "nixio.fs"
 local json = require "luci.jsonc"
 local nixio = require "nixio"
+local usb_identity = dofile("/usr/share/ddk-field-console/usb-identity.lua")
 
 local TOOL_ROOT = "/usr/share/ddk-field-console/tools"
 local JOB_ROOT = "/tmp/ddk/jobs"
@@ -17,6 +18,7 @@ local MAX_ACTIVE_JOBS = 2
 local MAX_RETAINED_JOBS = 20
 local JOB_MAX_AGE = 4 * 60 * 60
 local REPORT_MAX_AGE = 24 * 60 * 60
+local USB_SYSFS_ROOT = "/sys/bus/usb/devices"
 
 local function trim(value)
 	return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
@@ -537,6 +539,164 @@ local function can_probe()
 	return probe
 end
 
+local identity_cache
+
+local function identity_inventory()
+	if not identity_cache then identity_cache = usb_identity.scan(USB_SYSFS_ROOT) end
+	return identity_cache
+end
+
+local identity_labels = {
+	android = "ANDROID USB IDENTITY",
+	apple_mobile = "APPLE MOBILE USB IDENTITY",
+	programmer = "FIRMWARE PROGRAMMER USB IDENTITY"
+}
+
+local identity_nouns = {
+	android = "reviewed Android device",
+	apple_mobile = "reviewed Apple mobile device",
+	programmer = "reviewed firmware programmer"
+}
+
+local function identity_probe(kind)
+	local devices = identity_inventory()[kind] or {}
+	local noun = identity_nouns[kind] or "reviewed device"
+	local count = #devices
+	return {
+		hardware_present = count > 0,
+		count = count,
+		action_ready = true,
+		reason = count > 0 and string.format("READY - %d %s%s DETECTED", count, noun:upper(), count == 1 and "" or "S") or
+			("READY / NO DEVICE - NO " .. noun:upper() .. " DETECTED")
+	}
+end
+
+local function identity_snapshot_text(kind)
+	local inventory = identity_inventory()
+	local devices = inventory[kind] or {}
+	local label = identity_labels[kind] or "USB IDENTITY"
+	local lines = {
+		"DIGITAL DROPKICK — " .. label .. " SNAPSHOT",
+		"Policy: sysfs metadata only; no device node, daemon, repair utility, recovery utility, debugger, or programmer was opened or started.",
+		"Privacy: USB serial identifiers are shown only in this authenticated response and are not written to jobs, reports, logs, or persistent storage.",
+		""
+	}
+
+	if #devices == 0 then
+		lines[#lines + 1] = "No matching reviewed USB identity is currently detected."
+	else
+		local displayed = math.min(#devices, 8)
+		for index = 1, displayed do
+			local device = devices[index]
+			lines[#lines + 1] = string.format("DEVICE %d", index)
+			lines[#lines + 1] = "  Classification: " .. (device.identity or "REVIEWED USB IDENTITY")
+			lines[#lines + 1] = "  USB: " .. device.usb_id
+			lines[#lines + 1] = "  Manufacturer: " .. (device.manufacturer ~= "" and device.manufacturer or "UNAVAILABLE")
+			lines[#lines + 1] = "  Product: " .. (device.product ~= "" and device.product or "UNAVAILABLE")
+			lines[#lines + 1] = "  Serial identifier: " .. (device.serial ~= "" and device.serial or "UNAVAILABLE")
+			lines[#lines + 1] = "  USB topology: " .. (device.topology ~= "" and device.topology or "UNAVAILABLE")
+			lines[#lines + 1] = "  Link speed: " .. (device.speed ~= "" and device.speed .. " Mb/s" or "UNAVAILABLE")
+			if #device.interfaces == 0 then
+				lines[#lines + 1] = "  Interfaces: metadata unavailable"
+			else
+				for _, interface in ipairs(device.interfaces) do
+					lines[#lines + 1] = string.format(
+						"  Interface %s: %s; driver %s",
+						interface.number ~= "" and interface.number or "?",
+						interface.signature,
+						interface.driver ~= "" and interface.driver or "unclaimed"
+					)
+				end
+			end
+			lines[#lines + 1] = ""
+		end
+		if #devices > displayed then
+			lines[#lines + 1] = string.format("%d additional matching identities omitted by the eight-device display limit.", #devices - displayed)
+		end
+	end
+
+	lines[#lines + 1] = string.format("Summary: %d matching device(s); %d USB device(s) inspected.", #devices, inventory.inspected_count or 0)
+	lines[#lines + 1] = "Output lifetime: browser memory only; refresh or leave this page to discard it."
+	return table.concat(lines, "\n") .. "\n"
+end
+
+local operator_guides = {
+	android = {
+		title = "ANDROID / ADB FULL CLI HANDOFF",
+		binaries = { "adb", "fastboot" },
+		lines = {
+			"Connect: ssh root@192.168.8.1",
+			"Discovery: adb devices -l",
+			"Interactive device shell: adb shell",
+			"Copy from device: adb pull REMOTE_PATH LOCAL_PATH",
+			"Copy to device: adb push LOCAL_PATH REMOTE_PATH",
+			"Install an APK: adb install LOCAL_APK",
+			"Bootloader transition: adb reboot bootloader",
+			"Recovery sideload: adb sideload UPDATE_ZIP",
+			"Full command reference: adb help",
+			"Cleanup after use: adb kill-server"
+		},
+		warning = "ADB may start its local server and can change customer-device data. Confirm authorization, unlock/trust state, backups, and the exact target before any shell, push, install, reboot, or sideload operation."
+	},
+	apple_mobile = {
+		title = "APPLE MOBILE FULL CLI HANDOFF",
+		binaries = { "idevice_id", "ideviceinfo", "idevicepair", "irecovery", "idevicerestore", "usbmuxd" },
+		lines = {
+			"Connect: ssh root@192.168.8.1",
+			"Normal-mode inventory: idevice_id -l",
+			"Normal-mode details: ideviceinfo -u DEVICE_UDID",
+			"Pairing status: idevicepair -u DEVICE_UDID validate",
+			"Pair after customer trust consent: idevicepair -u DEVICE_UDID pair",
+			"Recovery/DFU query: irecovery -q",
+			"Recovery command reference: irecovery --help",
+			"Restore command reference: idevicerestore --help",
+			"usbmuxd foreground diagnostics: usbmuxd -f -v"
+		},
+		warning = "Pairing records and device identifiers are private. Recovery and restore commands can reboot or erase a customer device; verify mode, model, signed firmware, backup state, power, and written authorization first."
+	},
+	programmer = {
+		title = "FIRMWARE / EMBEDDED FULL CLI HANDOFF",
+		binaries = { "flashrom", "openocd", "avrdude", "dfu-util", "dfu-programmer", "stm32flash", "bossac", "lpc21isp", "ftdi_eeprom" },
+		lines = {
+			"Connect: ssh root@192.168.8.1",
+			"OpenOCD reference: openocd --help",
+			"AVRDUDE reference: avrdude -?",
+			"USB DFU inventory: dfu-util -l",
+			"DFU utility reference: dfu-util --help",
+			"DFU programmer reference: dfu-programmer --help",
+			"STM32 UART reference: stm32flash -h",
+			"BOSSA reference: bossac --help",
+			"LPC ISP reference: lpc21isp",
+			"FTDI EEPROM reference: ftdi_eeprom --help"
+		},
+		warning = "Before target access, document voltage, target power ownership, cable/pinout, part number, interface, reset/boot straps, flash geometry, image source and hash, verified backup/readback plan, and recovery path. Read, erase, write, fuse, lock, debug, and reset operations are intentionally operator-controlled over SSH."
+	}
+}
+
+local function operator_guide_text(kind)
+	local guide = operator_guides[kind]
+	if not guide then return "Unknown operator guide.\n" end
+	local lines = {
+		"DIGITAL DROPKICK — " .. guide.title,
+		"Policy: these are copyable operator references only. The browser does not execute any displayed command.",
+		"The installed CLI tools retain their full native functionality when you invoke them through SSH.",
+		"",
+		"[EXECUTABLE READINESS]"
+	}
+	for _, binary in ipairs(guide.binaries) do
+		lines[#lines + 1] = string.format("  %-18s %s", binary, binary_exists(binary) and "INSTALLED" or "UNAVAILABLE")
+	end
+	lines[#lines + 1] = ""
+	lines[#lines + 1] = "[SSH WORKFLOW REFERENCE]"
+	for _, line in ipairs(guide.lines) do lines[#lines + 1] = "  " .. line end
+	lines[#lines + 1] = ""
+	lines[#lines + 1] = "[OPERATOR WARNING]"
+	lines[#lines + 1] = "  " .. guide.warning
+	lines[#lines + 1] = ""
+	lines[#lines + 1] = "No command above was run by this request."
+	return table.concat(lines, "\n") .. "\n"
+end
+
 local function serial_attribution()
 	local nodes = list_device_nodes("^ttyUSB%d+$")
 	for _, node in ipairs(list_device_nodes("^ttyACM%d+$")) do
@@ -651,6 +811,9 @@ local function hardware_snapshot()
 	local camera = camera_probe()
 	local gps = gps_probe()
 	local can = can_probe()
+	local android = identity_probe("android")
+	local apple_mobile = identity_probe("apple_mobile")
+	local programmer = identity_probe("programmer")
 	local serial, serial_summary = serial_attribution()
 	local serial_nodes = {}
 	for _, device in ipairs(serial) do serial_nodes[#serial_nodes + 1] = device.node end
@@ -672,10 +835,10 @@ local function hardware_snapshot()
 		i2c = #i2c > 0,
 		spi = #spi > 0,
 		gps = gps.hardware_present,
-		android = usb_text:match("android") ~= nil or usb_text:match("google") ~= nil or usb_text:match("samsung") ~= nil,
-		apple_mobile = usb_text:match("05ac:") ~= nil or usb_text:match("apple") ~= nil,
+		android = android.hardware_present,
+		apple_mobile = apple_mobile.hardware_present,
 		smartcard = usb_text:match("smart card") ~= nil or usb_text:match("yubico") ~= nil or usb_text:match("yubikey") ~= nil or usb_text:match("ccid") ~= nil,
-		programmer = usb_text:match("j%-link") ~= nil or usb_text:match("cmsis") ~= nil or usb_text:match("ftdi") ~= nil or usb_text:match("stmicro") ~= nil or usb_text:match("atmel") ~= nil,
+		programmer = programmer.hardware_present,
 		usb_storage = fs.stat("/sys/block/sda") ~= nil
 	}
 
@@ -688,6 +851,11 @@ local function hardware_snapshot()
 		camera = camera,
 		gps = gps,
 		can = can,
+		identity = {
+			android = android,
+			apple_mobile = apple_mobile,
+			programmer = programmer
+		},
 		can_interfaces = can_interfaces,
 		i2c_devices = i2c,
 		spi_devices = spi,
@@ -862,6 +1030,15 @@ local function load_capabilities()
 				action_ready = hardware.can.ready
 				readiness_reason = hardware.can.reason
 				if software_installed and #missing_hardware == 0 and not action_ready then state = "NOT CONFIGURED" end
+			elseif manifest.id == "android-repair" and manifest.enabled == true then
+				action_ready = hardware.identity.android.action_ready
+				readiness_reason = hardware.identity.android.reason
+			elseif manifest.id == "apple-repair" and manifest.enabled == true then
+				action_ready = hardware.identity.apple_mobile.action_ready
+				readiness_reason = hardware.identity.apple_mobile.reason
+			elseif manifest.id == "firmware-programming" and manifest.enabled == true then
+				action_ready = hardware.identity.programmer.action_ready
+				readiness_reason = hardware.identity.programmer.reason
 			end
 			modules[#modules + 1] = {
 				id = manifest.id,
@@ -903,6 +1080,12 @@ local info_actions = {
 	["hardware.usb"] = { label = "USB Devices", command = "lsusb" },
 	["hardware.serial"] = { label = "Serial Device Attribution", render = serial_attribution_text },
 	["serial.inspect"] = { label = "Serial Device Attribution", render = serial_attribution_text },
+	["android.identify"] = { label = "Android USB Identity", render = function() return identity_snapshot_text("android") end },
+	["android.operator_guide"] = { label = "Android Full CLI Handoff", render = function() return operator_guide_text("android") end },
+	["apple.identify"] = { label = "Apple Mobile USB Identity", render = function() return identity_snapshot_text("apple_mobile") end },
+	["apple.operator_guide"] = { label = "Apple Mobile Full CLI Handoff", render = function() return operator_guide_text("apple_mobile") end },
+	["firmware.identify"] = { label = "Firmware Programmer USB Identity", render = function() return identity_snapshot_text("programmer") end },
+	["firmware.operator_guide"] = { label = "Firmware Programmer Full CLI Handoff", render = function() return operator_guide_text("programmer") end },
 	["remote.tailscale"] = { label = "Tailscale Status", command = "tailscale version; tailscale ip -4; pidof tailscaled >/dev/null && echo 'tailscaled: running' || echo 'tailscaled: not running'" },
 	["storage.mounts"] = { label = "Storage and Mounts", command = "df -hT; printf '\\nMounts:\\n'; mount" },
 	["system.memory"] = { label = "Memory and Swap", command = "free; printf '\\n/proc/swaps:\\n'; cat /proc/swaps" },

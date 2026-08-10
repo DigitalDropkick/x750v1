@@ -109,6 +109,7 @@ printf '%s  %s\n' \
 	sha256sum -c - >/dev/null || fail 'protected configuration drifted since discovery'
 
 DDK_LUA_FILE="$source_root/usr/libexec/ddk-console" lua -e 'assert(loadfile(os.getenv("DDK_LUA_FILE")))'
+DDK_IDENTITY_FILE="$source_root/usr/share/ddk-field-console/usb-identity.lua" lua -e 'assert(loadfile(os.getenv("DDK_IDENTITY_FILE")))'
 DDK_TEMPLATE_FILE="$source_root/usr/lib/lua/luci/view/ddk/shell.htm" lua -e 'local parser = require "luci.template.parser"; assert(parser.parse(os.getenv("DDK_TEMPLATE_FILE")))'
 sh -n "$source_root/usr/libexec/ddk-job-worker"
 
