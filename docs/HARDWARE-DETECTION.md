@@ -17,10 +17,10 @@ Hardware probes are read-only, on-demand, and conservative. They never start a d
 | I2C | Existing `/dev/i2c-*` nodes. |
 | SPI | Existing `/dev/spidev*` nodes. |
 | GPS/GNSS | Exactly one USB device has a GNSS-identifying descriptor or reviewed u-blox vendor ID `1546`, exactly one attributed `ttyUSB`/`ttyACM` node uses a reviewed USB-serial driver, and that node is not open. EC25-AF `2c7c:0125` functions are always excluded. |
-| Android | USB descriptor contains Android, Google, or Samsung. |
-| Apple mobile | USB descriptor contains Apple or vendor ID `05ac`. |
+| Android | A reviewed mobile vendor plus ADB `ff:42:01`, fastboot `ff:42:03`, MTP `06:01:01`, or a mobile descriptor. |
+| Apple mobile | Vendor `05ac` plus an iPhone, iPad, iPod, Apple Mobile Device, recovery, or DFU descriptor. |
 | Smart card/token | USB descriptor contains smart-card, CCID, Yubico, or YubiKey indicators. |
-| Programmer/debugger | USB descriptor contains known J-Link, CMSIS-DAP, FTDI, STMicroelectronics, or Atmel indicators. |
+| Programmer/debugger | Conservative exact VID:PID and descriptor table for reviewed J-Link, ST-LINK, CMSIS-DAP/DAPLink, Atmel/Microchip, Olimex, USB-Blaster, Bus Pirate, Black Magic, and Debug Probe identities. |
 | USB storage | `/sys/block/sda` exists. |
 
 ## Important limitations
@@ -34,7 +34,10 @@ Hardware probes are read-only, on-demand, and conservative. They never start a d
 - Hardware presence is not service health. The console does not start gpsd, Bluetooth, camera, SDR, CAN, or serial services to improve a status color.
 - CAN detection rejects `vcanN`, `slcanN`, renamed/multiple/down interfaces, and missing `candump`. It never raises or configures an interface to improve readiness.
 - Installed kernel support is not equivalent to attached hardware.
-- Android detection does not run `adb devices`, because doing so may start the ADB server.
+- Android detection does not run `adb devices`, because doing so may start the ADB server. A vendor match alone is insufficient.
+- Apple detection does not start `usbmuxd`, create a pairing record, or invoke normal/recovery/restore clients. Vendor `05ac` alone is insufficient.
+- Programmer detection does not open a USB node or invoke any debugger/programmer. Generic FTDI and USB-serial devices are rejected unless a reviewed descriptor identifies a programmer role.
+- Identity output is sanitized and bounded; USB serials appear only in the explicitly confirmed authenticated response, not status, reports, jobs, logs, or persistent storage. See [DEVICE-IDENTITY.md](DEVICE-IDENTITY.md).
 - GPS detection does not infer GNSS from an arbitrary serial port. Multiple receivers/nodes, a busy node, an unreviewed driver, or the EC25-AF fail closed. The snapshot does not start `gpsd` or reconfigure the port.
 - Cellular capability presence alone cannot authorize a query; the snapshot independently validates the exact EC25-AF management topology before opening the device.
 

@@ -1,6 +1,6 @@
-# Next Modules
+# Release Modules and Future Hardware Acceptance
 
-Two reviewed SECURITY modules, one hardware-gated ACTION module, and the cellular INFO snapshot are now wired. The remaining order balances field value, implementation risk, and the GL-X750's resource constraints.
+Version 2.0 completes the planned base console, bounded field operations, private mobile/programmer identity, and full native-CLI operator handoff. Remaining work is hardware-specific acceptance or a separately scoped purpose-built workflow, not an unfinished base phase.
 
 ## Release phases
 
@@ -82,10 +82,18 @@ The no-device acceptance gate passed as part of the v1.9 Burn One suite: backend
 
 The no-device/missing-runtime acceptance gate passed as part of the v1.9 Burn One suite: both conditions were visible through the API/UI, backend refusal created no job, the worker independently rejected before any utility launch, no frame file/process remained, and listener/network state stayed unchanged.
 
-## 4. Android and Apple identification
+## 4. Android and Apple identification (implemented in 2.0.0)
 
-Add device-presence and identity operations before any shell, recovery, restore, or filesystem action. Treat customer device identifiers as private and transient.
+`android.identify` and `apple.identify` read bounded sanitized sysfs only. Customer USB serial identifiers exist only in the confirmed authenticated response; status, jobs, reports, logs, and persistent storage receive none. Positive synthetic ADB and Apple recovery fixtures plus negative Apple Bluetooth/generic FTDI fixtures prove the conservative classifier. `android.operator_guide` and `apple.operator_guide` preserve complete native CLI access through SSH without making the browser a shell.
 
-## 5. Firmware-programmer identification
+## 5. Firmware-programmer identification (implemented in 2.0.0)
 
-Identify attached programmers without writing. Per-tool flash/read/erase workflows require separate manifests, confirmation, device targeting, power/voltage guidance, image hashing, and recovery procedures.
+`firmware.identify` identifies reviewed programmers without opening them or invoking a tool. `firmware.operator_guide` reports executable readiness and hands full use to SSH with voltage, targeting, backup, hashing, verification, and recovery guidance. Browser-based read/write/erase/debug remains disabled. Any future one-click operation still requires its own manifest, exact target selection, power model, image validation, rollback, and hardware acceptance.
+
+## Recommended next work
+
+1. Attach an approved Android device and verify normal/ADB/fastboot descriptor behavior without customer data retention.
+2. Attach approved Apple normal/recovery/DFU examples and verify classification.
+3. Attach one known programmer family at a time and extend the conservative table only when evidence requires it.
+4. Repair the missing `candump` and `flashrom` executable payloads only under a separate package-change approval.
+5. Promote recurring SSH procedures into GUI actions only after their exact device, inputs, failure modes, and recovery path are fixed.

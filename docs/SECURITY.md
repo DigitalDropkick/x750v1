@@ -24,6 +24,7 @@ The browser cannot submit:
 - an action output path;
 - a generic PID;
 - a report filesystem path.
+- an Android/Apple/programmer device, serial, USB path, tool, option, image, script, or SSH command.
 
 The backend's `capture()` receives only source-code constants. A request value selects a table record but is never concatenated into a command. Serial, radio, camera, and GNSS attribution read fixed procfs/sysfs locations. Camera artifact download is separate from execution: the client accepts only a generated job ID, derives one fixed path, and native `cgi-download` independently enforces the exact rpcd file ACL.
 
@@ -40,7 +41,9 @@ The current release accepts:
 - job IDs matching `job-<digits>-<digits>`;
 - report IDs matching `report-<digits>-<digits>`.
 
-There are no browser-provided network targets, interfaces, filters, action-output filenames, device nodes, PIDs, package names, durations, camera/radio/GNSS/CAN parameters, output protocols, or flags. For `network.nmap_lan_discovery`, the worker independently requires the native LAN device to equal `br-lan`, reads its IPv4 CIDR from the kernel, validates RFC1918 scope and a `/24`-or-smaller prefix, and then invokes one fixed host-discovery profile. For `capture.lan_metadata_snapshot`, the worker independently requires an up native LAN on exactly `br-lan` and invokes one fixed non-promiscuous ARP/ICMP/DHCP metadata profile. For `radio.rtl433_snapshot`, the backend and worker require one exact reviewed tuner and a safe sysfs serial; frequency, sample rate, gain, decoders, configuration, duration, and output are fixed. For `camera.still_snapshot`, both layers require one sysfs-attributed UVC camera and primary node; resolution, frame count, warm-up, quality, banner, duration, artifact name, and destination are fixed. For `gps.snapshot`, both layers require one external USB GNSS identity and one exclusive reviewed serial node; the EC25-AF is excluded, while duration, byte ceiling, decoder, fields, and scratch paths are fixed. For `can.capture`, both layers require one already-up physical `canN` and `candump`; interface, count, timeouts, formatting, and output paths are fixed. For `cellular.snapshot`, the worker requires the exact EC25-AF VID:PID, `qmi_wwan`, `/dev/cdc-wdm0`, and its attributed `wwan0`; browser input cannot select a modem or QMI action.
+There are no browser-provided network targets, interfaces, filters, action-output filenames, device nodes, PIDs, package names, durations, camera/radio/GNSS/CAN parameters, mobile/programmer identifiers, tool arguments, output protocols, or flags. For `network.nmap_lan_discovery`, the worker independently requires the native LAN device to equal `br-lan`, reads its IPv4 CIDR from the kernel, validates RFC1918 scope and a `/24`-or-smaller prefix, and then invokes one fixed host-discovery profile. For `capture.lan_metadata_snapshot`, the worker independently requires an up native LAN on exactly `br-lan` and invokes one fixed non-promiscuous ARP/ICMP/DHCP metadata profile. For `radio.rtl433_snapshot`, the backend and worker require one exact reviewed tuner and a safe sysfs serial; frequency, sample rate, gain, decoders, configuration, duration, and output are fixed. For `camera.still_snapshot`, both layers require one sysfs-attributed UVC camera and primary node; resolution, frame count, warm-up, quality, banner, duration, artifact name, and destination are fixed. For `gps.snapshot`, both layers require one external USB GNSS identity and one exclusive reviewed serial node; the EC25-AF is excluded, while duration, byte ceiling, decoder, fields, and scratch paths are fixed. For `can.capture`, both layers require one already-up physical `canN` and `candump`; interface, count, timeouts, formatting, and output paths are fixed. For `cellular.snapshot`, the worker requires the exact EC25-AF VID:PID, `qmi_wwan`, `/dev/cdc-wdm0`, and its attributed `wwan0`; browser input cannot select a modem or QMI action.
+
+For `android.identify`, `apple.identify`, and `firmware.identify`, the backend passes one source-code identity kind to a bounded Lua classifier whose sysfs root is also a source-code constant. The browser supplies neither. The matching `*.operator_guide` responses are server-side constant text plus live executable-presence booleans; displaying a command cannot execute it.
 
 ## Job controls
 
@@ -66,6 +69,16 @@ There are no browser-provided network targets, interfaces, filters, action-outpu
 - The GPS/GNSS worker tracks its byte-read and decoder children, applies 15-second/32-KiB raw and 32-KiB final limits, and deletes raw/decoded scratch files on completion, failure, or stop.
 - The CAN worker tracks its direct `candump` child, applies 128-frame/20-second capture limits, a 25-second independent wall limit, 56-KiB child and 64-KiB final limits, and verifies interface flags remain unchanged.
 - Each cellular query has a five-second client timeout, a seven-second worker wall limit, and direct-child cancellation.
+
+Mobile/programmer identity and operator-guide calls are deliberately not jobs: they run no external device tool, create no `/tmp/ddk` directory, and persist no output.
+
+## Mobile device and programmer privacy boundary
+
+USB serial identifiers, descriptors, interface signatures, and physical topology may identify customer equipment. Identity actions therefore require explicit UI confirmation. Every displayed field is sanitized and length-bounded. Full identity records exist only in the authenticated response and browser DOM; status/capability APIs expose counts and reasons only.
+
+The DDK backend and worker contain no ADB, fastboot, usbmuxd, libimobiledevice, recovery, restore, debugger, DFU, or programmer execution path. The operator-guide actions make full native functionality discoverable through SSH without accepting or executing browser text. Direct SSH use remains operator-controlled and unmodified.
+
+The installed ADB documents `-a` as listening on all interfaces. DDK neither invokes nor recommends that flag. Full CLI handoff documentation requires local-server cleanup and preserves the appliance no-WAN-exposure policy. See [DEVICE-IDENTITY.md](DEVICE-IDENTITY.md) and [SSH-TOOL-HANDOFFS.md](SSH-TOOL-HANDOFFS.md).
 
 ## Packet-capture privacy boundary
 
@@ -113,7 +126,7 @@ The system report intentionally excludes:
 - Tailscale peer lists;
 - application logs and customer payloads.
 
-It includes read-only system identity, resource state, interface/address/route information, Tailscale self version/IP, USB/device presence, package names, and hashes—not contents—of protected configuration files. It does not include GPS/GNSS coordinates or raw receiver data.
+It includes read-only system identity, resource state, interface/address/route information, Tailscale self version/IP, USB/device presence, package names, and hashes—not contents—of protected configuration files. It does not include GPS/GNSS coordinates, raw receiver data, Android/Apple/programmer USB serials, identity snapshot fields, or operator-guide content.
 
 Reports live outside `/www` under mode-restricted `/tmp/ddk/reports/`. Authenticated helper calls return report content for view/download.
 
@@ -137,6 +150,6 @@ Local validation checks enabled-action consistency and forbidden mutation patter
 - a generic numeric PID stop;
 - report path traversal.
 
-The production suite also attempts malformed operation IDs and extra browser-supplied interface/device/parameter values, proves singleton enforcement and DDK-owned cancellation where hardware is available, checks `br-lan` flags before/during/after, compiles the fixed BPF expression, enforces output ceilings, rejects PCAP/failed-camera artifacts, and requires no bounded-operation process to remain. Authenticated browser verification downloads an allowlisted transient artifact and proves an outside path is denied.
+The production suite also attempts malformed operation IDs and extra browser-supplied interface/device/parameter values, proves singleton enforcement and DDK-owned cancellation where hardware is available, checks `br-lan` flags before/during/after, compiles the fixed BPF expression, enforces output ceilings, rejects PCAP/failed-camera artifacts, and requires no bounded-operation process to remain. Version 2 adds positive and negative identity fixtures, no-job/no-process/no-listener proofs, report exclusion, and full-CLI-text/non-execution assertions. Authenticated browser verification downloads an allowlisted transient artifact and proves an outside path is denied.
 
 It requires rejection and confirms the injection marker was not created.

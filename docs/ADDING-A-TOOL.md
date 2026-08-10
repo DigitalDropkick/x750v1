@@ -2,6 +2,8 @@
 
 Tool modules are data, not executable plugins. One JSON file adds a card and detection metadata; execution remains impossible until the backend separately implements and allowlists an action ID.
 
+Version 2 also demonstrates an immediate rendered INFO action: `android.identify` selects one fixed Lua renderer and `android.operator_guide` selects fixed reference text. Neither action contains a command in its manifest. A full CLI handoff is documentation, not permission to execute the displayed text.
+
 ## 1. Create one manifest
 
 Add a lowercase file below:
@@ -36,6 +38,8 @@ The shipped Nmap entry is the concrete reviewed example. Its relevant fields in 
 ```
 
 That manifest is only one gate. The action runs because the same exact ID is also implemented in the backend `job_actions` table, mapped to the fixed `nmap_lan_discovery` worker task, included in `scripts/enabled-security-actions.txt`, and rendered with a dedicated confirmation path. Copying a manifest alone cannot create executable behavior.
+
+For an immediate INFO renderer, the exact ID instead appears in the backend `info_actions` table. The renderer may accept no browser parameters and must return bounded sanitized text. If it exposes a private identifier, add explicit UI confirmation and prove the field is absent from jobs, reports, logs, and persistent storage.
 
 ## Manifest fields
 

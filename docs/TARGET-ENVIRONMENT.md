@@ -151,6 +151,17 @@ Relevant confirmed paths:
 - No `/sys/class/net` entry reported ARPHRD_CAN type `280`, and `ip -o link show type can` returned no interface.
 - The package database and installed system therefore cannot perform a `candump` capture today. Burn One must report that exact incomplete software/runtime state and must not install, replace, or force a package merely to enable the control.
 
+## Android, Apple, and firmware-tool capability
+
+- `adb` 1.0.32 is installed at `/usr/bin/adb`. `fastboot` is unavailable.
+- `idevice_id`, `ideviceinfo`, and `idevicepair` are installed at `/usr/bin`; `irecovery` and `idevicerestore` are installed; `usbmuxd` exists at `/usr/sbin/usbmuxd`.
+- `openocd`, `avrdude`, `dfu-util`, `dfu-programmer`, `stm32flash`, `bossac`, `lpc21isp`, and `ftdi_eeprom` are executable in the standard paths.
+- The `flashrom-usb` package record exists, but `flashrom` is unavailable in the executable paths. The console reports that state and does not install a substitute.
+- The exact installed help output was inspected for ADB, idevicepair, irecovery, idevicerestore, OpenOCD, AVRDUDE, both DFU tools, STM32Flash, BOSSA, and FTDI EEPROM. Help-only inspection left all related process and listener state unchanged.
+- No reviewed Android, Apple mobile, or firmware-programmer USB identity was attached. The live topology remained the Quectel modem, USB storage, hub, and USB/IP virtual host controllers.
+- Synthetic fixtures on the router's actual Lua 5.1/nixio stack accepted Android ADB `18d1:4ee7`, Apple recovery `05ac:12a8`, and SEGGER `1366:0105` identities while rejecting Apple Bluetooth `05ac:8290` and generic FTDI `0403:6001` examples.
+- A staged v2 backend against live sysfs completed all six new INFO actions with zero DDK jobs, device-tool processes, or ADB/mobile listener changes. Production v1.9 files remained untouched during that pre-deployment proof.
+
 ## Network and remote-access baseline
 
 - LAN: `br-lan`, `192.168.8.1/24`, up.
@@ -167,6 +178,7 @@ Relevant confirmed paths:
 - Bluetooth: no active controller reported by `hciconfig`.
 - I2C/SPI: no `/dev/i2c-*` or `/dev/spidev*` node.
 - No RTL-SDR USB identifier was detected.
+- No reviewed Android, Apple mobile, or firmware-programmer identity was detected.
 
 ### Cellular integration findings
 
@@ -192,6 +204,7 @@ The following SHA-256 values are verification evidence, not files this project m
 | `/etc/config/rtl_tcp` | `500d071555f688b493b2937f8ef1edf7f56dfddd3888aa584e8b572d5db3f2ad` |
 | `/etc/config/mjpg-streamer` | `00f24dd633bac043f1063b36ae60bef53659c52237e3cfefc27a611b4806944f` |
 | `/etc/config/motion` | `574743e3859793b10328389d2f1a37e4dce88f0e753029a102a43d073b6ca22f` |
+| `/etc/config/gpsd` | `e500321d73a7329e11423769f37ea1bb7c11d2dc20f10a3cc126c67b9a7bf078` |
 
 ## Pre-existing exposure note
 

@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.0.0 — 2026-08-09
+
+### Added
+
+- Burn Two private/transient `android.identify`, `apple.identify`, and `firmware.identify` INFO actions.
+- Dedicated bounded `usb-identity.lua` classifier for Android ADB/fastboot/MTP evidence, Apple mobile/recovery/DFU descriptors, and reviewed firmware programmer identities.
+- Live hardware counts/readiness on Overview and in the Tool Registry without exposing customer identifiers through status.
+- Full native-CLI handoffs for Android, Apple, and firmware tools, including live executable readiness and copyable SSH references that are never executed by the browser.
+- Mobile/programmer privacy, hardware-detection, full-tool handoff, and hardware-acceptance documentation.
+
+### Privacy and operational safety
+
+- Identity reads sanitized sysfs only; it opens no device node and invokes no ADB, fastboot, usbmuxd, idevice, recovery, restore, debugger, DFU, or programmer utility.
+- Customer USB serial identifiers exist only in the explicitly confirmed authenticated response. No identity action creates a job, report field, log, cache, temporary file, or persistent record.
+- The installed CLI programs remain unmodified and fully functional over SSH. Browser-based shell, pairing, restore, recovery, debug, read, write, erase, and flash placeholders remain disabled.
+- The target has no reviewed Android, Apple mobile, or programmer device attached. `fastboot` and `flashrom` executables are unavailable and are reported without package changes.
+
+### Validation status
+
+- Local shell, JavaScript, JSON, allowlist, mutation, identity-boundary, asset, and size validation passes.
+- Synthetic tests on the router's Lua 5.1/nixio stack accept reviewed Android ADB, Apple recovery, and SEGGER fixtures while rejecting Apple Bluetooth and generic FTDI false positives.
+- The staged v2 backend completed live sysfs status/capability calls and all six new INFO actions without changing DDK job count, related process state, or ADB/mobile listener state.
+- Production deployment, comprehensive verification, authenticated browser acceptance, source parity, and final health evidence are recorded after the v2 release gate.
+
 ## 1.9.0 — 2026-08-09
 
 ### Added

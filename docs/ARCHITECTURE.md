@@ -29,6 +29,7 @@ The public website supplied the visual vocabulary and source imagery, not runtim
 - rejects unknown verbs, action IDs, job IDs, report IDs, and extra arguments;
 - reads procfs/sysfs and fixed system commands;
 - loads and validates tool manifests;
+- loads the fixed `usb-identity.lua` classifier for bounded sysfs-only mobile/programmer attribution;
 - returns bounded JSON;
 - starts only allowlisted DDK workers;
 - never accepts an executable path or shell fragment from the browser.
@@ -65,7 +66,13 @@ Disabled actions remain visible as roadmap placeholders. The manifest cannot cre
 4. A fixed read-only command runs with a timeout and output limit.
 5. The helper returns structured JSON for escaped text rendering.
 
-Phase-one INFO IDs are system refresh, interfaces, routes, USB, serial attribution, Tailscale, storage/mounts, memory/swap, and installed-package count. Both the overview alias and registry action use one sysfs-only renderer; neither opens a serial device.
+Base INFO IDs are system refresh, interfaces, routes, USB, serial attribution, Tailscale, storage/mounts, memory/swap, and installed-package count. Version 2 adds three private identity renderers and three static full-CLI handoff renderers. They run synchronously because they only traverse bounded sysfs metadata or server-side constant text; they create no job and invoke no device-management utility. Both serial aliases use one sysfs-only renderer; neither opens a serial device.
+
+## Mobile/programmer identity and SSH handoff
+
+`usb-identity.lua` inspects at most 64 USB devices and 16 interfaces per device. Android requires a reviewed vendor plus protocol/descriptor evidence; Apple requires `05ac` plus a mobile-mode descriptor; programmer identities use a conservative reviewed table. The status API receives counts/reasons only. Full records, including sanitized serial identifiers, are generated only after browser confirmation and exist only in the immediate authenticated response.
+
+The companion `*.operator_guide` actions return static command references plus live `binary_exists()` readiness. Displayed commands are text, never a backend command string. Full native tools remain available through operator-controlled SSH; no browser action can submit their targets, paths, flags, images, device serials, or commands. See [DEVICE-IDENTITY.md](DEVICE-IDENTITY.md) and [SSH-TOOL-HANDOFFS.md](SSH-TOOL-HANDOFFS.md).
 
 ## Serial ownership model
 
@@ -121,7 +128,7 @@ Persistent swap activation is deliberately separate from application deployment.
 
 - No package installation or upgrade.
 - No service activation.
-- No ttyd integration.
+- No ttyd integration or browser shell; full device-tool operation is handed off to the existing SSH service.
 - No network, firewall, wireless, cellular, Tailscale, or extroot mutation.
 - No swapfile creation, initialization, resize, direct activation, or deactivation. The separately approved fstab entry is the only persistent swap configuration change.
 - No generic command runner or PID kill endpoint.
