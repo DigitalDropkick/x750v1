@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.8.0 — 2026-08-09
+
+### Added
+
+- Phase 3D `gps.snapshot` ACTION workflow using the already-installed `gpsdecode` and fixed receive-only byte-copy primitives.
+- Exact sysfs attribution for one external USB GNSS receiver, one reviewed serial driver/node, exclusive device use, and explicit rejection of the Quectel EC25-AF.
+- Bounded 15-second/32-KiB raw capture, checksum-filtered NMEA, whitelisted position rendering, shared GPS resource locking, and raw-data cleanup on success, failure, or stop.
+- Dedicated operator privacy confirmation and [GPS/GNSS snapshot documentation](docs/GPS-GNSS-SNAPSHOT.md).
+
+### Security
+
+- The browser cannot choose a device, baud rate, duration, command, output path, decoder, or field set; backend and worker independently derive and validate hardware.
+- `gpsd`, serial reconfiguration, receiver commands, NTRIP, RTK correction traffic, and all new network access remain disabled. Precise coordinates are transient and excluded from DDK system reports.
+- Existing `/etc/config/gpsd` is hash-protected alongside network, radio, and camera configuration.
+
+### Validation status
+
+- Local shell, JavaScript, JSON, allowlist, mutation, asset, and size validation passes.
+- No external USB GNSS receiver was attached during development. Backend/worker no-device refusal and process/config isolation are testable now; live fix quality, receive cancellation, and measured device behavior remain pending approved hardware and explicit privacy consent.
+
 ## 1.7.0 — 2026-08-09
 
 ### Added

@@ -127,6 +127,20 @@ Relevant confirmed paths:
 - The native authenticated `/cgi-bin/cgi-download` endpoint is already present through `cgi-io`; version 1.7 grants only a strict DDK-job JPEG read pattern instead of adding a CGI or listener.
 - No camera was opened, image captured, service started, listener created, config value revealed, or package installed during discovery.
 
+## GPS/GNSS capability
+
+- `gpsd` 3.23.1-2, `/usr/bin/gpsdecode`, `gpspipe`, `cgps`, `gpsctl`, RTKLIB's `rtkrcv`, and `ntripclient` were already installed during Phase 3D discovery.
+- No external USB descriptor identified a GPS, GNSS, or u-blox receiver. The only serial nodes were the four EC25-AF modem-reserved functions; none was opened or reclassified.
+- `/etc/config/gpsd` has `core.enabled='0'` and names `/dev/ttyUSB0`, which is modem-reserved. No `gpsd` process or TCP 2947 listener existed. Version 1.8 protects this configuration hash and never invokes the service.
+- The installed `gpsdecode -d` accepted checksum-valid NMEA and rejected invalid-checksum test sentences, providing an on-device validation stage without a daemon or listener.
+- No serial setting, receiver state, service, listener, NTRIP connection, network request, package, or configuration was changed during discovery.
+
+## CAN capability
+
+- `canutils` 2021.08.0-2 and `kmod-can` 5.10.176-1 are recorded as installed, but `opkg files canutils` lists no payload and no `candump`, `cansend`, or other CAN utility executable exists in the standard binary paths.
+- No `/sys/class/net` entry reported ARPHRD_CAN type `280`, and `ip -o link show type can` returned no interface.
+- The package database and installed system therefore cannot perform a `candump` capture today. Burn One must report that exact incomplete software/runtime state and must not install, replace, or force a package merely to enable the control.
+
 ## Network and remote-access baseline
 
 - LAN: `br-lan`, `192.168.8.1/24`, up.

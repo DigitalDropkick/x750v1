@@ -178,6 +178,31 @@ rg -F '"cgi-io": [ "exec", "download" ]' files/usr/share/rpcd/acl.d/ddk-field-co
 rg -F '"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/snapshot.jpg": [ "read" ]' files/usr/share/rpcd/acl.d/ddk-field-console.json >/dev/null || fail 'camera artifact ACL is missing or broader than reviewed'
 rg -F "path = '/tmp/ddk/jobs/' + job.id + '/snapshot.jpg'" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'camera client does not derive the fixed artifact path from a validated job ID'
 
+gps_worker_section="$(sed -n '/elif \[ "$task" = "gps_snapshot" \]/,/elif \[ "$task" = "camera_snapshot" \]/p' "$capture_worker")"
+[[ "$(printf '%s\n' "$gps_worker_section" | rg -c 'exec /usr/bin/timeout 15 /bin/dd if="\$gnss_device" bs=256 count=128')" -eq 1 ]] || fail 'reviewed receive-only GNSS byte-read command is missing or duplicated'
+[[ "$(printf '%s\n' "$gps_worker_section" | rg -c 'exec /usr/bin/timeout 5 /usr/bin/gpsdecode -d -v')" -eq 1 ]] || fail 'reviewed GPS decoder command is missing or duplicated'
+for gps_guard in \
+	"'2c7c:0125'" \
+	'1546:' \
+	'cdc_acm|ftdi_sio|cp210x|pl2303|ch341|usbserial' \
+	'Exactly one reviewed USB GNSS receiver is required.' \
+	'Exactly one serial node from the reviewed USB GNSS receiver is required.' \
+	'/proc/[0-9]*/fd/*' \
+	'pidof gpsd' \
+	'ulimit -f 64' \
+	'Raw bytes inspected: %s (not retained or displayed)' \
+	'rm -f "$gnss_raw" "$gnss_decoded" "$gnss_error"' \
+	'head -c 32768 "$job_dir/stdout"'
+do
+	rg -F -- "$gps_guard" "$capture_worker" >/dev/null || fail "GPS/GNSS safety guard is missing: $gps_guard"
+done
+if printf '%s\n' "$gps_worker_section" | rg -n -- '/etc/init\.d/gpsd[[:space:]]+(start|enable|restart)|/usr/sbin/gpsd|/usr/bin/(gpspipe|gpsctl|ntripclient|curl|wget|socat)|(^|[;&|])[[:space:]]*(gpsd|gpspipe|gpsctl|stty|ntripclient|curl|wget|nc|socat)([[:space:]]|$)|(^|[[:space:]])dd[[:space:]].*of='; then
+	fail 'GPS/GNSS worker contains service activation, receiver control, serial mutation, network access, or a device write'
+fi
+if printf '%s\n' "$gps_worker_section" | rg -n -- 'cat[[:space:]]+"?\$gnss_(raw|decoded)|head[^\n]*"?\$gnss_(raw|decoded)[^\n]*>>[[:space:]]*"?\$job_dir/stdout'; then
+	fail 'GPS/GNSS worker exposes raw receiver input instead of whitelisted position fields'
+fi
+
 while IFS= read -r file; do
 	size="$(wc -c < "$file")"
 	[[ "$size" -le 131072 ]] || fail "oversized router asset: $file ($size bytes)"

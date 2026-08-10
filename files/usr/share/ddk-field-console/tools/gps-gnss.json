@@ -2,16 +2,16 @@
   "id": "gps-gnss",
   "name": "GPS / GNSS / RTK",
   "category": "GPS",
-  "description": "GNSS clients, gpsd, RTK processing, and NTRIP utilities.",
+  "description": "One bounded receive-only position snapshot plus disabled gpsd, RTK, and NTRIP placeholders.",
   "package_names": ["gpsd", "gpsd-clients", "gpsd-utils", "rtkrcv", "ntripcaster", "ntripclient", "ntripserver"],
-  "expected_binaries": ["gpsd", "cgps", "rtkrcv", "ntripclient"],
+  "expected_binaries": ["gpsdecode", "gpsd", "cgps", "rtkrcv", "ntripclient"],
   "required_hardware": ["gps"],
   "status_probe": "gps",
   "risk_level": "ACTION",
-  "enabled": false,
+  "enabled": true,
   "actions": [
-    {"id": "gps.snapshot", "class": "INFO", "enabled": false},
-    {"id": "gps.ntrip", "class": "ACTION", "enabled": false}
+    {"id": "gps.snapshot", "class": "ACTION", "execution": "job", "enabled": true},
+    {"id": "gps.ntrip", "class": "ACTION", "execution": "job", "enabled": false}
   ],
-  "help_text": "A serial node alone is not treated as a confirmed GNSS receiver."
+  "help_text": "Snapshot requires exactly one sysfs-attributed USB GNSS receiver and an exclusive reviewed serial node. It reads bounded NMEA bytes without starting gpsd or changing serial settings; NTRIP stays disabled."
 }

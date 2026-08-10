@@ -378,6 +378,108 @@ local function camera_probe()
 	return probe
 end
 
+local function device_open_by_process(device)
+	if type(device) ~= "string" or
+	   (not device:match("^/dev/ttyUSB%d+$") and not device:match("^/dev/ttyACM%d+$")) then
+		return false
+	end
+	local process_iterator = fs.dir("/proc")
+	if not process_iterator then return false end
+	for pid in process_iterator do
+		if pid:match("^%d+$") then
+			local fd_iterator = fs.dir("/proc/" .. pid .. "/fd")
+			if fd_iterator then
+				for fd in fd_iterator do
+					if fs.readlink("/proc/" .. pid .. "/fd/" .. fd) == device then
+						return true
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+local function gps_probe()
+	local probe = {
+		ready = false,
+		hardware_present = false,
+		reason = "REVIEWED USB GNSS RECEIVER NOT DETECTED",
+		reviewed_device_count = 0,
+		reviewed_node_count = 0,
+		nodes = {}
+	}
+	local usb_devices = {}
+	local candidate
+	local serial_nodes = list_device_nodes("^ttyUSB%d+$")
+	for _, node in ipairs(list_device_nodes("^ttyACM%d+$")) do serial_nodes[#serial_nodes + 1] = node end
+	table.sort(serial_nodes)
+
+	for _, node in ipairs(serial_nodes) do
+		local name = node:match("^/dev/(.+)$") or ""
+		local base = "/sys/class/tty/" .. name
+		local node_stat = fs.stat(node)
+		local interface_path = fs.realpath(base .. "/device/..") or ""
+		local parent_path = fs.realpath(base .. "/device/../..") or ""
+		local vendor_id = trim(fs.readfile(parent_path .. "/idVendor")):lower()
+		local product_id = trim(fs.readfile(parent_path .. "/idProduct")):lower()
+		local manufacturer = trim(fs.readfile(parent_path .. "/manufacturer"))
+		local product = trim(fs.readfile(parent_path .. "/product"))
+		local descriptor = (manufacturer .. " " .. product):lower()
+		local driver_link = fs.readlink(interface_path .. "/driver") or ""
+		local driver = driver_link:match("([^/]+)$") or ""
+		local reviewed_driver = driver == "cdc_acm" or driver == "ftdi_sio" or
+			driver == "cp210x" or driver == "pl2303" or driver == "ch341" or driver == "usbserial"
+		local reviewed_identity = vendor_id == "1546" or descriptor:match("u%-blox") ~= nil or
+			descriptor:match("ublox") ~= nil or descriptor:match("gnss") ~= nil or descriptor:match("gps") ~= nil
+		local exact_ec25 = vendor_id == "2c7c" and product_id == "0125"
+		local reviewed = node_stat and node_stat.type == "chr" and
+			interface_path:match("^/sys/devices/") ~= nil and parent_path:match("^/sys/devices/") ~= nil and
+			vendor_id:match("^[0-9a-f][0-9a-f][0-9a-f][0-9a-f]$") ~= nil and
+			product_id:match("^[0-9a-f][0-9a-f][0-9a-f][0-9a-f]$") ~= nil and
+			reviewed_driver and reviewed_identity and not exact_ec25
+
+		if reviewed then
+			usb_devices[parent_path] = true
+			candidate = {
+				node = node,
+				usb_id = vendor_id .. ":" .. product_id,
+				manufacturer = manufacturer,
+				product = product,
+				driver = driver,
+				interface_number = trim(fs.readfile(interface_path .. "/bInterfaceNumber")),
+				busy = device_open_by_process(node)
+			}
+			probe.nodes[#probe.nodes + 1] = candidate
+		end
+	end
+
+	for _ in pairs(usb_devices) do probe.reviewed_device_count = probe.reviewed_device_count + 1 end
+	probe.reviewed_node_count = #probe.nodes
+	probe.hardware_present = probe.reviewed_device_count > 0
+	if probe.reviewed_device_count > 1 then
+		probe.reason = "MULTIPLE REVIEWED USB GNSS RECEIVERS DETECTED"
+	elseif probe.reviewed_device_count == 1 then
+		if probe.reviewed_node_count == 0 then
+			probe.reason = "REVIEWED GNSS SERIAL NODE NOT DETECTED"
+		elseif probe.reviewed_node_count > 1 then
+			probe.reason = "MULTIPLE GNSS SERIAL NODES ARE AMBIGUOUS"
+		elseif candidate and candidate.busy then
+			probe.reason = "GNSS SERIAL NODE IS ALREADY IN USE"
+		elseif not binary_exists("gpsdecode") then
+			probe.reason = "GPSDECODE EXECUTABLE IS UNAVAILABLE"
+		elseif candidate then
+			probe.ready = true
+			probe.reason = "READY - ONE REVIEWED USB GNSS RECEIVER"
+			probe.device = candidate.node
+			probe.usb_id = candidate.usb_id
+			probe.driver = candidate.driver
+			probe.name = trim(candidate.manufacturer .. " " .. candidate.product)
+		end
+	end
+	return probe
+end
+
 local function serial_attribution()
 	local nodes = list_device_nodes("^ttyUSB%d+$")
 	for _, node in ipairs(list_device_nodes("^ttyACM%d+$")) do
@@ -490,6 +592,7 @@ local function hardware_snapshot()
 	local usb, usb_text = usb_lines()
 	local rtl_sdr = rtl_sdr_probe()
 	local camera = camera_probe()
+	local gps = gps_probe()
 	local serial, serial_summary = serial_attribution()
 	local serial_nodes = {}
 	for _, device in ipairs(serial) do serial_nodes[#serial_nodes + 1] = device.node end
@@ -514,7 +617,7 @@ local function hardware_snapshot()
 		bluetooth = has_dir_entry("/sys/class/bluetooth", "^hci%d+$"),
 		i2c = #i2c > 0,
 		spi = #spi > 0,
-		gps = usb_text:match("u%-blox") ~= nil or usb_text:match("gnss") ~= nil or usb_text:match("gps") ~= nil,
+		gps = gps.hardware_present,
 		android = usb_text:match("android") ~= nil or usb_text:match("google") ~= nil or usb_text:match("samsung") ~= nil,
 		apple_mobile = usb_text:match("05ac:") ~= nil or usb_text:match("apple") ~= nil,
 		smartcard = usb_text:match("smart card") ~= nil or usb_text:match("yubico") ~= nil or usb_text:match("yubikey") ~= nil or usb_text:match("ccid") ~= nil,
@@ -529,6 +632,7 @@ local function hardware_snapshot()
 		serial_summary = serial_summary,
 		video_devices = video,
 		camera = camera,
+		gps = gps,
 		can_interfaces = can,
 		i2c_devices = i2c,
 		spi_devices = spi,
@@ -693,6 +797,13 @@ local function load_capabilities()
 			end
 			local probe = type(manifest.status_probe) == "string" and manifest.status_probe or "software"
 			if not valid_probe_ids[probe] then probe = "software" end
+			local action_ready = state == "READY"
+			local readiness_reason = state
+			if manifest.id == "gps-gnss" and manifest.enabled == true then
+				action_ready = hardware.gps.ready
+				readiness_reason = hardware.gps.reason
+				if software_installed and #missing_hardware == 0 and not action_ready then state = "NOT CONFIGURED" end
+			end
 			modules[#modules + 1] = {
 				id = manifest.id,
 				name = manifest.name,
@@ -704,6 +815,8 @@ local function load_capabilities()
 				status_probe = probe,
 				risk_level = manifest.risk_level or "INFO",
 				console_enabled = manifest.enabled == true,
+				action_ready = action_ready,
+				readiness_reason = readiness_reason,
 				actions = type(manifest.actions) == "table" and manifest.actions or {},
 				help_text = manifest.help_text or "",
 				software = {
@@ -874,6 +987,14 @@ local job_actions = {
 		singleton = true,
 		required_hardware = "camera",
 		resource = "camera"
+	},
+	["gps.snapshot"] = {
+		worker = "gps_snapshot",
+		label = "GPS / GNSS Position Snapshot",
+		class = "ACTION",
+		singleton = true,
+		required_hardware = "gps",
+		resource = "gps"
 	}
 }
 
@@ -941,6 +1062,10 @@ local function start_job(action_id)
 		if trim(capture("pidof fswebcam mjpg_streamer motion v4l2rtspserver")) ~= "" then
 			return nil, "A camera client or service is already active"
 		end
+	elseif spec.required_hardware == "gps" then
+		local probe = gps_probe()
+		if not probe.ready then return nil, "Reviewed USB GNSS hardware is not ready: " .. probe.reason end
+		if trim(capture("pidof gpsd")) ~= "" then return nil, "gpsd is active; the console will not compete for its GNSS device" end
 	end
 	fs.mkdirr(JOB_ROOT)
 	fs.mkdirr(REPORT_ROOT)

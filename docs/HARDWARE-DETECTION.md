@@ -16,7 +16,7 @@ Hardware probes are read-only, on-demand, and conservative. They never start a d
 | Bluetooth | `/sys/class/bluetooth/hci[0-9]+` exists. |
 | I2C | Existing `/dev/i2c-*` nodes. |
 | SPI | Existing `/dev/spidev*` nodes. |
-| GPS/GNSS | USB descriptor contains GPS, GNSS, or u-blox. |
+| GPS/GNSS | Exactly one USB device has a GNSS-identifying descriptor or reviewed u-blox vendor ID `1546`, exactly one attributed `ttyUSB`/`ttyACM` node uses a reviewed USB-serial driver, and that node is not open. EC25-AF `2c7c:0125` functions are always excluded. |
 | Android | USB descriptor contains Android, Google, or Samsung. |
 | Apple mobile | USB descriptor contains Apple or vendor ID `05ac`. |
 | Smart card/token | USB descriptor contains smart-card, CCID, Yubico, or YubiKey indicators. |
@@ -34,7 +34,7 @@ Hardware probes are read-only, on-demand, and conservative. They never start a d
 - Hardware presence is not service health. The console does not start gpsd, Bluetooth, camera, SDR, CAN, or serial services to improve a status color.
 - Installed kernel support is not equivalent to attached hardware.
 - Android detection does not run `adb devices`, because doing so may start the ADB server.
-- GPS detection does not infer GNSS from an arbitrary serial port.
+- GPS detection does not infer GNSS from an arbitrary serial port. Multiple receivers/nodes, a busy node, an unreviewed driver, or the EC25-AF fail closed. The snapshot does not start `gpsd` or reconfigure the port.
 - Cellular capability presence alone cannot authorize a query; the snapshot independently validates the exact EC25-AF management topology before opening the device.
 
 ## Extending detection

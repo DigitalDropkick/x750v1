@@ -28,8 +28,8 @@ model="$(ubus call system board | jsonfilter -e '@.model')"
 [ "$model" = 'GL.iNet GL-X750' ] || fail "target identity changed: $model"
 pass 'GL-X750 target identity'
 
-[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.7.0' ] || fail 'Field Console version is not 1.7.0'
-pass 'Field Console version 1.7.0'
+[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.8.0' ] || fail 'Field Console version is not 1.8.0'
+pass 'Field Console version 1.8.0'
 
 mount | grep -q '^/dev/sda1 on /overlay type ext4 ' || fail 'extroot is not active on /dev/sda1'
 pass 'extroot remains active'
@@ -453,6 +453,74 @@ else
 	pass 'camera backend/worker hardware gates and no-device refusal path'
 fi
 
+gps_manifest=/usr/share/ddk-field-console/tools/gps-gnss.json
+[ "$(jsonfilter -i "$gps_manifest" -e '@.enabled')" = 'true' ] || fail 'GPS/GNSS module is not enabled'
+[ "$(jsonfilter -i "$gps_manifest" -e '@.actions[0].id')" = 'gps.snapshot' ] || fail 'GPS/GNSS snapshot action ID is incorrect'
+[ "$(jsonfilter -i "$gps_manifest" -e '@.actions[0].class')" = 'ACTION' ] || fail 'GPS/GNSS snapshot lost its ACTION classification'
+[ "$(jsonfilter -i "$gps_manifest" -e '@.actions[0].execution')" = 'job' ] || fail 'GPS/GNSS snapshot execution mode is incorrect'
+[ "$(jsonfilter -i "$gps_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'GPS/GNSS snapshot is not explicitly enabled'
+[ "$(jsonfilter -i "$gps_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'GPS/GNSS NTRIP was unexpectedly enabled'
+[ -x /usr/bin/gpsdecode ] || fail 'the reviewed gpsdecode executable is unavailable'
+[ "$(uci -q get gpsd.core.enabled)" = '0' ] || fail 'the existing gpsd configuration is not disabled'
+if pidof gpsd >/dev/null 2>&1; then fail 'gpsd was active before GPS/GNSS hardware-gate verification'; fi
+if netstat -lntup 2>/dev/null | grep -Eq '(^|[.:])2947[[:space:]]'; then fail 'the gpsd listener port was active before verification'; fi
+pass 'reviewed GPS/GNSS manifest, decoder, and inactive gpsd boundary'
+
+if /usr/libexec/ddk-console job start 'gps.snapshot;touch' 2>/dev/null | json_ok; then
+	fail 'malformed GPS/GNSS action ID was accepted'
+fi
+if /usr/libexec/ddk-console job start gps.snapshot /dev/ttyACM0 2>/dev/null | json_ok; then
+	fail 'a browser-supplied GPS/GNSS device was accepted'
+fi
+
+gps_status="$(/usr/libexec/ddk-console status)"
+gps_capabilities="$(/usr/libexec/ddk-console capabilities)"
+gps_ready="$(printf '%s' "$gps_status" | jsonfilter -e '@.data.hardware.gps.ready')"
+gps_hardware_present="$(printf '%s' "$gps_status" | jsonfilter -e '@.data.hardware.gps.hardware_present')"
+gps_state="$(printf '%s' "$gps_capabilities" | jsonfilter -e '@.data[@.id="gps-gnss"].state')"
+gps_action_ready="$(printf '%s' "$gps_capabilities" | jsonfilter -e '@.data[@.id="gps-gnss"].action_ready')"
+[ "$(printf '%s' "$gps_capabilities" | jsonfilter -e '@.data[@.id="gps-gnss"].console_enabled')" = 'true' ] || fail 'GPS/GNSS console module is not enabled'
+if [ "$gps_ready" = 'true' ]; then
+	[ "$gps_hardware_present" = 'true' ] || fail 'ready GPS/GNSS receiver is not marked present'
+	[ "$gps_state" = 'READY' ] || fail "ready GPS/GNSS receiver has inconsistent capability state: $gps_state"
+	[ "$gps_action_ready" = 'true' ] || fail 'ready GPS/GNSS receiver did not enable the reviewed action'
+	warn 'reviewed USB GNSS hardware is attached; live position capture requires explicit privacy confirmation in the UI'
+else
+	[ "$gps_hardware_present" = 'false' ] || [ "$gps_state" = 'NOT CONFIGURED' ] || fail "present but unready GPS/GNSS receiver has incorrect state: $gps_state"
+	if [ "$gps_hardware_present" = 'false' ]; then [ "$gps_state" = 'HARDWARE REQUIRED' ] || fail "absent GPS/GNSS receiver has incorrect state: $gps_state"; fi
+	[ "$gps_action_ready" = 'false' ] || fail 'unready GPS/GNSS action was exposed as ready'
+	gps_jobs_before="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
+	gps_rejection="$(/usr/libexec/ddk-console job start gps.snapshot 2>/dev/null || true)"
+	[ "$(printf '%s' "$gps_rejection" | jsonfilter -e '@.ok')" = 'false' ] || fail 'hardware-gated GPS/GNSS start was not rejected'
+	printf '%s' "$gps_rejection" | jsonfilter -e '@.message' | grep -Fq 'Reviewed USB GNSS hardware is not ready' || fail 'GPS/GNSS hardware rejection message is missing'
+	gps_jobs_after="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
+	[ "$gps_jobs_before" = "$gps_jobs_after" ] || fail 'rejected GPS/GNSS start created a transient job'
+
+	gps_worker_probe_id="job-$(date +%s)-$$"
+	gps_worker_probe_dir="/tmp/ddk/jobs/$gps_worker_probe_id"
+	[ ! -e "$gps_worker_probe_dir" ] || fail 'generated GPS/GNSS worker-probe ID collided'
+	mkdir "$gps_worker_probe_dir"
+	chmod 700 "$gps_worker_probe_dir"
+	printf '%s\n' queued > "$gps_worker_probe_dir/status"
+	printf '%s\n' '{}' > "$gps_worker_probe_dir/metadata.json"
+	: > "$gps_worker_probe_dir/stdout"
+	: > "$gps_worker_probe_dir/stderr"
+	gps_worker_result=0
+	/usr/libexec/ddk-job-worker "$gps_worker_probe_id" gps_snapshot >/dev/null 2>&1 || gps_worker_result=$?
+	gps_worker_status="$(cat "$gps_worker_probe_dir/status" 2>/dev/null || true)"
+	gps_worker_error="$(cat "$gps_worker_probe_dir/stderr" 2>/dev/null || true)"
+	rm -f "$gps_worker_probe_dir/pid" "$gps_worker_probe_dir/status" "$gps_worker_probe_dir/metadata.json" \
+		"$gps_worker_probe_dir/stdout" "$gps_worker_probe_dir/stderr" "$gps_worker_probe_dir/gnss.raw" \
+		"$gps_worker_probe_dir/gnss.decoded" "$gps_worker_probe_dir/gnss.stderr"
+	rmdir "$gps_worker_probe_dir"
+	[ "$gps_worker_result" -eq 65 ] || fail "independent GPS/GNSS worker gate returned $gps_worker_result instead of 65"
+	[ "$gps_worker_status" = 'failed' ] || fail "independent GPS/GNSS worker gate ended in state: $gps_worker_status"
+	printf '%s' "$gps_worker_error" | grep -Fq 'Exactly one reviewed USB GNSS receiver is required.' || fail 'independent GPS/GNSS worker rejection evidence is missing'
+	if pidof gpsd gpsdecode >/dev/null 2>&1; then fail 'GPS/GNSS hardware rejection started or left a process'; fi
+	if find /tmp/ddk/jobs -maxdepth 2 -type f \( -name 'gnss.raw' -o -name 'gnss.decoded' \) | grep -q .; then fail 'GPS/GNSS no-device verification left raw location data'; fi
+	pass 'GPS/GNSS backend/worker gates, privacy cleanup, and no-device refusal path'
+fi
+
 report_payload="$(/usr/libexec/ddk-console job start report.system)"
 printf '%s' "$report_payload" | json_ok || fail 'system report job did not start'
 report_job="$(printf '%s' "$report_payload" | jsonfilter -e '@.data.id')"
@@ -467,7 +535,10 @@ while [ "$attempt" -lt 20 ]; do
 	sleep 1
 done
 [ "$report_status" = 'complete' ] || fail "system report ended in state: $report_status"
-/usr/libexec/ddk-console report view "$report_id" | json_ok || fail 'authenticated report view failed'
+report_view="$(/usr/libexec/ddk-console report view "$report_id")"
+printf '%s' "$report_view" | json_ok || fail 'authenticated report view failed'
+report_content="$(printf '%s' "$report_view" | jsonfilter -e '@.data.content')"
+if printf '%s' "$report_content" | grep -Eq 'Latitude:|Longitude:|gnss\.raw|gnss\.decoded'; then fail 'system report contains prohibited precise-location data'; fi
 pass 'sanitized system report generation and view'
 
 root_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1/ || true)"
@@ -496,15 +567,16 @@ printf '%s  %s\n' \
 	1a40da0ebe45b1afd131dfc4650592913e38445e7fe42f96d3b95ad5151ac0e6 /etc/config/rpcd \
 	500d071555f688b493b2937f8ef1edf7f56dfddd3888aa584e8b572d5db3f2ad /etc/config/rtl_tcp \
 	00f24dd633bac043f1063b36ae60bef53659c52237e3cfefc27a611b4806944f /etc/config/mjpg-streamer \
-	574743e3859793b10328389d2f1a37e4dce88f0e753029a102a43d073b6ca22f /etc/config/motion |
+	574743e3859793b10328389d2f1a37e4dce88f0e753029a102a43d073b6ca22f /etc/config/motion \
+	e500321d73a7329e11423769f37ea1bb7c11d2dc20f10a3cc126c67b9a7bf078 /etc/config/gpsd |
 	sha256sum -c - >/dev/null || fail 'a protected configuration hash changed'
-pass 'network, firewall, wireless, uhttpd, rpcd, rtl_tcp, and camera configurations are untouched'
+pass 'network, firewall, wireless, uhttpd, rpcd, radio, camera, and gpsd configurations are untouched'
 
 if netstat -lntup 2>/dev/null | grep -q 'ddk'; then fail 'a DDK listener exists'; fi
 # BusyBox on this target has no standalone pgrep.
 # shellcheck disable=SC2009
 if ps w | grep '[d]dk-job-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
-if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
+if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver gpsd gpsdecode >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
 pass 'no DDK listener or idle operation worker exists'
 
 available_kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"

@@ -77,6 +77,7 @@ available_kb="$(df -Pk /overlay | awk 'NR == 2 {print $4}')"
 [ -x /usr/bin/fswebcam ] || fail 'the already-installed fswebcam executable is missing; no package will be installed'
 [ -x /usr/bin/v4l2-ctl ] || fail 'the already-installed v4l2-ctl executable is missing; no package will be installed'
 [ -x /usr/bin/file ] || fail 'the already-installed file executable is missing; no package will be installed'
+[ -x /usr/bin/gpsdecode ] || fail 'the already-installed gpsdecode executable is missing; no package will be installed'
 [ -x /sbin/uqmi ] || fail 'the already-installed uqmi executable is missing; no package will be installed'
 /usr/bin/rtl_433 -c /dev/null -V >/dev/null 2>&1 || fail 'rtl_433 rejected the reviewed empty-config invocation'
 [ "$(uci -q get rtl_tcp.main.disabled)" = '1' ] || fail 'the existing rtl_tcp network service is not explicitly disabled'
@@ -103,7 +104,8 @@ printf '%s  %s\n' \
 	1a40da0ebe45b1afd131dfc4650592913e38445e7fe42f96d3b95ad5151ac0e6 /etc/config/rpcd \
 	500d071555f688b493b2937f8ef1edf7f56dfddd3888aa584e8b572d5db3f2ad /etc/config/rtl_tcp \
 	00f24dd633bac043f1063b36ae60bef53659c52237e3cfefc27a611b4806944f /etc/config/mjpg-streamer \
-	574743e3859793b10328389d2f1a37e4dce88f0e753029a102a43d073b6ca22f /etc/config/motion |
+	574743e3859793b10328389d2f1a37e4dce88f0e753029a102a43d073b6ca22f /etc/config/motion \
+	e500321d73a7329e11423769f37ea1bb7c11d2dc20f10a3cc126c67b9a7bf078 /etc/config/gpsd |
 	sha256sum -c - >/dev/null || fail 'protected configuration drifted since discovery'
 
 DDK_LUA_FILE="$source_root/usr/libexec/ddk-console" lua -e 'assert(loadfile(os.getenv("DDK_LUA_FILE")))'
@@ -136,7 +138,7 @@ mkdir -p "$backup_path/files"
 } > "$backup_path/metadata"
 
 sha256sum /etc/config/network /etc/config/firewall /etc/config/wireless /etc/config/uhttpd /etc/config/rpcd \
-	/etc/config/rtl_tcp /etc/config/mjpg-streamer /etc/config/motion > "$backup_path/protected-config.sha256"
+	/etc/config/rtl_tcp /etc/config/mjpg-streamer /etc/config/motion /etc/config/gpsd > "$backup_path/protected-config.sha256"
 netstat -lntup 2>/dev/null | awk 'NR > 2 {program=$7; sub(/^[0-9]+\//, "", program); print $1, $4, program}' | sort > "$backup_path/listeners.before"
 
 find "$source_root" -type f | sort | while IFS= read -r source_file; do

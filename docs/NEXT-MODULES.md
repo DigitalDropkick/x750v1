@@ -70,9 +70,9 @@ The no-device acceptance gate passed on 2026-08-09: 29 production checks complet
 
 No camera was attached during development, so acceptance is limited to the no-device refusal, service/configuration isolation, and authenticated artifact ACL until approved UVC hardware and privacy consent are available. The no-device gate passed on 2026-08-09: 31 production checks completed with no warnings, the authenticated artifact proof allowed only the exact transient JPEG path and denied `/etc/shadow`, responsive browser checks passed, and all 39 deployed files matched source.
 
-## 2. GPS snapshot
+### Phase 3D — Hardware-gated GPS/GNSS snapshot (implemented in 1.8.0)
 
-Add exact GNSS hardware attribution, then an on-demand position snapshot. Do not start gpsd automatically or include precise location in reports without an explicit privacy decision.
+`gps.snapshot` requires exactly one sysfs-attributed external USB GNSS receiver and one exclusive reviewed serial node. It explicitly excludes every EC25-AF port, starts no service, changes no termios setting, reads no more than 32 KiB over 15 seconds, checksum-filters NMEA, renders only whitelisted position fields, and deletes raw data. Precise location requires explicit UI confirmation and is excluded from system reports. No receiver was attached during development, so live fix and cancellation acceptance remain pending approved hardware.
 
 ## 3. CAN read-only capture
 

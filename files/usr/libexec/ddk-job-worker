@@ -16,7 +16,7 @@ job_pid="${job_numbers#*-}"
 case "$job_epoch" in ''|*[!0-9]*) exit 64 ;; esac
 case "$job_pid" in ''|*[!0-9]*) exit 64 ;; esac
 case "$task" in
-	demo|system_report|nmap_lan_discovery|cellular_snapshot|tcpdump_lan_metadata|rtl433_snapshot|camera_snapshot) ;;
+	demo|system_report|nmap_lan_discovery|cellular_snapshot|tcpdump_lan_metadata|rtl433_snapshot|camera_snapshot|gps_snapshot) ;;
 	*) exit 64 ;;
 esac
 
@@ -52,6 +52,7 @@ stop_job() {
 		rm -f "$job_dir"/cellular-*.json "$job_dir"/cellular-*.json.err \
 			"$job_dir"/tcpdump.stderr "$job_dir"/rtl433.output "$job_dir"/rtl433.stderr \
 			"$job_dir"/camera.info "$job_dir"/camera.stderr \
+			"$job_dir"/gnss.raw "$job_dir"/gnss.decoded "$job_dir"/gnss.stderr \
 			"$job_dir"/snapshot.jpg "$job_dir"/snapshot.jpg.next
 		# shellcheck disable=SC2317
 		status_set stopped
@@ -229,7 +230,7 @@ elif [ "$task" = "system_report" ]; then
 		opkg list-installed | awk '{print $1}' | sort
 		printf '\n[PROTECTED CONFIGURATION HASHES — CONTENTS NOT INCLUDED]\n'
 		sha256sum /etc/config/network /etc/config/firewall /etc/config/wireless /etc/config/uhttpd /etc/config/rpcd \
-			/etc/config/rtl_tcp /etc/config/mjpg-streamer /etc/config/motion 2>/dev/null || true
+			/etc/config/rtl_tcp /etc/config/mjpg-streamer /etc/config/motion /etc/config/gpsd 2>/dev/null || true
 	} > "$report_tmp" 2> "$job_dir/stderr" || result=$?
 	head -c 131072 "$report_tmp" > "$report_path"
 	rm -f "$report_tmp"
@@ -468,6 +469,176 @@ elif [ "$task" = "rtl433_snapshot" ]; then
 	rm -f "$radio_output" "$radio_error"
 	head -c 65536 "$job_dir/stdout" > "$job_dir/stdout.next"
 	mv "$job_dir/stdout.next" "$job_dir/stdout"
+elif [ "$task" = "gps_snapshot" ]; then
+		[ -x /usr/bin/gpsdecode ] || task_fail 'gpsdecode is not installed at the reviewed path; the console did not attempt installation.'
+		[ -x /usr/bin/timeout ] || task_fail 'The reviewed timeout executable is unavailable.'
+		[ -x /bin/dd ] || task_fail 'The fixed read-only byte-copy helper is unavailable.'
+		if pidof gpsd >/dev/null 2>&1; then
+			task_fail 'gpsd is active; the console will not compete for its GNSS device or stop the service.'
+		fi
+
+		gnss_device_count=0
+		gnss_node_count=0
+		gnss_usb_parent=""
+		gnss_device=""
+		gnss_usb_id=""
+		gnss_driver=""
+		for gnss_node in /dev/ttyUSB[0-9]* /dev/ttyACM[0-9]*; do
+			[ -c "$gnss_node" ] || continue
+			gnss_name="$(basename "$gnss_node")"
+			gnss_interface="$(readlink -f "/sys/class/tty/$gnss_name/device/.." 2>/dev/null || true)"
+			gnss_parent="$(readlink -f "/sys/class/tty/$gnss_name/device/../.." 2>/dev/null || true)"
+			case "$gnss_interface" in /sys/devices/*) ;; *) continue ;; esac
+			case "$gnss_parent" in /sys/devices/*) ;; *) continue ;; esac
+			gnss_vendor="$(cat "$gnss_parent/idVendor" 2>/dev/null || true)"
+			gnss_product="$(cat "$gnss_parent/idProduct" 2>/dev/null || true)"
+			case "$gnss_vendor:$gnss_product" in
+				[0-9a-f][0-9a-f][0-9a-f][0-9a-f]:[0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+				*) continue ;;
+			esac
+			[ "$gnss_vendor:$gnss_product" != '2c7c:0125' ] || continue
+			gnss_driver_candidate="$(basename "$(readlink -f "$gnss_interface/driver" 2>/dev/null || true)")"
+			case "$gnss_driver_candidate" in cdc_acm|ftdi_sio|cp210x|pl2303|ch341|usbserial) ;; *) continue ;; esac
+			gnss_descriptor="$(printf '%s %s' "$(cat "$gnss_parent/manufacturer" 2>/dev/null || true)" "$(cat "$gnss_parent/product" 2>/dev/null || true)" | tr '[:upper:]' '[:lower:]')"
+			case "$gnss_vendor:$gnss_descriptor" in
+				1546:*|*u-blox*|*ublox*|*gnss*|*gps*) ;;
+				*) continue ;;
+			esac
+
+			if [ -z "$gnss_usb_parent" ]; then
+				gnss_usb_parent="$gnss_parent"
+				gnss_device_count=1
+			elif [ "$gnss_usb_parent" != "$gnss_parent" ]; then
+				gnss_device_count=2
+			fi
+			gnss_node_count=$((gnss_node_count + 1))
+			gnss_device="$gnss_node"
+			gnss_usb_id="$gnss_vendor:$gnss_product"
+			gnss_driver="$gnss_driver_candidate"
+		done
+		[ "$gnss_device_count" -eq 1 ] || task_fail 'Exactly one reviewed USB GNSS receiver is required.'
+		[ "$gnss_node_count" -eq 1 ] || task_fail 'Exactly one serial node from the reviewed USB GNSS receiver is required.'
+		case "$gnss_device" in
+			/dev/ttyUSB*) gnss_number="${gnss_device#/dev/ttyUSB}" ;;
+			/dev/ttyACM*) gnss_number="${gnss_device#/dev/ttyACM}" ;;
+			*) task_fail 'The server-derived GNSS node failed its strict path check.' ;;
+		esac
+		case "$gnss_number" in ''|*[!0-9]*) task_fail 'The server-derived GNSS node failed its numeric suffix check.' ;; esac
+		for gnss_fd in /proc/[0-9]*/fd/*; do
+			[ -L "$gnss_fd" ] || continue
+			if [ "$(readlink "$gnss_fd" 2>/dev/null || true)" = "$gnss_device" ]; then
+				task_fail 'The reviewed GNSS serial node is already open; the console did not interfere.'
+			fi
+		done
+
+		gnss_raw="$job_dir/gnss.raw"
+		gnss_decoded="$job_dir/gnss.decoded"
+		gnss_error="$job_dir/gnss.stderr"
+		rm -f "$gnss_raw" "$gnss_decoded" "$gnss_error"
+		{
+			printf '%s\n' 'DIGITAL DROPKICK - GPS / GNSS POSITION SNAPSHOT'
+			printf 'Hardware: %s via %s (%s)\n' "$gnss_usb_id" "$gnss_device" "$gnss_driver"
+			printf '%s\n' 'Privacy: precise coordinates may appear; output is transient and excluded from DDK system reports'
+			printf '%s\n' 'Safety: receive-only byte read; no gpsd start, serial reconfiguration, NTRIP, network request, or receiver command'
+			printf '%s\n' 'Limits: 15-second read window, 32 KiB raw ceiling, validated NMEA only, 32 KiB final text output'
+			printf 'Started (UTC): '
+			date -u
+		} > "$job_dir/stdout"
+
+		(
+			# POSIX file-size units are 512-byte blocks: 64 blocks cap raw input at 32 KiB.
+			ulimit -f 64
+			exec /usr/bin/timeout 15 /bin/dd if="$gnss_device" bs=256 count=128
+		) > "$gnss_raw" 2> "$gnss_error" &
+		child_pid=$!
+		read_result=0
+		wait "$child_pid" 2>/dev/null || read_result=$?
+		child_pid=""
+		case "$read_result" in 0|124|159) ;; *) head -c 4096 "$gnss_error" >> "$job_dir/stderr"; result="$read_result" ;; esac
+		gnss_bytes="$(wc -c < "$gnss_raw" 2>/dev/null || printf 0)"
+		case "$gnss_bytes" in ''|*[!0-9]*) gnss_bytes=0 ;; esac
+
+		if [ "$result" -eq 0 ] && [ "$gnss_bytes" -gt 0 ]; then
+			(
+				ulimit -f 64
+				exec /usr/bin/timeout 5 /usr/bin/gpsdecode -d -v
+			) < "$gnss_raw" > "$gnss_decoded" 2> "$gnss_error" &
+			child_pid=$!
+			decode_result=0
+			wait "$child_pid" 2>/dev/null || decode_result=$?
+			child_pid=""
+			if [ "$decode_result" -ne 0 ]; then
+				head -c 4096 "$gnss_error" >> "$job_dir/stderr"
+				result="$decode_result"
+			fi
+		elif [ "$result" -eq 0 ]; then
+			printf '%s\n' 'No GNSS bytes arrived during the fixed receive window.' >> "$job_dir/stderr"
+			result=69
+		fi
+
+		if [ "$result" -eq 0 ]; then
+			awk -F, '
+				function coordinate(value, hemisphere, degrees, whole, minutes, decimal) {
+					if (value !~ /^[0-9]+[.][0-9]+$/) return ""
+					whole = substr(value, 1, degrees) + 0
+					minutes = substr(value, degrees + 1) + 0
+					if (minutes < 0 || minutes >= 60) return ""
+					decimal = whole + (minutes / 60)
+					if (hemisphere == "S" || hemisphere == "W") decimal = -decimal
+					return sprintf("%.6f", decimal)
+				}
+				{
+					gsub(/\r$/, "", $0)
+					talker = $1
+					sub(/^[$]/, "", talker)
+					type = substr(talker, length(talker) - 2)
+					if (type == "RMC" && $3 == "A") {
+						candidate_lat = coordinate($4, $5, 2)
+						candidate_lon = coordinate($6, $7, 3)
+						if (candidate_lat != "" && candidate_lon != "") {
+							latitude = candidate_lat; longitude = candidate_lon; fix = 1
+							utc_time = $2; utc_date = $10
+							speed = $8; track = $9
+							sub(/[*].*$/, "", utc_date)
+						}
+					}
+					if (type == "GGA" && ($7 + 0) > 0) {
+						candidate_lat = coordinate($3, $4, 2)
+						candidate_lon = coordinate($5, $6, 3)
+						if (candidate_lat != "" && candidate_lon != "") {
+							latitude = candidate_lat; longitude = candidate_lon; fix = 1
+							utc_time = $2; quality = $7; satellites = $8; hdop = $9; altitude = $10
+						}
+					}
+				}
+				END {
+					if (!fix) exit 2
+					print "\n[VALIDATED POSITION]"
+					printf "Latitude: %s\nLongitude: %s\n", latitude, longitude
+					if (utc_time != "") printf "Receiver UTC time: %s\n", utc_time
+					if (utc_date != "") printf "Receiver UTC date: %s\n", utc_date
+					if (quality != "") printf "Fix quality: %s\n", quality
+					if (satellites != "") printf "Satellites used: %s\n", satellites
+					if (hdop != "") printf "HDOP: %s\n", hdop
+					if (altitude != "") printf "Altitude: %s m\n", altitude
+					if (speed ~ /^[0-9]+([.][0-9]+)?$/) printf "Speed: %.2f km/h\n", speed * 1.852
+					if (track ~ /^[0-9]+([.][0-9]+)?$/) printf "Course: %.2f degrees\n", track
+				}
+			' "$gnss_decoded" >> "$job_dir/stdout" || {
+				printf '%s\n' 'No checksum-validated position fix was decoded during the fixed receive window.' >> "$job_dir/stderr"
+				result=69
+			}
+		fi
+		if [ "$result" -eq 0 ]; then
+			{
+				printf '\nRaw bytes inspected: %s (not retained or displayed)\n' "$gnss_bytes"
+				printf 'Completed (UTC): '
+				date -u
+			} >> "$job_dir/stdout"
+		fi
+		rm -f "$gnss_raw" "$gnss_decoded" "$gnss_error"
+		head -c 32768 "$job_dir/stdout" > "$job_dir/stdout.next"
+		mv "$job_dir/stdout.next" "$job_dir/stdout"
 elif [ "$task" = "camera_snapshot" ]; then
 	[ -x /usr/bin/fswebcam ] || task_fail 'fswebcam is not installed at the reviewed path; the console did not attempt installation.'
 	[ -x /usr/bin/v4l2-ctl ] || task_fail 'v4l2-ctl is not installed at the reviewed path; the console did not attempt installation.'

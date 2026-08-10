@@ -25,7 +25,7 @@ The browser cannot submit:
 - a generic PID;
 - a report filesystem path.
 
-The backend's `capture()` receives only source-code constants. A request value selects a table record but is never concatenated into a command. Serial, radio, and camera attribution read fixed procfs/sysfs locations. Camera artifact download is separate from execution: the client accepts only a generated job ID, derives one fixed path, and native `cgi-download` independently enforces the exact rpcd file ACL.
+The backend's `capture()` receives only source-code constants. A request value selects a table record but is never concatenated into a command. Serial, radio, camera, and GNSS attribution read fixed procfs/sysfs locations. Camera artifact download is separate from execution: the client accepts only a generated job ID, derives one fixed path, and native `cgi-download` independently enforces the exact rpcd file ACL.
 
 ## Registry isolation
 
@@ -40,7 +40,7 @@ The current release accepts:
 - job IDs matching `job-<digits>-<digits>`;
 - report IDs matching `report-<digits>-<digits>`.
 
-There are no browser-provided network targets, interfaces, filters, action-output filenames, device nodes, PIDs, package names, durations, camera/radio parameters, output protocols, or flags. For `network.nmap_lan_discovery`, the worker independently requires the native LAN device to equal `br-lan`, reads its IPv4 CIDR from the kernel, validates RFC1918 scope and a `/24`-or-smaller prefix, and then invokes one fixed host-discovery profile. For `capture.lan_metadata_snapshot`, the worker independently requires an up native LAN on exactly `br-lan` and invokes one fixed non-promiscuous ARP/ICMP/DHCP metadata profile. For `radio.rtl433_snapshot`, the backend and worker require one exact reviewed tuner and a safe sysfs serial; frequency, sample rate, gain, decoders, configuration, duration, and output are fixed. For `camera.still_snapshot`, both layers require one sysfs-attributed UVC camera and primary node; resolution, frame count, warm-up, quality, banner, duration, artifact name, and destination are fixed. For `cellular.snapshot`, the worker requires the exact EC25-AF VID:PID, `qmi_wwan`, `/dev/cdc-wdm0`, and its attributed `wwan0`; browser input cannot select a modem or QMI action.
+There are no browser-provided network targets, interfaces, filters, action-output filenames, device nodes, PIDs, package names, durations, camera/radio/GNSS parameters, output protocols, or flags. For `network.nmap_lan_discovery`, the worker independently requires the native LAN device to equal `br-lan`, reads its IPv4 CIDR from the kernel, validates RFC1918 scope and a `/24`-or-smaller prefix, and then invokes one fixed host-discovery profile. For `capture.lan_metadata_snapshot`, the worker independently requires an up native LAN on exactly `br-lan` and invokes one fixed non-promiscuous ARP/ICMP/DHCP metadata profile. For `radio.rtl433_snapshot`, the backend and worker require one exact reviewed tuner and a safe sysfs serial; frequency, sample rate, gain, decoders, configuration, duration, and output are fixed. For `camera.still_snapshot`, both layers require one sysfs-attributed UVC camera and primary node; resolution, frame count, warm-up, quality, banner, duration, artifact name, and destination are fixed. For `gps.snapshot`, both layers require one external USB GNSS identity and one exclusive reviewed serial node; the EC25-AF is excluded, while duration, byte ceiling, decoder, fields, and scratch paths are fixed. For `cellular.snapshot`, the worker requires the exact EC25-AF VID:PID, `qmi_wwan`, `/dev/cdc-wdm0`, and its attributed `wwan0`; browser input cannot select a modem or QMI action.
 
 ## Job controls
 
@@ -51,6 +51,7 @@ There are no browser-provided network targets, interfaces, filters, action-outpu
 - At most one LAN metadata capture may be active.
 - At most one RTL-433 workflow and one shared `rtl_sdr` resource may be active.
 - At most one camera workflow and one shared `camera` resource may be active.
+- At most one GPS/GNSS workflow and one shared `gps` resource may be active.
 - At most one cellular snapshot may be active.
 - A stop request supplies a generated job ID, not a PID.
 - Before `TERM`, the helper reads its own PID file and confirms `/proc/<pid>/cmdline` contains both the DDK worker path and exact job ID.
@@ -61,6 +62,7 @@ There are no browser-provided network targets, interfaces, filters, action-outpu
 - The capture worker tracks its direct `tcpdump` child, terminates it on authenticated stop, and checks that `br-lan` flags are unchanged after normal completion.
 - The RTL-433 worker tracks its direct receiver child, applies a 20-second client limit, a 25-second independent wall limit, 56 KiB child-file limits, and a 64 KiB final-output limit.
 - The camera worker tracks its direct `fswebcam` child, applies a 20-second independent wall limit, a 256 KiB file limit, and removes partial/failed/stopped artifacts.
+- The GPS/GNSS worker tracks its byte-read and decoder children, applies 15-second/32-KiB raw and 32-KiB final limits, and deletes raw/decoded scratch files on completion, failure, or stop.
 - Each cellular query has a five-second client timeout, a seven-second worker wall limit, and direct-child cancellation.
 
 ## Packet-capture privacy boundary
@@ -78,6 +80,12 @@ Decoded nearby transmissions can expose sensor identifiers and measurements. The
 ## Cellular privacy boundary
 
 The snapshot permits only operating mode, data-session state, radio signal, and serving-system queries. Output is rebuilt from an explicit field whitelist and never returns raw modem JSON. IMEI, IMSI, ICCID, MSISDN, SIM contents, APN/current settings, credentials, PIN/PUK state, cell location, operator-description bytes, network scans, registration changes, resets, and raw AT/QMI input are excluded.
+
+## GPS/GNSS privacy boundary
+
+The position snapshot can expose precise location, time, altitude, speed, and course. The UI therefore requires explicit operator confirmation. The worker opens only a server-derived, exclusive external USB GNSS serial node for reading, never the reserved EC25-AF ports. It starts no service, changes no serial setting, sends no receiver command, and makes no network request.
+
+Raw receiver bytes are capped at 32 KiB, passed through `gpsdecode` for NMEA checksum validation, and deleted along with decoded scratch data before the job ends. Only whitelisted position fields reach the job output. Coordinates are transient and excluded from DDK system reports. See [GPS-GNSS-SNAPSHOT.md](GPS-GNSS-SNAPSHOT.md).
 
 ## Camera privacy and file boundary
 
@@ -97,7 +105,7 @@ The system report intentionally excludes:
 - Tailscale peer lists;
 - application logs and customer payloads.
 
-It includes read-only system identity, resource state, interface/address/route information, Tailscale self version/IP, USB/device presence, package names, and hashes—not contents—of protected configuration files.
+It includes read-only system identity, resource state, interface/address/route information, Tailscale self version/IP, USB/device presence, package names, and hashes—not contents—of protected configuration files. It does not include GPS/GNSS coordinates or raw receiver data.
 
 Reports live outside `/www` under mode-restricted `/tmp/ddk/reports/`. Authenticated helper calls return report content for view/download.
 
