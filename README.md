@@ -8,7 +8,7 @@ The source is designed for the exact discovered target documented in [docs/TARGE
 
 At initial discovery on 2026-08-09, `/proc/swaps` reported no active swap. After extroot media migration, the swapfile was confirmed active; `deploy.sh` still refuses deployment whenever `/overlay/ddk-install.swap` is not active. The separate, explicitly approved `configure-swap-autostart.sh` adds only a native fstab boot entry. It does not create, initialize, resize, stop, or directly activate the swapfile. See [docs/SWAP-AUTOSTART.md](docs/SWAP-AUTOSTART.md).
 
-Boot persistence was proven on the target on 2026-08-09: the compact post-reboot profile passed 10 checks with no warnings. Version 1.7 passed 31 comprehensive production checks with no warnings plus authenticated artifact and browser checks at 320 px, 390 px, and desktop widths. The router remained dark after the earlier software reboot and required an attended physical power cycle; after startup, extroot and the configured swapfile activated normally.
+Boot persistence was proven on the target on 2026-08-09: the compact post-reboot profile passed 10 checks with no warnings. Burn One version 1.9 passed 35 comprehensive production checks with no warnings plus authenticated artifact and browser checks at 320 px, 390 px, and desktop widths. All 39 deployed files matched source byte for byte, listener state matched the pre-deployment snapshot, and the new GPS/GNSS and CAN controls visibly failed closed. The router remained dark after the earlier software reboot and required an attended physical power cycle; after startup, extroot and the configured swapfile activated normally. Burn One did not reboot it.
 
 ## Architecture
 

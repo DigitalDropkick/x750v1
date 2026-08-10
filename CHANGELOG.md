@@ -16,7 +16,9 @@
 
 ### Validation status
 
-- Local shell, JavaScript, JSON, action-registry, mutation, CAN transmit/configuration prohibition, asset, and size validation passes.
+- Production verification passed 35 checks with 0 warnings, including both new backend/worker refusal paths, missing-`candump` visibility, coordinate/report separation, protected configuration, prior workflows, UI endpoints, resource health, and absence of residual processes/listeners.
+- Authenticated browser verification passed at 320 px, 390 px, and desktop widths. Both controls were visibly `HARDWARE REQUIRED`, ACTION-styled, disabled, and free of external requests, runtime errors, or horizontal overflow.
+- All 39 deployed project files matched source byte for byte and listener state matched the pre-deployment snapshot. The v1.7 rollback backup is `/root/ddk-backups/20260810T003641Z-field-console-v1`.
 - Live CAN receive, cancellation, output-format, and bus-impact acceptance remain pending an approved adapter, an already-configured physical `canN`, and a reviewed `candump` executable. Backend/worker refusal and missing-runtime visibility are production-testable now.
 
 ## 1.8.0 — 2026-08-09

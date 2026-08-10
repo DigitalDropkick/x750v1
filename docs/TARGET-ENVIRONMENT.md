@@ -73,6 +73,16 @@ With no camera attached, the production suite passed 31 checks with no warnings.
 
 All 39 deployed project files matched source byte for byte. The final acceptance snapshot reported 44,804 KiB available RAM, load averages 1.51 / 1.45 / 1.27, 27,694,860 KiB free on extroot, and the 262,140 KiB swapfile active with 4,128 KiB used at priority `-2`. Tailscale remained running and GL.iNet UI/LuCI authentication remained healthy. Live still capture, cancellation during capture, image-quality judgment, and measured capture CPU/RAM remain explicitly unverified until one approved UVC camera is attached and the operator confirms authorization and consent.
 
+### Version 1.9 Burn One live acceptance
+
+The combined GPS/GNSS and passive CAN release was deployed on 2026-08-09 with pre-change v1.7 backup `/root/ddk-backups/20260810T003641Z-field-console-v1`. Deployment passed identity, OpenWrt/architecture, extroot, active swap, free-space, native LuCI, installed-tool, protected-hash, and local/staged syntax gates. It reloaded only rpcd ACLs; no service was restarted and the router was not rebooted.
+
+The comprehensive suite passed 35 checks with no warnings. GPS/GNSS and CAN backend refusals occurred before job creation; both workers independently failed closed; no raw NMEA, decoded GNSS scratch, CAN frame file, GPS/CAN process, new listener, or configuration change remained. The GPSD UCI file stayed byte-identical and disabled. The CAN API/UI correctly reported both no physical interface and missing `candump` despite the installed empty `canutils` package record.
+
+Authenticated Chrome verification passed the `/ddk` redirect, camera-artifact ACL isolation, every local brand asset, and the new disabled ACTION controls at 320 px, 390 px, and desktop widths with no external request, runtime error, or horizontal overflow. Visual review confirmed coherent mobile/desktop hierarchy. All 39 deployed files matched source byte for byte, and listener state matched the pre-deployment backup.
+
+The final acceptance snapshot reported 44,320 KiB available RAM, load averages 1.73 / 1.58 / 1.28, 27,694,340 KiB free on extroot, and the 262,140 KiB swapfile active with 4,904 KiB used at priority `-2`. Tailscale remained running and GL.iNet UI/LuCI authentication remained healthy. Live GNSS fix/cancellation and CAN receive/cancellation/bus-impact acceptance remain pending approved hardware; CAN additionally requires a separately reviewed `candump` availability decision.
+
 ## Native LuCI conventions
 
 This firmware contains both generations of LuCI application structure:

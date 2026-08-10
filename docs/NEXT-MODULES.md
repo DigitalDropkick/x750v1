@@ -74,9 +74,13 @@ No camera was attached during development, so acceptance is limited to the no-de
 
 `gps.snapshot` requires exactly one sysfs-attributed external USB GNSS receiver and one exclusive reviewed serial node. It explicitly excludes every EC25-AF port, starts no service, changes no termios setting, reads no more than 32 KiB over 15 seconds, checksum-filters NMEA, renders only whitelisted position fields, and deletes raw data. Precise location requires explicit UI confirmation and is excluded from system reports. No receiver was attached during development, so live fix and cancellation acceptance remain pending approved hardware.
 
+The no-device acceptance gate passed as part of the v1.9 Burn One suite: backend refusal occurred before job creation, the worker independently rejected every EC25-only serial topology, no raw/decoded file or GPS process remained, `gpsd` configuration stayed byte-identical and disabled, and the responsive UI exposed no runnable control.
+
 ### Phase 3E — Passive CAN frame snapshot (implemented in 1.9.0)
 
 `can.capture` requires exactly one already-up physical `canN` interface and `/usr/bin/candump`, then runs one fixed receive-only 128-frame/20-second profile with independent wall/file/output limits and interface-flag comparison. Interface setup, bitrate changes, transmit, replay, ISO-TP send, and persistent logs remain disabled. The target currently has no CAN interface, and its installed `canutils` record exposes no executable payload, so the UI reports `HARDWARE REQUIRED` plus missing `candump` and remains disabled without package changes. Live capture and cancellation acceptance remain pending approved hardware and runtime availability.
+
+The no-device/missing-runtime acceptance gate passed as part of the v1.9 Burn One suite: both conditions were visible through the API/UI, backend refusal created no job, the worker independently rejected before any utility launch, no frame file/process remained, and listener/network state stayed unchanged.
 
 ## 4. Android and Apple identification
 
