@@ -11,7 +11,7 @@
   "enabled": true,
   "actions": [
     {"id": "gps.snapshot", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "gps.ntrip", "class": "ACTION", "execution": "job", "enabled": false}
+    {"id": "gps.ntrip", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "GNSS Operator exposes reviewed receiver selection, duration and byte ceilings, gpsdecode modes/type filters, validated position output, and optional raw/decoded artifacts while gpsd remains off. NTRIP/RTK controls still require credential isolation, exact client lifecycle mapping, and attached-receiver tests."
+  "help_text": "GNSS receive remains bounded and keeps gpsd off. NTRIP adds typed caster/mount/transport/serial controls, redacted one-time credentials, exact non-EC25 receiver selection, confirmation, cancellation, and cleanup without enabling a boot service."
 }

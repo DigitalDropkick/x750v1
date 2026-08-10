@@ -180,6 +180,14 @@ Relevant confirmed paths:
 - The only current `sdX` disk is `sda`; `/dev/sda1` is the active extroot mounted at `/overlay` and `/mnt/extroot`. The entire `sda` disk and partition are protected and must never appear in a storage Operator selector.
 - No safe non-system media is attached. Target-safe Phase 3 validation therefore covers planner behavior, exact runtime checks, system-media exclusion, and failure/cleanup before native access; live image/repair/restore acceptance requires separately approved attached media.
 
+## Phase 4 exact runtime audit
+
+The production target was re-inspected on 2026-08-10 before Phase 4 implementation. Installed package/runtime contracts are vnstat2 2.9, iftop 1.0pre4, iw 5.16, iwinfo 2022-12-15, usbutils 014, file 5.41, hashdeep 4.4, ssdeep 2.14.1, checksec 2.5.0, YARA 4.1.3, tcpreplay 4.4.1, readsb 3.9.0, rtl-ais 0.3, BlueZ 5.64, mosquitto_pub 2.0.15, crelay 0.14, mbtools 2014-10-29, pcsc-tools 1.5.7, pcscd 1.9.9, ykpers 1.20.0, mjpg-streamer package 1.0.0-5/binary version 2.0, and ntripclient 1.51. Installer preflight now refuses drift from those exact package records.
+
+Exact `--help`/help output was inspected for the invoked options. `pcscd` advertises foreground and auto-exit ownership; tcpreplay advertises interface/loop/limit/duration/rate controls; readsb prints decoded stdout without enabling `--net`; rtl_ais logs NMEA with `-n`; mosquitto_pub advertises TLS/QoS/retain/repeat/stdin payload controls; and mbcollect exposes master-mode TCP/RTU plus generated ini support.
+
+The target has no RTL-SDR, UVC camera, external GNSS/general serial, Bluetooth HCI, smartcard/YubiKey, compatible relay, or CAN hardware attached. The installed `canutils` record has no executable payload, `mbpoll` is absent, USB/IP reports no usable controller, and the only controllable USB-hub root contains the EC25/extroot path. Both radios participate in active management/client networking. These facts drive the no-device gates and remaining limitations in [PHASE4-OPERATOR.md](PHASE4-OPERATOR.md); no package, service, driver, radio mode, USB power state, or protected configuration was changed during the audit.
+
 ## Network and remote-access baseline
 
 - LAN: `br-lan`, `192.168.8.1/24`, up.

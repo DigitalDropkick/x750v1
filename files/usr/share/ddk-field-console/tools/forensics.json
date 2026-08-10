@@ -2,15 +2,15 @@
   "id": "forensics",
   "name": "Forensics / File Analysis",
   "category": "Storage / Recovery",
-  "description": "File identification, hashes, similarity, YARA, hardening inspection, tracing, and filesystem extraction.",
+  "description": "Isolated sealed-file identification, hashing, similarity, hardening, and YARA inspection.",
   "package_names": ["yara", "ssdeep", "hashdeep", "checksec", "file", "xxd", "strace", "gdbserver", "squashfs-tools-unsquashfs"],
   "expected_binaries": ["yara", "ssdeep", "hashdeep", "checksec", "file", "xxd", "strace", "gdbserver", "unsquashfs"],
   "required_hardware": [],
   "status_probe": "software",
   "risk_level": "SECURITY",
-  "enabled": false,
+  "enabled": true,
   "actions": [
-    {"id": "forensics.inspect_file", "class": "SECURITY", "enabled": false}
+    {"id": "forensics.inspect_file", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Future file handling requires authenticated upload limits, isolated paths, MIME-independent validation, and cleanup."
+  "help_text": "Operator Mode binds one or two sealed DDK uploads by ID/hash and runs exact file, hashdeep, ssdeep, checksec, or YARA argv with time/output limits and an authenticated report artifact. Arbitrary router paths, process/PID scanning, tracing, and debugger attachment remain outside this file-only action."
 }

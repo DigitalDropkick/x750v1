@@ -2,15 +2,15 @@
   "id": "monitoring",
   "name": "Monitoring",
   "category": "Monitoring",
-  "description": "Existing bandwidth, collectd, process, and Prometheus instrumentation.",
+  "description": "On-demand historical interface and bounded live-flow monitoring snapshots.",
   "package_names": ["vnstat2", "prometheus-node-exporter-lua", "collectd", "bmon", "iftop", "htop", "nlbwmon"],
   "expected_binaries": ["vnstat", "bmon", "iftop", "htop", "nlbwmon"],
   "required_hardware": [],
   "status_probe": "software",
   "risk_level": "INFO",
-  "enabled": false,
+  "enabled": true,
   "actions": [
-    {"id": "monitoring.snapshot", "class": "INFO", "enabled": false}
+    {"id": "monitoring.snapshot", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "A useful snapshot is pending exact installed collector/client inspection, bounded query schemas, credential-safe output, and proof that no idle service is enabled implicitly."
+  "help_text": "Operator Mode selects a live interface and runs exact vnStat JSON history or bounded non-promiscuous iftop text mode with row/duration limits and an authenticated artifact. No collector, exporter, daemon, or boot service is enabled."
 }

@@ -2,7 +2,7 @@
 
 > Historical v2 roadmap: the fixed-profile and SSH-handoff limitations below record what was production-accepted in versions 1.x–2.0. Repository-root `AGENTS.md` and [Operator Mode](OPERATOR-MODE.md) supersede those limitations as product policy. Version 2.1 must migrate practical native functionality through structured schemas, exact backend argv builders, target validation, resource controls, artifacts, and appropriate confirmation. Classification as `ACTION`, `SECURITY`, or `DISRUPTIVE` is not a blocker.
 
-Version 2.0 completed the earlier base-console plan and remains the production-accepted baseline until the authorized 2.1 deployment passes. Version 2.1 now implements the shared architecture plus network/capture, radio/camera/GPS/serial, Android, Apple, firmware-programming, and storage/recovery migrations. Live acceptance remains conditional on approved attached hardware; industrial/Modbus, Bluetooth/smartcard, CAN expansion, monitoring, and automation remain outstanding.
+Version 2.0 completed the earlier base-console plan and remains the preserved rollback baseline. Version 2.1 implements the shared architecture plus Phase 1-4 tool migrations, including industrial/Modbus read, Bluetooth/smartcard, monitoring, automation, replay, ADS-B/AIS, camera stream, and NTRIP. Live acceptance remains conditional on approved attached hardware; exact remaining runtime/topology/rollback blockers are maintained in [PHASE4-OPERATOR.md](PHASE4-OPERATOR.md).
 
 ## Release phases
 
@@ -100,10 +100,11 @@ Five storage jobs now cover SMART/read-only checks, confirmed filesystem/media r
 
 The combined v2 acceptance gate passed on 2026-08-09: 37 production checks completed with no warnings; authenticated browser validation passed at 320 px, 390 px, and desktop widths; every one of the 40 deployed files matched source; protected configurations and listener state remained unchanged; and no device utility, DDK worker, or new listener remained. Hardware-specific classification acceptance is intentionally still pending approved devices.
 
-## Recommended next work
+## Recommended hardware acceptance and remaining architecture work
 
 1. Attach one approved firmware or non-system storage target at a time and verify native execution, readback/artifacts, cancellation, cleanup, and consequential confirmation.
-2. Audit and migrate exact installed industrial/Modbus tools with connection/unit/register/datatype schemas and confirmed writes.
-3. Audit Bluetooth, smartcard, monitoring, and automation families, including on-demand helper ownership where required.
+2. Attach approved RTL-SDR, UVC, GNSS, Bluetooth, smartcard/YubiKey, relay, and general serial devices one at a time and verify native execution, cancellation, artifacts, listener/helper cleanup, and exact confirmation.
+3. Revisit Modbus write only when a reliable installed write-capable client exists; do not misrepresent `mbcollect` or the `mbusd` gateway as a write utility.
 4. Revisit CAN only after an actual CAN interface and executable runtime are present; then add structured receive/filter/config/transmit with target-aware confirmation.
-5. Keep `candump`, fastboot, and flashrom unavailable until their genuine payload/runtime requirements are present under separate package/hardware authorization; do not install substitutes implicitly.
+5. Add wireless mode changes only with an action-owned netifd/GL.iNet transaction and proven management recovery; add USB power only with non-critical per-port topology.
+6. Keep `candump`, `cansend`, `mbpoll`, fastboot, and flashrom unavailable until their genuine payload/runtime requirements are present under separate package/hardware authorization; do not install substitutes implicitly.

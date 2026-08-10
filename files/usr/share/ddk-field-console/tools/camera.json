@@ -2,7 +2,7 @@
   "id": "camera",
   "name": "Camera / Video",
   "category": "Camera",
-  "description": "One bounded local UVC still capture plus disabled streaming and motion placeholders.",
+  "description": "Structured UVC still capture and temporary authenticated local-address streaming.",
   "package_names": ["fswebcam", "mjpg-streamer", "motion", "v4l-utils", "v4l2rtspserver", "v4l2tools"],
   "expected_binaries": ["fswebcam", "mjpg_streamer", "motion", "v4l2-ctl"],
   "required_hardware": ["video"],
@@ -11,7 +11,7 @@
   "enabled": true,
   "actions": [
     {"id": "camera.still_snapshot", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "camera.stream", "class": "DISRUPTIVE", "execution": "job", "enabled": false}
+    {"id": "camera.stream", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Still capture exposes hardware-gated UVC node, image format, resolution, palette/input, frame timing, transform, and banner controls with authenticated artifacts. Streaming still needs an on-demand lifecycle, local bind policy, authentication, cancellation, and cleanup."
+  "help_text": "Still capture exposes native image controls and artifacts. Streaming is an on-demand mjpg-streamer job bound only to an exact current local address, requires private Basic credentials and target confirmation, disables plugin commands, and stops on duration/cancellation without enabling the installed service."
 }

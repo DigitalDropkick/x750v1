@@ -3,6 +3,9 @@ android.adb_manage
 apple.mobile_manage
 apple.recovery
 apple.restore
+automation.relay
+camera.stream
+capture.replay
 firmware.avrdude
 firmware.dfu
 firmware.openocd

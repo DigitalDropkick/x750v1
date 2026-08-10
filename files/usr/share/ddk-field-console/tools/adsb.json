@@ -2,15 +2,15 @@
   "id": "adsb",
   "name": "ADS-B",
   "category": "SDR / Radio",
-  "description": "ADS-B receiver and decoding utilities.",
+  "description": "Structured, hardware-gated readsb ADS-B receive and decoding.",
   "package_names": ["readsb", "dump1090", "luci-app-dump1090", "rtl-sdr"],
   "expected_binaries": ["readsb", "dump1090"],
   "required_hardware": ["rtl_sdr"],
   "status_probe": "rtl_sdr",
   "risk_level": "ACTION",
-  "enabled": false,
+  "enabled": true,
   "actions": [
-    {"id": "adsb.receive", "class": "ACTION", "enabled": false}
+    {"id": "adsb.receive", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Receiver controls are not yet migrated. Operator Mode still needs exact device/frequency/gain/decoder/output schemas, native lifecycle cleanup, artifacts, and attached-hardware tests."
+  "help_text": "Operator Mode exposes reviewed tuner selection, frequency, gain, PPM, output mode, Mode A/C, metric units, duration, authenticated text artifacts, cancellation, and tuner locking without enabling readsb networking or a daemon."
 }

@@ -302,6 +302,10 @@ try {
 		const storageCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.querySelector('h3')?.textContent.trim() === 'Storage / Recovery');
 		const storageActions = [ 'storage.inspect', 'storage.repair', 'storage.image', 'storage.restore' ].map(id => storageCard && Array.from(storageCard.querySelectorAll('button')).find(node => node.textContent.trim() === id));
 		const squashfsAction = storageCard && Array.from(storageCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'storage.squashfs');
+		const phase4Button = id => Array.from(document.querySelectorAll('.ddk-tool button')).find(node => node.textContent.trim() === id);
+		const phase4Ids = [ 'monitoring.snapshot', 'wireless.survey', 'usb.inventory', 'forensics.inspect_file', 'capture.replay', 'adsb.receive', 'radio.ais', 'bluetooth.scan', 'automation.mqtt_publish', 'automation.relay', 'industrial.modbus_read', 'auth.inventory', 'auth.program', 'camera.stream', 'gps.ntrip' ];
+		const phase4Direct = [ 'monitoring.snapshot', 'wireless.survey', 'usb.inventory', 'forensics.inspect_file', 'capture.replay', 'automation.mqtt_publish', 'industrial.modbus_read' ];
+		const phase4Hardware = [ 'adsb.receive', 'radio.ais', 'bluetooth.scan', 'automation.relay', 'auth.inventory', 'auth.program', 'camera.stream', 'gps.ntrip' ];
 		return {
 			card: !!card,
 			ready: !!card && card.textContent.includes('READY'),
@@ -338,22 +342,30 @@ try {
 			firmwareCard: !!firmwareCard && firmwareCard.textContent.includes('READY / NO DEVICE'),
 			firmwareActions: !!firmwareIdentity && !firmwareIdentity.disabled && !!firmwareGuide && !firmwareGuide.disabled && firmwareActions.length === 4 && firmwareActions.every(node => node && node.disabled && node.classList.contains('ddk-button-action')),
 			storageCard: !!storageCard && storageCard.textContent.includes('READY'),
-			storageActions: storageActions.length === 4 && storageActions.every(node => node && node.disabled && node.classList.contains('ddk-button-action')) && !!squashfsAction && !squashfsAction.disabled
+			storageActions: storageActions.length === 4 && storageActions.every(node => node && node.disabled && node.classList.contains('ddk-button-action')) && !!squashfsAction && !squashfsAction.disabled,
+			phase4Visible: phase4Ids.every(id => !!phase4Button(id)),
+			phase4Direct: phase4Direct.every(id => !phase4Button(id).disabled),
+			phase4Hardware: phase4Hardware.every(id => phase4Button(id).disabled)
 		};
 	})()`);
-	if (!tools.card || !tools.ready || !tools.button || !tools.enabled || !tools.cellularCard || !tools.cellularReady || !tools.cellularButton || !tools.serialCard || !tools.serialReady || !tools.serialButton || !tools.captureCard || !tools.captureReady || !tools.captureButton || !tools.throughputCard || !tools.throughputButton || !tools.radioCard || !tools.radioHardwareRequired || !tools.radioButtonDisabled || !tools.cameraCard || !tools.cameraHardwareRequired || !tools.cameraButtonDisabled || !tools.gpsCard || !tools.gpsHardwareRequired || !tools.gpsButtonDisabled || !tools.canCard || !tools.canHardwareRequired || !tools.canRuntimeVisible || !tools.canButtonDisabled || !tools.androidCard || !tools.androidActions || !tools.appleCard || !tools.appleActions || !tools.firmwareCard || !tools.firmwareActions || !tools.storageCard || !tools.storageActions) {
+	if (!tools.card || !tools.ready || !tools.button || !tools.enabled || !tools.cellularCard || !tools.cellularReady || !tools.cellularButton || !tools.serialCard || !tools.serialReady || !tools.serialButton || !tools.captureCard || !tools.captureReady || !tools.captureButton || !tools.throughputCard || !tools.throughputButton || !tools.radioCard || !tools.radioHardwareRequired || !tools.radioButtonDisabled || !tools.cameraCard || !tools.cameraHardwareRequired || !tools.cameraButtonDisabled || !tools.gpsCard || !tools.gpsHardwareRequired || !tools.gpsButtonDisabled || !tools.canCard || !tools.canHardwareRequired || !tools.canRuntimeVisible || !tools.canButtonDisabled || !tools.androidCard || !tools.androidActions || !tools.appleCard || !tools.appleActions || !tools.firmwareCard || !tools.firmwareActions || !tools.storageCard || !tools.storageActions || !tools.phase4Visible || !tools.phase4Direct || !tools.phase4Hardware) {
 		throw new Error(`Tool Registry validation failed: ${JSON.stringify(tools)}`);
 	}
 	for (const operatorProof of [
 		[ 'Network Discovery', 'network.nmap_lan_discovery', 'Nmap Operator Scan', 'Targets' ],
 		[ 'Capture & Traffic', 'capture.lan_metadata_snapshot', 'tcpdump Operator Capture', 'Capture filter (BPF)' ],
 		[ 'Throughput & Live Traffic', 'throughput.iperf3', 'iperf3 Operator Test', 'Server host (client mode)' ],
-		[ 'Storage / Recovery', 'storage.squashfs', 'SquashFS Recovery', 'Sealed SquashFS image' ]
+		[ 'Storage / Recovery', 'storage.squashfs', 'SquashFS Recovery', 'Sealed SquashFS image' ],
+		[ 'Monitoring', 'monitoring.snapshot', 'Monitoring Snapshot', 'Snapshot mode' ],
+		[ 'Forensics / File Analysis', 'forensics.inspect_file', 'Forensic File Inspection', 'Sealed file' ],
+		[ 'Capture & Traffic', 'capture.replay', 'Authenticated Packet Replay', 'Sealed PCAP' ],
+		[ 'Automation / MQTT', 'automation.mqtt_publish', 'MQTT Publish', 'Broker host' ],
+		[ 'Industrial / Modbus', 'industrial.modbus_read', 'Modbus Register Read', 'Transport', false ]
 	]) {
 		await evaluate(pageSession, `(() => { const card = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.querySelector('h3')?.textContent.trim() === ${JSON.stringify(operatorProof[0])}); const action = Array.from(card.querySelectorAll('button')).find(node => node.textContent.trim() === ${JSON.stringify(operatorProof[1])}); action.click(); return true; })()`);
 		await waitUntil(async () => evaluate(pageSession, `document.querySelector('.ddk-modal h3')?.textContent === ${JSON.stringify(operatorProof[2])}`), 10000, `Timed out opening ${operatorProof[2]}.`);
 		const formProof = await evaluate(pageSession, `(() => ({ label: Array.from(document.querySelectorAll('.ddk-operator-label')).some(node => node.textContent.trim() === ${JSON.stringify(operatorProof[3])}), review: Array.from(document.querySelectorAll('.ddk-modal button')).some(node => node.textContent.trim() === 'Validate & Review'), advanced: !!document.querySelector('.ddk-operator-advanced') }))()`);
-		if (!formProof.label || !formProof.review || !formProof.advanced) throw new Error(`Structured form validation failed for ${operatorProof[2]}: ${JSON.stringify(formProof)}`);
+		if (!formProof.label || !formProof.review || (operatorProof[4] !== false && !formProof.advanced)) throw new Error(`Structured form validation failed for ${operatorProof[2]}: ${JSON.stringify(formProof)}`);
 		await evaluate(pageSession, "Array.from(document.querySelectorAll('.ddk-modal button')).find(node => node.textContent.trim() === 'Close').click()");
 	}
 	await evaluate(pageSession, 'window.confirm = () => true');
@@ -384,10 +396,12 @@ try {
 		upload: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Upload & Seal Input' && !node.disabled),
 		refresh: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Refresh Sealed Inputs' && !node.disabled),
 		storageImage: Array.from(document.querySelectorAll('.ddk-select option')).some(node => node.value === 'storage_image' && node.textContent.includes('Storage / recovery image')),
+		forensicsInput: Array.from(document.querySelectorAll('.ddk-select option')).some(node => node.value === 'forensics_input' && node.textContent.includes('Forensic analysis input')),
+		captureInput: Array.from(document.querySelectorAll('.ddk-select option')).some(node => node.value === 'capture_input' && node.textContent.includes('Packet replay capture')),
 		pathPolicy: document.body.textContent.includes('no arbitrary router reads or writes'),
 		overflow: document.documentElement.scrollWidth > window.innerWidth
 	})`);
-	if (!settingsBefore.upload || !settingsBefore.refresh || !settingsBefore.storageImage || !settingsBefore.pathPolicy || settingsBefore.overflow) throw new Error(`Settings upload validation failed: ${JSON.stringify(settingsBefore)}`);
+	if (!settingsBefore.upload || !settingsBefore.refresh || !settingsBefore.storageImage || !settingsBefore.forensicsInput || !settingsBefore.captureInput || !settingsBefore.pathPolicy || settingsBefore.overflow) throw new Error(`Settings upload validation failed: ${JSON.stringify(settingsBefore)}`);
 	await call('DOM.enable', {}, pageSession);
 	const documentNode = await call('DOM.getDocument', {}, pageSession);
 	const fileNode = await call('DOM.querySelector', { nodeId: documentNode.root.nodeId, selector: '.ddk-upload-grid input[type="file"]' }, pageSession);
@@ -436,7 +450,7 @@ try {
 
 	if (browserErrors.length) throw new Error(`Browser errors: ${browserErrors.join(' | ')}`);
 	if (externalRequests.length) throw new Error(`External browser requests were made: ${[ ...new Set(externalRequests) ].join(' | ')}`);
-	console.log('Browser verification passed: /ddk shortcut, five local branded headers and logos, structured Operator Mode controls, authenticated upload/seal/hash/delete, preserved private identity workflows, serial-aware Overview at 320px, hardware-gated firmware/storage targets, file-only SquashFS recovery, and RTL-433, camera, GPS/GNSS, Android ADB, Apple normal/recovery/restore, and passive CAN controls at 1440px and 390px, with no external requests, horizontal overflow, or runtime errors.');
+	console.log('Browser verification passed: /ddk shortcut, five local branded headers and logos, all Phase 4 structured action controls, authenticated upload/seal/hash/delete, preserved private identity workflows, serial-aware Overview at 320px, hardware-gated targets, and responsive controls at 1440px and 390px, with no external requests, horizontal overflow, or runtime errors.');
 	console.log(`DDK_BROWSER_OVERVIEW=${overviewPath}`);
 	console.log(`DDK_BROWSER_DESKTOP=${desktopPath}`);
 	console.log(`DDK_BROWSER_TOOLS=${toolsPath}`);

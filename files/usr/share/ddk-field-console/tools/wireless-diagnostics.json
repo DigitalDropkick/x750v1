@@ -2,16 +2,16 @@
   "id": "wireless-diagnostics",
   "name": "Wi-Fi Diagnostics",
   "category": "Wi-Fi",
-  "description": "Survey, monitor, and wireless analysis utilities.",
+  "description": "Structured read-only wireless information, active survey, and station snapshots.",
   "package_names": ["aircrack-ng", "airmon-ng", "horst", "wavemon", "iw", "iwinfo"],
   "expected_binaries": ["aircrack-ng", "airmon-ng", "horst", "wavemon", "iw", "iwinfo"],
   "required_hardware": [],
   "status_probe": "software",
   "risk_level": "SECURITY",
-  "enabled": false,
+  "enabled": true,
   "actions": [
-    {"id": "wireless.survey", "class": "INFO", "enabled": false},
+    {"id": "wireless.survey", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
     {"id": "wireless.monitor", "class": "SECURITY", "enabled": false}
   ],
-  "help_text": "Survey/monitor controls require exact radio/interface selection, management-link protection, installed-tool schemas, state-change confirmation, rollback, and target-safe wireless tests."
+  "help_text": "Survey selects a current wireless interface and runs exact iwinfo info/scan or iw station dump without reconfiguration. Monitor-mode creation remains unavailable because both physical radios carry active management/client traffic and the installed workflow has no reliable atomic rollback across GL.iNet netifd state."
 }

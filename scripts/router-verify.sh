@@ -88,10 +88,12 @@ for file in \
 	/usr/libexec/ddk-job-worker \
 	/usr/libexec/ddk-apple-worker \
 	/usr/libexec/ddk-phase3-worker \
+	/usr/libexec/ddk-phase4-worker \
 	/usr/share/ddk-field-console/usb-identity.lua \
 	/usr/share/ddk-field-console/operator-actions.lua \
 	/usr/share/ddk-field-console/operator-apple.lua \
 	/usr/share/ddk-field-console/operator-phase3.lua \
+	/usr/share/ddk-field-console/operator-phase4.lua \
 	/usr/lib/lua/luci/view/ddk/shell.htm \
 	/www/luci-static/resources/ddk/console-app.js \
 	/www/luci-static/resources/ddk/console.css \
@@ -118,10 +120,12 @@ DDK_IDENTITY_FILE=/usr/share/ddk-field-console/usb-identity.lua lua -e 'assert(l
 DDK_OPERATOR_FILE=/usr/share/ddk-field-console/operator-actions.lua lua -e 'assert(loadfile(os.getenv("DDK_OPERATOR_FILE")))' || fail 'Operator Mode action module syntax check failed'
 DDK_APPLE_OPERATOR_FILE=/usr/share/ddk-field-console/operator-apple.lua lua -e 'assert(loadfile(os.getenv("DDK_APPLE_OPERATOR_FILE")))' || fail 'Apple Operator Mode action module syntax check failed'
 DDK_PHASE3_OPERATOR_FILE=/usr/share/ddk-field-console/operator-phase3.lua lua -e 'assert(loadfile(os.getenv("DDK_PHASE3_OPERATOR_FILE")))' || fail 'Phase 3 Operator Mode action module syntax check failed'
+DDK_PHASE4_OPERATOR_FILE=/usr/share/ddk-field-console/operator-phase4.lua lua -e 'assert(loadfile(os.getenv("DDK_PHASE4_OPERATOR_FILE")))' || fail 'Phase 4 Operator Mode action module syntax check failed'
 DDK_TEMPLATE_FILE=/usr/lib/lua/luci/view/ddk/shell.htm lua -e 'local parser = require "luci.template.parser"; assert(parser.parse(os.getenv("DDK_TEMPLATE_FILE")))' || fail 'LuCI template syntax check failed'
 sh -n /usr/libexec/ddk-job-worker || fail 'job worker syntax check failed'
 sh -n /usr/libexec/ddk-apple-worker || fail 'Apple worker syntax check failed'
 sh -n /usr/libexec/ddk-phase3-worker || fail 'Phase 3 worker syntax check failed'
+sh -n /usr/libexec/ddk-phase4-worker || fail 'Phase 4 worker syntax check failed'
 find /usr/share/ddk-field-console/tools -type f -name '*.json' | while IFS= read -r file; do jsonfilter -i "$file" -e '@' >/dev/null; done
 pass 'router-side Lua, shell, and JSON syntax'
 
@@ -503,6 +507,80 @@ rmdir "$phase3_probe_dir"
 if pidof openocd >/dev/null 2>&1; then fail 'Phase 3 no-device rejection started OpenOCD'; fi
 if netstat -lntp 2>/dev/null | grep -Eq ':(3333|4444|6666)[[:space:]]'; then fail 'Phase 3 no-device rejection left an OpenOCD listener'; fi
 pass 'Phase 3 schemas, pure planners, protected-target rejection, independent worker target gate, and cleanup'
+
+for phase4_action in monitoring.snapshot wireless.survey usb.inventory forensics.inspect_file capture.replay adsb.receive radio.ais bluetooth.scan automation.mqtt_publish automation.relay industrial.modbus_read auth.inventory auth.program camera.stream gps.ntrip; do
+	phase4_schema="$(/usr/libexec/ddk-console action describe "$phase4_action")"
+	printf '%s' "$phase4_schema" | json_ok || fail "Phase 4 schema is unavailable: $phase4_action"
+	[ "$(printf '%s' "$phase4_schema" | jsonfilter -e '@.data.action_id')" = "$phase4_action" ] || fail "Phase 4 schema returned the wrong action ID: $phase4_action"
+	if /usr/libexec/ddk-console job start "$phase4_action" 2>/dev/null | json_ok; then fail "Phase 4 action started without a prepared request: $phase4_action"; fi
+done
+phase4_unknown_payload="$(printf '%s' '{"version":1,"options":{"host":"127.0.0.1","topic":"ddk/test","payload":"x","executable":"/bin/sh"}}' | base64url)"
+phase4_unknown_result="$(/usr/libexec/ddk-console action prepare automation.mqtt_publish "$phase4_unknown_payload" 2>/dev/null || true)"
+printf '%s' "$phase4_unknown_result" | jsonfilter -e '@.message' | grep -Fq 'Unknown MQTT option' || fail 'unknown Phase 4 executable option was not rejected'
+lua - <<'LUA' || fail 'pure Phase 4 planner safety proof failed'
+local p = assert(dofile('/usr/share/ddk-field-console/operator-phase4.lua'))
+local u1='upload-1700000000-100-1'; local u2='upload-1700000000-100-2'; local cap='upload-1700000000-100-3'
+local context = {
+	interfaces={{value='lo',label='loopback'}}, wireless_interfaces={{value='wlan0',label='synthetic'}},
+	usb_devices={{value='001:002',label='synthetic USB',usb_id='1234:5678'}},
+	rtl_devices={{value=':DDKTEST',label='synthetic RTL',serial='DDKTEST',topology='9-9',usb_id='0bda:2838'}},
+	bluetooth_devices={{value='hci0',label='synthetic HCI'}}, relay_devices={{value='RELAY123',label='synthetic relay',relays=8}},
+	serial_devices={{value='/dev/ttyACM9',label='synthetic serial',topology='9-8',usb_id='1234:5678'}},
+	gps_devices={{value='/dev/ttyACM8',label='synthetic GNSS',topology='9-7',usb_id='1546:01a7'}},
+	camera_devices={{value='/dev/video9',label='synthetic camera',usb_id='046d:0825'}},
+	local_addresses={{value='127.0.0.1',address='127.0.0.1',label='loopback',family='inet'},{value='::1',address='::1',label='loopback6',family='inet6'}},
+	uploads={{id=u1,kind='forensics_input',original_name='sample.bin',size=4,sha256=string.rep('a',64)},{id=u2,kind='forensics_input',original_name='rules.yar',size=4,sha256=string.rep('b',64)},{id=cap,kind='capture_input',original_name='replay.pcap',size=64,sha256=string.rep('c',64)}}
+}
+local cases = {
+	{'monitoring.snapshot',{mode='history',interface='lo'}}, {'wireless.survey',{interface='wlan0'}}, {'usb.inventory',{}},
+	{'forensics.inspect_file',{input=u1,operation='yara',rules=u2}}, {'capture.replay',{input=cap,interface='lo'}},
+	{'adsb.receive',{device=':DDKTEST'}}, {'radio.ais',{device=':DDKTEST'}}, {'bluetooth.scan',{controller='hci0'}},
+	{'automation.mqtt_publish',{host='127.0.0.1',topic='ddk/test',payload='private payload'}},
+	{'automation.relay',{device='RELAY123',operation='on'}}, {'industrial.modbus_read',{transport='tcp',host='127.0.0.1'}},
+	{'auth.inventory',{mode='yubikey'}}, {'auth.program',{operation='configure_hmac',secret=string.rep('a',40),commit=true}},
+	{'camera.stream',{device='/dev/video9',bind_address='127.0.0.1',password='StrongPass1234'}},
+	{'gps.ntrip',{device='/dev/ttyACM8',server='caster.example.net',mountpoint='MOUNT',username='tech',password='private'}}
+}
+for _, case in ipairs(cases) do
+	local schema=assert(p.describe(case[1],context)); assert(schema.action_id==case[1])
+	local plan,err=p.prepare(case[1],case[2],context); assert(plan,case[1]..': '..tostring(err))
+	assert(plan.action_id==case[1] and plan.argv[1]:match('^/'))
+end
+local mqtt=assert(p.prepare('automation.mqtt_publish',{host='127.0.0.1',topic='ddk/test',payload='private payload',username='tech',password='secret'},context))
+assert(not mqtt.argv_preview:find('secret',1,true) and mqtt.options.password=='[REDACTED]' and #mqtt.private_inputs==2)
+local camera=assert(p.describe('camera.stream',context)); for _, field in ipairs(camera.fields) do if field.name=='bind_address' then assert(#field.options==1 and field.options[1].value=='127.0.0.1') end end
+assert(not p.prepare('automation.mqtt_publish',{host='127.0.0.1',topic='ddk/test',payload='x',shell='id'},context))
+assert(not p.prepare('camera.stream',{device='/dev/video9',bind_address='::1',password='StrongPass1234'},context))
+assert(not p.prepare('capture.replay',{input=cap,interface='eth9'},context))
+assert(not p.prepare('gps.ntrip',{device='/dev/ttyUSB0',server='caster.example',mountpoint='M',username='u',password='p'},context))
+LUA
+phase4_probe_id="job-$(date +%s)-$$"
+phase4_probe_dir="/tmp/ddk/jobs/$phase4_probe_id"
+phase4_lock_dir=/tmp/ddk/locks/resource-rtl-sdr
+if [ -e "$phase4_probe_dir" ] || [ -e "$phase4_lock_dir" ]; then fail 'Phase 4 no-device cleanup proof path collided'; fi
+mkdir -p "$phase4_probe_dir" "$phase4_lock_dir"
+chmod 700 "$phase4_probe_dir" "$phase4_lock_dir"
+printf '%s\n' "$phase4_probe_id" > "$phase4_lock_dir/owner"
+printf '%s\n' queued > "$phase4_probe_dir/status"
+printf '%s\n' resource-rtl-sdr > "$phase4_probe_dir/lock-keys"
+printf '%s\n' 10 > "$phase4_probe_dir/wall-timeout"
+printf '%s\n' /usr/bin/readsb --device-type=rtlsdr --device=:DDKVERIFYABSENT --freq=1090000000 --gain=-10 --ppm=0 --no-interactive --raw --metric > "$phase4_probe_dir/argv"
+printf '%s\n' "{\"id\":\"$phase4_probe_id\",\"action_id\":\"adsb.receive\",\"options\":{\"device\":\":DDKVERIFYABSENT\"},\"artifacts\":[{\"name\":\"adsb.txt\",\"storage\":\"tmp\",\"max_size\":2097152}]}" > "$phase4_probe_dir/metadata.json"
+chmod 600 "$phase4_probe_dir"/*
+phase4_probe_result=0
+/usr/libexec/ddk-phase4-worker "$phase4_probe_id" phase4_adsb >/dev/null 2>&1 || phase4_probe_result=$?
+phase4_probe_status="$(cat "$phase4_probe_dir/status" 2>/dev/null || true)"
+phase4_probe_error="$(cat "$phase4_probe_dir/stderr" 2>/dev/null || true)"
+rm -f "$phase4_probe_dir/argv" "$phase4_probe_dir/lock-keys" "$phase4_probe_dir/metadata.json" "$phase4_probe_dir/pid" \
+	"$phase4_probe_dir/status" "$phase4_probe_dir/stderr" "$phase4_probe_dir/stdout" "$phase4_probe_dir/wall-timeout"
+rmdir "$phase4_probe_dir"
+[ "$phase4_probe_result" -eq 65 ] || fail "Phase 4 no-device worker proof returned $phase4_probe_result instead of 65"
+[ "$phase4_probe_status" = failed ] || fail "Phase 4 no-device worker proof ended in state: $phase4_probe_status"
+printf '%s' "$phase4_probe_error" | grep -Fq 'Selected reviewed RTL-SDR is no longer present.' || fail 'Phase 4 no-device worker rejection evidence is missing'
+[ ! -e "$phase4_lock_dir" ] || fail 'Phase 4 resource lock remained after no-device rejection'
+if pidof readsb >/dev/null 2>&1; then fail 'Phase 4 no-device rejection started readsb'; fi
+pass 'Phase 4 schemas, 15 pure planners, unknown-field refusal, independent hardware gate, and cleanup'
+
 if /usr/libexec/ddk-console action prepare network.nmap_lan_discovery not-base64 2>/dev/null | json_ok; then
 	fail 'malformed structured action envelope was accepted'
 fi
@@ -802,7 +880,8 @@ capture_manifest=/usr/share/ddk-field-console/tools/packet-capture.json
 [ "$(jsonfilter -i "$capture_manifest" -e '@.actions[0].class')" = 'SECURITY' ] || fail 'LAN metadata capture lost its SECURITY classification'
 [ "$(jsonfilter -i "$capture_manifest" -e '@.actions[0].execution')" = 'job' ] || fail 'LAN metadata capture execution mode is incorrect'
 [ "$(jsonfilter -i "$capture_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'LAN metadata capture is not explicitly enabled'
-[ "$(jsonfilter -i "$capture_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'packet replay was unexpectedly enabled'
+[ "$(jsonfilter -i "$capture_manifest" -e '@.actions[1].enabled')" = 'true' ] || fail 'structured packet replay is not enabled'
+[ "$(jsonfilter -i "$capture_manifest" -e '@.actions[1].parameter_schema')" = 'operator-v1' ] || fail 'packet replay structured schema marker is missing'
 [ -x /usr/sbin/tcpdump ] || fail 'the reviewed tcpdump executable is unavailable'
 /usr/sbin/tcpdump -i br-lan -p -n -q -s 96 -c 1 -d 'arp or icmp or (ip and udp and (port 67 or port 68))' >/dev/null 2>&1 || fail 'the fixed LAN metadata filter did not compile'
 pass 'reviewed LAN metadata manifest, tcpdump path, and fixed filter'
@@ -995,7 +1074,8 @@ radio_manifest=/usr/share/ddk-field-console/tools/sdr-radio.json
 [ "$(jsonfilter -i "$radio_manifest" -e '@.actions[0].execution')" = 'job' ] || fail 'RTL-433 action execution mode is incorrect'
 [ "$(jsonfilter -i "$radio_manifest" -e '@.actions[0].parameter_schema')" = 'operator-v1' ] || fail 'RTL-433 structured schema marker is missing'
 [ "$(jsonfilter -i "$radio_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'RTL-433 action is not explicitly enabled'
-[ "$(jsonfilter -i "$radio_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'AIS receive was unexpectedly enabled'
+[ "$(jsonfilter -i "$radio_manifest" -e '@.actions[1].enabled')" = 'true' ] || fail 'AIS receive is not explicitly enabled'
+[ "$(jsonfilter -i "$radio_manifest" -e '@.actions[1].parameter_schema')" = 'operator-v1' ] || fail 'AIS structured schema marker is missing'
 [ -x /usr/bin/rtl_433 ] || fail 'the reviewed rtl_433 executable is unavailable'
 rtl_version_output="$(/usr/bin/rtl_433 -c /dev/null -V 2>&1)" || fail 'rtl_433 rejected the explicit empty-config invocation'
 printf '%s' "$rtl_version_output" | grep -Fq 'rtl_433 version' || fail 'rtl_433 version evidence is missing'
@@ -1071,7 +1151,8 @@ camera_manifest=/usr/share/ddk-field-console/tools/camera.json
 [ "$(jsonfilter -i "$camera_manifest" -e '@.actions[0].execution')" = 'job' ] || fail 'camera still action execution mode is incorrect'
 [ "$(jsonfilter -i "$camera_manifest" -e '@.actions[0].parameter_schema')" = 'operator-v1' ] || fail 'camera structured schema marker is missing'
 [ "$(jsonfilter -i "$camera_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'camera still action is not explicitly enabled'
-[ "$(jsonfilter -i "$camera_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'camera streaming was unexpectedly enabled'
+[ "$(jsonfilter -i "$camera_manifest" -e '@.actions[1].enabled')" = 'true' ] || fail 'camera streaming is not explicitly enabled'
+[ "$(jsonfilter -i "$camera_manifest" -e '@.actions[1].parameter_schema')" = 'operator-v1' ] || fail 'camera stream structured schema marker is missing'
 [ -x /usr/bin/fswebcam ] || fail 'the reviewed fswebcam executable is unavailable'
 [ -x /usr/bin/v4l2-ctl ] || fail 'the reviewed v4l2-ctl executable is unavailable'
 [ "$(uci -q get mjpg-streamer.core.enabled)" = '0' ] || fail 'mjpg-streamer is not explicitly UCI-disabled'
@@ -1150,7 +1231,8 @@ gps_manifest=/usr/share/ddk-field-console/tools/gps-gnss.json
 [ "$(jsonfilter -i "$gps_manifest" -e '@.actions[0].execution')" = 'job' ] || fail 'GPS/GNSS snapshot execution mode is incorrect'
 [ "$(jsonfilter -i "$gps_manifest" -e '@.actions[0].parameter_schema')" = 'operator-v1' ] || fail 'GPS/GNSS structured schema marker is missing'
 [ "$(jsonfilter -i "$gps_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'GPS/GNSS snapshot is not explicitly enabled'
-[ "$(jsonfilter -i "$gps_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'GPS/GNSS NTRIP was unexpectedly enabled'
+[ "$(jsonfilter -i "$gps_manifest" -e '@.actions[1].enabled')" = 'true' ] || fail 'GPS/GNSS NTRIP is not explicitly enabled'
+[ "$(jsonfilter -i "$gps_manifest" -e '@.actions[1].parameter_schema')" = 'operator-v1' ] || fail 'NTRIP structured schema marker is missing'
 [ -x /usr/bin/gpsdecode ] || fail 'the reviewed gpsdecode executable is unavailable'
 LC_ALL=C /usr/bin/gpsdecode -V 2>&1 | grep -Fqx 'gpsdecode revision 3.23.1' || fail 'gpsdecode version is not reviewed 3.23.1'
 [ "$(uci -q get gpsd.core.enabled)" = '0' ] || fail 'the existing gpsd configuration is not disabled'
@@ -1361,8 +1443,8 @@ pass 'network, firewall, wireless, uhttpd, rpcd, radio, camera, and gpsd configu
 if netstat -lntup 2>/dev/null | grep -q 'ddk'; then fail 'a DDK listener exists'; fi
 # BusyBox on this target has no standalone pgrep.
 # shellcheck disable=SC2009
-if ps w | grep -E '[d]dk-(job|apple|phase3)-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
-if pidof nmap tcpdump iperf3 uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver socat picocom gpsd gpsdecode candump cansend cangen canplayer adb usbmuxd idevice_id ideviceinfo idevicepair irecovery idevicerestore openocd avrdude dfu-util dfu-programmer flashrom stm32flash bossac lpc21isp ftdi_eeprom >/dev/null 2>&1; then fail 'a bounded-operation or device-management client is unexpectedly active'; fi
+if ps w | grep -E '[d]dk-(job|apple|phase3|phase4)-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
+if pidof nmap tcpdump iperf3 uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver socat picocom gpsd gpsdecode candump cansend cangen canplayer adb usbmuxd idevice_id ideviceinfo idevicepair irecovery idevicerestore openocd avrdude dfu-util dfu-programmer flashrom stm32flash bossac lpc21isp ftdi_eeprom vnstat iftop tcpreplay hcitool mosquitto_pub mbcollect pcsc_scan pcscd ykinfo ykpersonalize ntripclient >/dev/null 2>&1; then fail 'a bounded-operation or device-management client is unexpectedly active'; fi
 if netstat -lntup 2>/dev/null | grep -Eq ':(3333|4444|5038|6666|27015)[[:space:]]'; then fail 'an Operator Mode temporary listener remained'; fi
 pass 'no DDK listener or idle operation worker exists'
 

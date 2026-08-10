@@ -1,0 +1,487 @@
+#!/bin/sh
+# shellcheck disable=SC2317
+
+set -eu
+umask 077
+
+job_id="${1:-}"
+task="${2:-}"
+job_root=/tmp/ddk/jobs
+lock_root=/tmp/ddk/locks
+job_numbers="${job_id#job-}"
+job_epoch="${job_numbers%%-*}"
+job_owner="${job_numbers#*-}"
+
+[ "$job_numbers" != "$job_id" ] && [ "$job_epoch" != "$job_numbers" ] || exit 64
+case "$job_epoch:$job_owner" in *[!0-9:]*|:*|*:) exit 64 ;; esac
+case "$task" in
+	phase4_monitoring|phase4_wireless|phase4_usb|phase4_forensics|phase4_replay|phase4_adsb|phase4_ais|phase4_bluetooth|phase4_mqtt|phase4_relay|phase4_modbus|phase4_auth_inventory|phase4_auth_program|phase4_camera_stream|phase4_ntrip) ;;
+	*) exit 64 ;;
+esac
+
+job_dir="$job_root/$job_id"
+[ -d "$job_dir" ] && [ ! -L "$job_dir" ] && [ -f "$job_dir/metadata.json" ] && [ ! -L "$job_dir/metadata.json" ] && [ -f "$job_dir/argv" ] && [ ! -L "$job_dir/argv" ] || exit 66
+
+native_pid=""
+helper_pid=""
+worker_success=0
+native_out="$job_dir/phase4-native.out"
+native_err="$job_dir/phase4-native.err"
+modbus_config="$job_dir/phase4-modbus.ini"
+
+status_set() {
+	printf '%s\n' "$1" > "$job_dir/status.next"
+	mv "$job_dir/status.next" "$job_dir/status"
+}
+
+stop_pid() {
+	stop_value="$1"
+	case "$stop_value" in ''|*[!0-9]*) return 0 ;; esac
+	kill -TERM "$stop_value" 2>/dev/null || true
+	sleep 1
+	kill -KILL "$stop_value" 2>/dev/null || true
+	wait "$stop_value" 2>/dev/null || true
+}
+
+cleanup() {
+	[ -z "$native_pid" ] || stop_pid "$native_pid"
+	[ -z "$helper_pid" ] || stop_pid "$helper_pid"
+	native_pid=""; helper_pid=""
+	rm -f "$native_out" "$native_err" "$modbus_config" "$job_dir"/private-*.hex "$job_dir"/private-*.bin
+	if [ "$worker_success" -eq 0 ]; then
+		rm -f "$job_dir/monitoring.txt" "$job_dir/wireless-survey.txt" "$job_dir/usb-inventory.txt" \
+			"$job_dir/forensics-report.txt" "$job_dir/adsb.txt" "$job_dir/ais-nmea.txt" \
+			"$job_dir/bluetooth-scan.txt" "$job_dir/modbus-read.txt" "$job_dir/smartcard-inventory.txt"
+	fi
+	[ -f "$job_dir/lock-keys" ] || return 0
+	while IFS= read -r lock_key; do
+		case "$lock_key" in ''|*[!a-z0-9_.-]*) continue ;; esac
+		lock_path="$lock_root/$lock_key"
+		[ "$(cat "$lock_path/owner" 2>/dev/null || true)" = "$job_id" ] || continue
+		rm -f "$lock_path/owner"
+		rmdir "$lock_path" 2>/dev/null || true
+	done < "$job_dir/lock-keys"
+}
+
+stop_job() {
+	trap - HUP INT TERM
+	[ -z "$native_pid" ] || stop_pid "$native_pid"
+	[ -z "$helper_pid" ] || stop_pid "$helper_pid"
+	native_pid=""; helper_pid=""
+	status_set stopped
+	printf '%s\n' 'Phase 4 worker stopped by an authenticated DDK request; owned native/helper processes, private inputs, partial artifacts, and locks were cleaned.' >> "$job_dir/stderr"
+	exit 143
+}
+
+task_fail() {
+	printf '%s\n' "$1" >> "$job_dir/stderr"
+	status_set failed
+	exit 65
+}
+
+json_option() {
+	jsonfilter -i "$job_dir/metadata.json" -e "@.options.$1" 2>/dev/null || true
+}
+
+bounded_integer() {
+	integer_value="$1"; integer_minimum="$2"; integer_maximum="$3"; integer_label="$4"
+	case "$integer_value" in ''|*[!0-9-]*) task_fail "Prepared $integer_label is invalid." ;; esac
+	if [ "$integer_value" -lt "$integer_minimum" ] || [ "$integer_value" -gt "$integer_maximum" ]; then task_fail "Prepared $integer_label is outside the reviewed range."; fi
+}
+
+require_package_version() {
+	package_name="$1"; package_version="$2"
+	opkg status "$package_name" 2>/dev/null | grep -Fqx "Version: $package_version" || task_fail "Installed $package_name version drifted from the reviewed $package_version contract."
+}
+
+sealed_path_for_id() {
+	wanted_id="$1"; sealed_index=0
+	while [ "$sealed_index" -lt 4 ]; do
+		candidate_id="$(jsonfilter -i "$job_dir/input-uploads.json" -e "@[$sealed_index].id" 2>/dev/null || true)"
+		if [ "$candidate_id" = "$wanted_id" ]; then
+			candidate_path="$(jsonfilter -i "$job_dir/input-uploads.json" -e "@[$sealed_index].sealed_path" 2>/dev/null || true)"
+			validate_sealed_input "$candidate_path"
+			printf '%s' "$candidate_path"
+			return 0
+		fi
+		sealed_index=$((sealed_index + 1))
+	done
+	task_fail 'Prepared Phase 4 upload ID is not bound to this job.'
+}
+
+artifact_limit() {
+	wanted="$1"; artifact_index=0
+	while [ "$artifact_index" -lt 8 ]; do
+		artifact_name="$(jsonfilter -i "$job_dir/metadata.json" -e "@.artifacts[$artifact_index].name" 2>/dev/null || true)"
+		if [ "$artifact_name" = "$wanted" ]; then jsonfilter -i "$job_dir/metadata.json" -e "@.artifacts[$artifact_index].max_size" 2>/dev/null || true; return; fi
+		artifact_index=$((artifact_index + 1))
+	done
+}
+
+validate_artifact() {
+	artifact_name="$1"
+	case "$artifact_name" in monitoring.txt|wireless-survey.txt|usb-inventory.txt|forensics-report.txt|adsb.txt|ais-nmea.txt|bluetooth-scan.txt|modbus-read.txt|smartcard-inventory.txt) ;; *) task_fail 'Worker selected an unregistered Phase 4 artifact.' ;; esac
+	artifact_path="$job_dir/$artifact_name"
+	artifact_max="$(artifact_limit "$artifact_name")"
+	case "$artifact_max" in ''|*[!0-9]*) task_fail 'Phase 4 artifact ceiling is absent or invalid.' ;; esac
+	artifact_size="$(stat -c '%s' "$artifact_path" 2>/dev/null || true)"
+	case "$artifact_size" in ''|*[!0-9]*) task_fail 'Phase 4 artifact is missing or not a regular file.' ;; esac
+	if [ ! -f "$artifact_path" ] || [ -L "$artifact_path" ] || [ "$artifact_size" -lt 1 ] || [ "$artifact_size" -gt "$artifact_max" ]; then task_fail 'Phase 4 artifact failed path, type, or size validation.'; fi
+	chmod 600 "$artifact_path"
+}
+
+private_decode() {
+	private_name="$1"
+	case "$private_name" in mqtt-payload|mqtt-password|yubikey-secret|camera-password|ntrip-password) ;; *) task_fail 'Private input name is outside the Phase 4 allowlist.' ;; esac
+	hex_path="$job_dir/private-$private_name.hex"
+	bin_path="$job_dir/private-$private_name.bin"
+	if [ ! -f "$hex_path" ] || [ -L "$hex_path" ]; then task_fail 'Required private input is absent or unsafe.'; fi
+	private_hex="$(tr -d '\n' < "$hex_path")"
+	case "$private_hex" in ''|*[!0-9a-f]*) task_fail 'Private input encoding is invalid.' ;; esac
+	[ $(( ${#private_hex} % 2 )) -eq 0 ] || task_fail 'Private input encoding length is invalid.'
+	printf '%s' "$private_hex" | /usr/bin/xxd -r -p > "$bin_path"
+	chmod 600 "$bin_path"
+	rm -f "$hex_path"
+	printf '%s' "$bin_path"
+}
+
+validate_sealed_input() {
+	sealed_input="$1"
+	case "$sealed_input" in /overlay/ddk-field-console/uploads/upload-[0-9]*-[0-9]*-[0-9]*/sealed.bin) ;; *) task_fail 'Prepared Phase 4 input path is outside sealed DDK storage.' ;; esac
+	if [ ! -f "$sealed_input" ] || [ -L "$sealed_input" ] || [ "$(stat -c '%a' "$sealed_input" 2>/dev/null || true)" != 600 ]; then task_fail 'Prepared Phase 4 sealed input failed file and mode validation.'; fi
+	matched=0; input_index=0
+	while [ "$input_index" -lt 4 ]; do
+		input_path="$(jsonfilter -i "$job_dir/input-uploads.json" -e "@[$input_index].sealed_path" 2>/dev/null || true)"
+		if [ "$input_path" = "$sealed_input" ]; then
+			expected_size="$(jsonfilter -i "$job_dir/input-uploads.json" -e "@[$input_index].size" 2>/dev/null || true)"
+			expected_sha="$(jsonfilter -i "$job_dir/input-uploads.json" -e "@[$input_index].sha256" 2>/dev/null || true)"
+			matched=1; break
+		fi
+		input_index=$((input_index + 1))
+	done
+	[ "$matched" -eq 1 ] || task_fail 'Prepared Phase 4 argv references an undeclared sealed input.'
+	case "$expected_size" in ''|*[!0-9]*) task_fail 'Prepared input size is invalid.' ;; esac
+	case "$expected_sha" in [0-9a-f][0-9a-f]*) ;; *) task_fail 'Prepared input digest is invalid.' ;; esac
+	if [ "${#expected_sha}" -ne 64 ] || [ "$(stat -c '%s' "$sealed_input")" != "$expected_size" ]; then task_fail 'Prepared input size or digest metadata changed.'; fi
+	actual_sha="$(/usr/bin/sha256sum "$sealed_input" | awk 'NR == 1 {print $1}')"
+	[ "$actual_sha" = "$expected_sha" ] || task_fail 'Prepared Phase 4 sealed input failed worker-side SHA-256 validation.'
+}
+
+validate_interface() {
+	interface="$1"
+	case "$interface" in ''|*[!A-Za-z0-9_.-]*) task_fail 'Prepared network interface is invalid.' ;; esac
+	if [ "${#interface}" -gt 15 ] || [ ! -d "/sys/class/net/$interface" ]; then task_fail 'Selected network interface is no longer present.'; fi
+}
+
+validate_serial() {
+	serial_device="$1"
+	case "$serial_device" in /dev/ttyUSB[0-9]*|/dev/ttyACM[0-9]*) ;; *) task_fail 'Prepared serial target is invalid.' ;; esac
+	if [ ! -c "$serial_device" ] || [ -L "$serial_device" ]; then task_fail 'Selected serial target is no longer a direct character device.'; fi
+	serial_name="${serial_device#/dev/}"
+	serial_vendor="$(cat "/sys/class/tty/$serial_name/device/../../idVendor" 2>/dev/null || true)"
+	serial_product="$(cat "/sys/class/tty/$serial_name/device/../../idProduct" 2>/dev/null || true)"
+	[ "$serial_vendor:$serial_product" != 2c7c:0125 ] || task_fail 'The EC25 modem serial ports remain reserved from Phase 4 workflows.'
+	expected_usb_id="$(json_option device_usb_id)"
+	[ -z "$expected_usb_id" ] || [ "$serial_vendor:$serial_product" = "$expected_usb_id" ] || task_fail 'Selected serial target USB identity changed after review.'
+}
+
+validate_rtl() {
+	selector="$(json_option device)"; case "$selector" in :[A-Za-z0-9_.-]*) ;; *) task_fail 'Prepared RTL-SDR selector is invalid.' ;; esac
+	serial="${selector#:}"; found=0
+	for base in /sys/bus/usb/devices/*; do
+		[ -d "$base" ] || continue
+		usb_id="$(cat "$base/idVendor" 2>/dev/null || true):$(cat "$base/idProduct" 2>/dev/null || true)"
+		case "$usb_id" in 0bda:2832|0bda:2838) ;; *) continue ;; esac
+		[ "$(cat "$base/serial" 2>/dev/null || true)" = "$serial" ] || continue
+		claimed=0; for interface in "$base":*; do [ -L "$interface/driver" ] && claimed=1; done
+		[ "$claimed" -eq 0 ] || task_fail 'Selected RTL-SDR became claimed by another driver after review.'
+		found=1; break
+	done
+	[ "$found" -eq 1 ] || task_fail 'Selected reviewed RTL-SDR is no longer present.'
+}
+
+validate_camera() {
+	device="$(json_option device)"; case "$device" in /dev/video[0-9]*) ;; *) task_fail 'Prepared camera node is invalid.' ;; esac
+	if [ ! -c "$device" ] || [ -L "$device" ]; then task_fail 'Selected camera node is no longer a direct character device.'; fi
+	name="${device#/dev/}"; class_base="/sys/class/video4linux/$name"; device_path="$(readlink -f "$class_base/device" 2>/dev/null || true)"
+	driver="$(basename "$(readlink "$device_path/driver" 2>/dev/null || true)")"
+	if [ "$driver" != uvcvideo ] || [ "$(cat "$device_path/bInterfaceClass" 2>/dev/null || true)" != 0e ] || [ "$(cat "$class_base/index" 2>/dev/null || true)" != 0 ]; then task_fail 'Selected camera no longer matches the reviewed primary UVC identity.'; fi
+	if [ "$(uci -q get mjpg-streamer.core.enabled 2>/dev/null || true)" != 0 ] || [ "$(uci -q get motion.general.enabled 2>/dev/null || true)" != 0 ]; then task_fail 'Existing camera services are not explicitly disabled.'; fi
+}
+
+run_native() {
+	allow_deadline="$1"; shift
+	"$@" > "$native_out" 2> "$native_err" &
+	native_pid=$!
+	deadline=$(( $(date +%s) + wall_timeout )); timed_out=0
+	while kill -0 "$native_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$deadline" ]; then timed_out=1; stop_pid "$native_pid"; break; fi
+		out_size="$(stat -c '%s' "$native_out" 2>/dev/null || printf 0)"; err_size="$(stat -c '%s' "$native_err" 2>/dev/null || printf 0)"
+		if [ "$out_size" -gt 8388608 ] || [ "$err_size" -gt 8388608 ]; then stop_pid "$native_pid"; native_pid=""; task_fail 'Phase 4 native output exceeded the 8 MiB worker ceiling.'; fi
+		sleep 1
+	done
+	native_result=0; wait "$native_pid" 2>/dev/null || native_result=$?; native_pid=""
+	if [ "$timed_out" -eq 1 ]; then
+		if [ "$allow_deadline" -eq 1 ]; then native_result=0; printf 'Validated %s-second operating window completed.\n' "$wall_timeout" >> "$native_err"
+		else native_result=124; printf 'Native operation exceeded the validated %s-second wall timeout.\n' "$wall_timeout" >> "$native_err"; fi
+	fi
+}
+
+run_native_stdin() {
+	stdin_path="$1"; shift
+	"$@" < "$stdin_path" > "$native_out" 2> "$native_err" &
+	native_pid=$!
+	deadline=$(( $(date +%s) + wall_timeout )); timed_out=0
+	while kill -0 "$native_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$deadline" ]; then timed_out=1; stop_pid "$native_pid"; break; fi
+		out_size="$(stat -c '%s' "$native_out" 2>/dev/null || printf 0)"; err_size="$(stat -c '%s' "$native_err" 2>/dev/null || printf 0)"
+		if [ "$out_size" -gt 8388608 ] || [ "$err_size" -gt 8388608 ]; then stop_pid "$native_pid"; native_pid=""; task_fail 'Phase 4 native output exceeded the 8 MiB worker ceiling.'; fi
+		sleep 1
+	done
+	native_result=0; wait "$native_pid" 2>/dev/null || native_result=$?; native_pid=""
+	if [ "$timed_out" -eq 1 ]; then native_result=124; printf 'Native operation exceeded the validated %s-second wall timeout.\n' "$wall_timeout" >> "$native_err"; fi
+}
+
+make_text_artifact() {
+	artifact="$1"; title="$2"
+	{
+		printf '%s\n\n' "$title"
+		head -c 1572864 "$native_out" 2>/dev/null || true
+		if [ -s "$native_err" ]; then printf '\n[STDERR]\n'; head -c 393216 "$native_err"; fi
+	} > "$job_dir/$artifact"
+	validate_artifact "$artifact"
+}
+
+trap cleanup EXIT
+trap stop_job HUP INT TERM
+printf '%s\n' "$$" > "$job_dir/pid"
+: > "$job_dir/stdout"; : > "$job_dir/stderr"; status_set running
+
+action_id="$(jsonfilter -i "$job_dir/metadata.json" -e '@.action_id' 2>/dev/null || true)"
+wall_timeout="$(cat "$job_dir/wall-timeout" 2>/dev/null || true)"
+case "$wall_timeout" in ''|*[!0-9]*) task_fail 'Prepared Phase 4 wall timeout is invalid.' ;; esac
+if [ "$wall_timeout" -lt 3 ] || [ "$wall_timeout" -gt 7200 ]; then task_fail 'Prepared Phase 4 wall timeout is outside the reviewed range.'; fi
+case "$task:$action_id" in
+	phase4_monitoring:monitoring.snapshot|phase4_wireless:wireless.survey|phase4_usb:usb.inventory|phase4_forensics:forensics.inspect_file|phase4_replay:capture.replay|phase4_adsb:adsb.receive|phase4_ais:radio.ais|phase4_bluetooth:bluetooth.scan|phase4_mqtt:automation.mqtt_publish|phase4_relay:automation.relay|phase4_modbus:industrial.modbus_read|phase4_auth_inventory:auth.inventory|phase4_auth_program:auth.program|phase4_camera_stream:camera.stream|phase4_ntrip:gps.ntrip) ;;
+	*) task_fail 'Prepared Phase 4 task does not match its exact action ID.' ;;
+esac
+
+case "$task" in
+	phase4_monitoring) require_package_version vnstat2 2.9-1; require_package_version iftop 2018-10-03-77901c8c-2 ;;
+	phase4_wireless) require_package_version iw 5.16-1; require_package_version iwinfo 2022-12-15-8d158096-1 ;;
+	phase4_usb) require_package_version usbutils 014-1 ;;
+	phase4_forensics) require_package_version file 5.41-1; require_package_version hashdeep 4.4-3; require_package_version ssdeep 2.14.1-2; require_package_version checksec 2.5.0-1; require_package_version yara 4.1.3-1 ;;
+	phase4_replay) require_package_version tcpreplay 4.4.1-1; require_package_version tcpdump 4.9.3-4 ;;
+	phase4_adsb) require_package_version readsb 3.9.0-1 ;;
+	phase4_ais) require_package_version rtl-ais 0.3-4 ;;
+	phase4_bluetooth) require_package_version bluez-utils 5.64-1 ;;
+	phase4_mqtt) require_package_version mosquitto-client-ssl 2.0.15-1 ;;
+	phase4_relay) require_package_version crelay 0.14-2 ;;
+	phase4_modbus) require_package_version mbtools 2014-10-29-149e9c69-3 ;;
+	phase4_auth_inventory) require_package_version pcsc-tools 1.5.7-1; require_package_version pcscd 1.9.9-1; require_package_version ykpers 1.20.0-4 ;;
+	phase4_auth_program) require_package_version ykpers 1.20.0-4 ;;
+	phase4_camera_stream) require_package_version mjpg-streamer 1.0.0-5 ;;
+	phase4_ntrip) require_package_version ntripclient 1.51-2 ;;
+esac
+
+set --
+argv_count=0
+while IFS= read -r argv_item; do
+	[ -n "$argv_item" ] || task_fail 'Prepared Phase 4 argv contains an empty element.'
+	case "$argv_item" in *"$(printf '\r')"*|*"$(printf '\t')"*) task_fail 'Prepared Phase 4 argv contains a control character.' ;; esac
+	argv_count=$((argv_count + 1)); [ "$argv_count" -le 64 ] || task_fail 'Prepared Phase 4 argv exceeds the reviewed argument count.'
+	set -- "$@" "$argv_item"
+done < "$job_dir/argv"
+[ "$#" -ge 1 ] || task_fail 'Prepared Phase 4 argv is incomplete.'
+native_executable="$1"
+case "$task:$native_executable" in
+	phase4_monitoring:/usr/bin/vnstat|phase4_monitoring:/usr/bin/iftop|phase4_wireless:/usr/bin/iwinfo|phase4_wireless:/usr/sbin/iw|phase4_usb:/usr/bin/lsusb|phase4_forensics:/usr/bin/file|phase4_forensics:/usr/bin/hashdeep|phase4_forensics:/usr/bin/ssdeep|phase4_forensics:/usr/bin/checksec|phase4_forensics:/usr/bin/yara|phase4_replay:/usr/bin/tcpreplay|phase4_adsb:/usr/bin/readsb|phase4_ais:/usr/bin/rtl_ais|phase4_bluetooth:/usr/bin/hcitool|phase4_mqtt:/usr/bin/mosquitto_pub|phase4_relay:/usr/bin/crelay|phase4_modbus:/usr/bin/mbcollect|phase4_auth_inventory:/usr/bin/pcsc_scan|phase4_auth_inventory:/usr/bin/ykinfo|phase4_auth_program:/usr/bin/ykpersonalize|phase4_camera_stream:/usr/bin/mjpg_streamer|phase4_ntrip:/usr/bin/ntripclient) ;;
+	*) task_fail 'Prepared Phase 4 argv selected an executable outside the exact task allowlist.' ;;
+esac
+[ -x "$native_executable" ] || task_fail 'Prepared Phase 4 native executable is unavailable.'
+
+for argv_item in "$@"; do
+	case "$argv_item" in *@JOB@*|*@ARTIFACT@*|*@UPLOAD@*|*@WORK@*) task_fail 'An unresolved DDK path placeholder reached the Phase 4 worker.' ;; esac
+	case "$argv_item" in /overlay/ddk-field-console/uploads/*/sealed.bin) validate_sealed_input "$argv_item" ;; /overlay/*) task_fail 'Prepared Phase 4 argv references an unreviewed extroot path.' ;; esac
+done
+
+case "$task" in
+	phase4_monitoring)
+		interface="$(json_option interface)"; validate_interface "$interface"; mode="$(json_option mode)"
+		if [ "$mode" = history ]; then set -- /usr/bin/vnstat --iface "$interface" --json
+		elif [ "$mode" = live_flows ]; then
+			duration="$(json_option duration)"; lines="$(json_option lines)"; bounded_integer "$duration" 2 120 'monitoring duration'; bounded_integer "$lines" 10 200 'monitoring row count'
+			set -- /usr/bin/iftop -n -N -t -s "$duration" -L "$lines" -i "$interface"; [ "$(json_option show_ports)" != true ] || set -- "$@" -P
+		else task_fail 'Prepared monitoring mode is invalid.'; fi
+		if [ "$mode" = live_flows ]; then run_native 1 "$@"; else run_native 0 "$@"; fi
+		make_text_artifact monitoring.txt 'DDK MONITORING SNAPSHOT'
+		;;
+	phase4_wireless)
+		interface="$(json_option interface)"; validate_interface "$interface"; operation="$(json_option operation)"
+		/usr/sbin/iw dev | grep -Eq "^[[:space:]]*Interface[[:space:]]+$interface$" || task_fail 'Selected interface is no longer a wireless interface.'
+		case "$operation" in info) set -- /usr/bin/iwinfo "$interface" info ;; scan) set -- /usr/bin/iwinfo "$interface" scan ;; stations) set -- /usr/sbin/iw dev "$interface" station dump ;; *) task_fail 'Prepared wireless survey operation is invalid.' ;; esac
+		run_native 0 "$@"
+		make_text_artifact wireless-survey.txt 'DDK WIRELESS SURVEY'
+		;;
+	phase4_usb)
+		operation="$(json_option operation)"; device_selector="$(json_option device)"
+		case "$operation" in summary) [ -z "$device_selector" ] || task_fail 'Prepared USB summary contains an unexpected device selector.'; set -- /usr/bin/lsusb ;; tree) [ -z "$device_selector" ] || task_fail 'Prepared USB tree contains an unexpected device selector.'; set -- /usr/bin/lsusb -t ;; verbose)
+			set -- /usr/bin/lsusb -v
+			if [ -n "$device_selector" ]; then case "$device_selector" in [0-9][0-9][0-9]:[0-9][0-9][0-9]:[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) ;; *) task_fail 'Prepared USB selector is invalid.' ;; esac; set -- "$@" -d "$(printf '%s' "$device_selector" | cut -d: -f3,4)"; fi
+			;; *) task_fail 'Prepared USB inventory operation is invalid.' ;; esac
+		run_native 0 "$@"
+		make_text_artifact usb-inventory.txt 'DDK USB INVENTORY'
+		;;
+	phase4_forensics)
+		operation="$(json_option operation)"; input_path="$(sealed_path_for_id "$(json_option input)")"
+		case "$operation" in identify) set -- /usr/bin/file -b -k -i "$input_path" ;; hashes) set -- /usr/bin/hashdeep -c md5,sha1,sha256 -b "$input_path" ;; similarity) set -- /usr/bin/ssdeep -b "$input_path" ;; checksec) set -- /usr/bin/checksec --format=json "--file=$input_path" ;; yara)
+			rules_id="$(json_option rules)"; if [ -z "$rules_id" ] || [ "$rules_id" = "$(json_option input)" ]; then task_fail 'Prepared YARA rules input is invalid.'; fi; rules_path="$(sealed_path_for_id "$rules_id")"; yara_max="$(json_option yara_max_rules)"; bounded_integer "$yara_max" 1 1000 'YARA match ceiling'; yara_timeout="$wall_timeout"; [ "$yara_timeout" -le 300 ] || yara_timeout=300
+			set -- /usr/bin/yara --no-warnings --threads=1 "--timeout=$yara_timeout" "--max-rules=$yara_max"; [ "$(json_option yara_strings)" != true ] || set -- "$@" --print-strings; set -- "$@" "$rules_path" "$input_path"
+			;; *) task_fail 'Prepared forensic operation is invalid.' ;; esac
+		run_native 0 "$@"
+		make_text_artifact forensics-report.txt 'DDK FORENSIC FILE REPORT'
+		;;
+	phase4_replay)
+		interface="$(json_option interface)"; validate_interface "$interface"
+		input_path="$(sealed_path_for_id "$(json_option input)")"; replay_loop="$(json_option loop)"; replay_limit="$(json_option packet_limit)"; replay_duration="$(json_option duration)"; speed="$(json_option speed)"; rate="$(json_option rate)"
+		bounded_integer "$replay_loop" 1 1000 'packet replay loop count'; bounded_integer "$replay_limit" 0 1000000 'packet replay packet ceiling'; bounded_integer "$replay_duration" 1 3600 'packet replay duration'
+		/usr/bin/timeout 20 /usr/sbin/tcpdump -n -r "$input_path" -c 1 >/dev/null 2> "$job_dir/phase4-pcap-check.err" || task_fail 'Sealed replay input is not a readable PCAP/PCAPNG capture with at least one packet.'
+		rm -f "$job_dir/phase4-pcap-check.err"
+		set -- /usr/bin/tcpreplay --quiet "--intf1=$interface" "--loop=$replay_loop" "--duration=$replay_duration"; [ "$replay_limit" -eq 0 ] || set -- "$@" "--limit=$replay_limit"
+		case "$speed" in original) ;; multiplier) set -- "$@" "--multiplier=$rate" ;; pps) set -- "$@" "--pps=$rate" ;; mbps) set -- "$@" "--mbps=$rate" ;; topspeed) set -- "$@" --topspeed ;; *) task_fail 'Prepared packet replay speed is invalid.' ;; esac; set -- "$@" "$input_path"
+		run_native 0 "$@"
+		;;
+	phase4_adsb)
+		validate_rtl; frequency="$(json_option frequency)"; ppm="$(json_option ppm)"; duration="$(json_option duration)"; gain="$(json_option gain)"; output="$(json_option output)"
+		bounded_integer "$frequency" 24000000 1766000000 'ADS-B frequency'; bounded_integer "$ppm" -1000 1000 'ADS-B PPM correction'; bounded_integer "$duration" 10 3600 'ADS-B duration'
+		set -- /usr/bin/readsb --device-type=rtlsdr "--device=$(json_option device)" "--freq=$frequency" "--gain=$gain" "--ppm=$ppm" --no-interactive
+		case "$output" in raw) set -- "$@" --raw ;; addresses) set -- "$@" --onlyaddr ;; stats) stats_every="$duration"; [ "$stats_every" -le 60 ] || stats_every=60; [ "$stats_every" -ge 5 ] || stats_every=5; set -- "$@" "--stats-every=$stats_every" ;; *) task_fail 'Prepared ADS-B output mode is invalid.' ;; esac
+		[ "$(json_option mode_ac)" != true ] || set -- "$@" --modeac; [ "$(json_option metric)" != true ] || set -- "$@" --metric
+		run_native 1 "$@"; make_text_artifact adsb.txt 'DDK ADS-B RECEIVE'
+		;;
+	phase4_ais)
+		validate_rtl; left_frequency="$(json_option left_frequency)"; right_frequency="$(json_option right_frequency)"; sample_rate="$(json_option sample_rate)"; output_rate="$(json_option output_rate)"; ppm="$(json_option ppm)"; gain="$(json_option gain)"; duration="$(json_option duration)"
+		bounded_integer "$left_frequency" 24000000 1766000000 'AIS left frequency'; bounded_integer "$right_frequency" 24000000 1766000000 'AIS right frequency'; bounded_integer "$sample_rate" 12000 192000 'AIS sample rate'; bounded_integer "$output_rate" 24000 384000 'AIS output rate'; bounded_integer "$ppm" -1000 1000 'AIS PPM correction'; bounded_integer "$duration" 10 3600 'AIS duration'
+		if [ "$left_frequency" -ge "$right_frequency" ] || [ $((right_frequency - left_frequency)) -gt 1200000 ] || [ "$output_rate" -lt $((sample_rate * 2)) ]; then task_fail 'Prepared AIS frequency/rate relationship is invalid.'; fi
+		set -- /usr/bin/rtl_ais -d "$(json_option device)" -l "$left_frequency" -r "$right_frequency" -s "$sample_rate" -o "$output_rate" -p "$ppm" -h 127.0.0.1 -P 10110 -n; [ "$gain" = 0 ] || [ "$gain" = 0.0 ] || set -- "$@" -g "$gain"
+		run_native 1 "$@"; make_text_artifact ais-nmea.txt 'DDK AIS RECEIVE / NMEA LOG'
+		;;
+	phase4_bluetooth)
+		controller="$(json_option controller)"; case "$controller" in hci[0-9]*) ;; *) task_fail 'Prepared HCI controller is invalid.' ;; esac
+		if [ ! -d "/sys/class/bluetooth/$controller" ] || ! /usr/bin/hciconfig "$controller" | grep -q 'UP RUNNING'; then task_fail 'Selected HCI controller is no longer active.'; fi
+		case "$(json_option mode)" in classic) set -- /usr/bin/hcitool -i "$controller" scan ;; le) set -- /usr/bin/hcitool -i "$controller" lescan ;; *) task_fail 'Prepared Bluetooth discovery mode is invalid.' ;; esac
+		run_native 1 "$@"
+		make_text_artifact bluetooth-scan.txt 'DDK BLUETOOTH DISCOVERY'
+		;;
+	phase4_mqtt)
+		payload_file="$(private_decode mqtt-payload)"; password_file=""; username="$(json_option username)"; password=""
+		if [ -n "$username" ]; then password_file="$(private_decode mqtt-password)"; password="$(cat "$password_file")"; fi
+		host="$(json_option host)"; port="$(json_option port)"; topic="$(json_option topic)"; qos="$(json_option qos)"; protocol="$(json_option protocol)"; repeat_count="$(json_option repeat_count)"; repeat_delay="$(json_option repeat_delay)"
+		case "$host" in ''|*[!A-Za-z0-9_.:%-]*|-) task_fail 'Prepared MQTT host is invalid.' ;; esac
+		case "$port" in ''|*[!0-9]*) task_fail 'Prepared MQTT port is invalid.' ;; esac
+		if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then task_fail 'Prepared MQTT port is outside the reviewed range.'; fi
+		case "$topic" in ''|/*|*[!A-Za-z0-9_./:%-]*) task_fail 'Prepared MQTT topic is invalid.' ;; esac
+		case "$qos" in 0|1|2) ;; *) task_fail 'Prepared MQTT QoS is invalid.' ;; esac
+		case "$protocol" in mqttv31|mqttv311|mqttv5) ;; *) task_fail 'Prepared MQTT protocol is invalid.' ;; esac
+		case "$repeat_count" in ''|*[!0-9]*) task_fail 'Prepared MQTT repeat count is invalid.' ;; esac
+		if [ "$repeat_count" -lt 1 ] || [ "$repeat_count" -gt 100 ]; then task_fail 'Prepared MQTT repeat count is outside the reviewed range.'; fi
+		case "$repeat_delay" in ''|*[!0-9.]*) task_fail 'Prepared MQTT repeat delay is invalid.' ;; esac
+		case "$repeat_delay" in *.*.*|.*|*.) task_fail 'Prepared MQTT repeat delay is invalid.' ;; esac
+		case "$username" in *[!A-Za-z0-9_.@:%+/-]*) task_fail 'Prepared MQTT username is invalid.' ;; esac
+		set -- /usr/bin/mosquitto_pub -h "$host" -p "$port" -t "$topic" -q "$qos" -V "$protocol" --repeat "$repeat_count" --repeat-delay "$repeat_delay" -s
+		[ "$(json_option tls)" != true ] || set -- "$@" --tls-use-os-certs
+		[ "$(json_option retain)" != true ] || set -- "$@" -r
+		[ -z "$username" ] || set -- "$@" -u "$username" -P "$password"
+		run_native_stdin "$payload_file" "$@"; password=""; rm -f "$payload_file" "$password_file"
+		;;
+	phase4_relay)
+		serial="$(json_option device)"; case "$serial" in ''|*[!A-Za-z0-9_.-]*) task_fail 'Prepared relay serial is invalid.' ;; esac
+		/usr/bin/crelay -i 2>&1 | grep -Fq "$serial" || task_fail 'Selected relay controller is no longer present.'
+		relay="$(json_option relay)"; bounded_integer "$relay" 1 16 'relay channel'; operation="$(json_option operation)"; set -- /usr/bin/crelay -s "$serial" "$relay"; case "$operation" in status) ;; on) set -- "$@" ON ;; off) set -- "$@" OFF ;; *) task_fail 'Prepared relay operation is invalid.' ;; esac
+		run_native 0 "$@"
+		;;
+	phase4_modbus)
+		transport="$(json_option transport)"; unit="$(json_option unit)"; interval="$(json_option interval)"; addresses=""; lengths=""; types=""; index=0
+		bounded_integer "$unit" 1 247 'Modbus unit ID'; bounded_integer "$interval" 1 60 'Modbus interval'
+		while [ "$index" -lt 32 ]; do
+			address="$(jsonfilter -i "$job_dir/metadata.json" -e "@.options.addresses[$index]" 2>/dev/null || true)"; [ -n "$address" ] || break
+			case "$address" in *[!0-9]*) task_fail 'Prepared Modbus register address is invalid.' ;; esac
+			[ -z "$addresses" ] || { addresses="$addresses;"; lengths="$lengths;"; types="$types;"; }
+			addresses="$addresses$address"; datatype="$(json_option datatype)"; [ "$datatype" = int ] && length=1 || length=2; lengths="$lengths$length"; types="$types$datatype"; index=$((index + 1))
+		done
+		[ -n "$addresses" ] || task_fail 'Prepared Modbus register list is empty.'
+		{
+			printf '%s\n' '[settings]' 'mode = master' "interval = $interval" "socketfile = $job_dir/mbcollect.sock" 'verbose = 1'
+			if [ "$transport" = tcp ]; then printf 'ip = %s\nport = %s\n' "$(json_option host)" "$(json_option port)"
+			else validate_serial "$(json_option device)"; printf 'device = %s\nbaud = %s\nparity = %s\ndatabit = %s\nstopbit = %s\n' "$(json_option device)" "$(json_option baud)" "$(json_option parity)" "$(json_option data_bits)" "$(json_option stop_bits)"; fi
+			printf '\n[slave "ddk"]\nid = %s\naddresses = %s\nlengths = %s\ntypes = %s\n' "$unit" "$addresses" "$lengths" "$types"
+		} > "$modbus_config"; chmod 600 "$modbus_config"
+		set -- /usr/bin/mbcollect --mode=master --interval="$interval" --inifile="$modbus_config" --verbose
+		if [ "$transport" = tcp ]; then set -- "$@" --ip="$(json_option host)" --port="$(json_option port)"; else set -- "$@" --device="$(json_option device)" --baud="$(json_option baud)" --parity="$(json_option parity)" --databit="$(json_option data_bits)" --stopbit="$(json_option stop_bits)"; fi
+		run_native 1 "$@"; rm -f "$job_dir/mbcollect.sock"; make_text_artifact modbus-read.txt 'DDK MODBUS HOLDING-REGISTER READ'
+		;;
+	phase4_auth_inventory)
+		mode="$(json_option mode)"; device_index="$(json_option device_index)"; bounded_integer "$device_index" 1 16 'token device index'
+		if [ "$mode" = readers ]; then
+			[ -x /usr/sbin/pcscd ] || task_fail 'pcscd is unavailable for the on-demand reader inventory.'
+			if pidof pcscd >/dev/null 2>&1; then task_fail 'pcscd is already active and is not owned by this DDK workflow.'; fi
+			/usr/sbin/pcscd --foreground --auto-exit > "$job_dir/phase4-pcscd.out" 2> "$job_dir/phase4-pcscd.err" & helper_pid=$!; sleep 1
+			set -- /usr/bin/pcsc_scan -r
+		elif [ "$mode" = yubikey ]; then set -- /usr/bin/ykinfo -n "$device_index" -a
+		else task_fail 'Prepared token inventory mode is invalid.'; fi
+		run_native 0 "$@"; [ -z "$helper_pid" ] || { stop_pid "$helper_pid"; helper_pid=""; }
+		rm -f "$job_dir/phase4-pcscd.out" "$job_dir/phase4-pcscd.err"
+		make_text_artifact smartcard-inventory.txt 'DDK SMARTCARD / TOKEN INVENTORY'
+		;;
+	phase4_auth_program)
+		device_index="$(json_option device_index)"; bounded_integer "$device_index" 1 16 'YubiKey device index'; /usr/bin/ykinfo -n "$device_index" -v >/dev/null 2>&1 || task_fail 'Selected YubiKey index is not present.'
+		operation="$(json_option operation)"; slot="$(json_option slot)"; commit="$(json_option commit)"
+		set -- /usr/bin/ykpersonalize -N"$device_index"
+		if [ "$operation" = swap_slots ]; then set -- "$@" -x
+		elif [ "$operation" = delete_slot ]; then set -- "$@" -"$slot" -z
+		else
+			secret_file="$(private_decode yubikey-secret)"; secret="$(cat "$secret_file")"; rm -f "$secret_file"; set -- "$@" -"$slot"
+			case "$operation" in configure_hmac) set -- "$@" -ochal-resp -ochal-hmac -a"$secret" ;; configure_hotp) set -- "$@" -ooath-hotp -a"$secret" ;; configure_static) set -- "$@" -ostatic-ticket -a"$secret" ;; *) task_fail 'Prepared YubiKey profile is invalid.' ;; esac
+		fi
+		if [ "$commit" = true ]; then set -- "$@" -y; else set -- "$@" -d; fi
+		run_native 0 "$@"; secret=""
+		;;
+	phase4_camera_stream)
+		validate_camera; bind_address="$(json_option bind_address)"; port="$(json_option port)"; username="$(json_option username)"
+		width="$(json_option width)"; height="$(json_option height)"; fps="$(json_option fps)"; quality="$(json_option quality)"; bounded_integer "$port" 1024 65535 'camera stream port'; bounded_integer "$width" 160 3840 'camera width'; bounded_integer "$height" 120 2160 'camera height'; bounded_integer "$fps" 1 30 'camera FPS'; bounded_integer "$quality" 10 100 'camera quality'
+		case "$bind_address" in ''|*[!0-9.]*) task_fail 'Prepared camera IPv4 bind address is invalid.' ;; esac; case "$username" in ''|*[!A-Za-z0-9_.-]*) task_fail 'Prepared camera username is invalid.' ;; esac
+		ip -o addr show | awk -v address="$bind_address" '$4 ~ ("^" address "/") {found=1} END {exit found ? 0 : 1}' || task_fail 'Selected stream bind address is no longer local.'
+		netstat -lnt 2>/dev/null | awk -v endpoint="$bind_address:$port" '$4 == endpoint {found=1} END {exit found ? 0 : 1}' && task_fail 'Selected camera stream endpoint is already in use.'
+		password_file="$(private_decode camera-password)"; password="$(cat "$password_file")"; rm -f "$password_file"
+		input_plugin="input_uvc.so -d $(json_option device) -r ${width}x${height} -f $fps -q $quality"
+		output_plugin="output_http.so -p $port -l $bind_address -c $username:$password -n"
+		LD_LIBRARY_PATH=/usr/lib/mjpg-streamer /usr/bin/mjpg_streamer -i "$input_plugin" -o "$output_plugin" > "$native_out" 2> "$native_err" & native_pid=$!; password=""; input_plugin=""; output_plugin=""
+		deadline=$(( $(date +%s) + wall_timeout )); while kill -0 "$native_pid" 2>/dev/null && [ "$(date +%s)" -lt "$deadline" ]; do sleep 1; done
+		if kill -0 "$native_pid" 2>/dev/null; then stop_pid "$native_pid"; native_result=0; else native_result=0; wait "$native_pid" 2>/dev/null || native_result=$?; fi; native_pid=""
+		;;
+	phase4_ntrip)
+		validate_serial "$(json_option device)"; password_file="$(private_decode ntrip-password)"; password="$(cat "$password_file")"; rm -f "$password_file"
+		case "$(json_option server)" in ''|*[!A-Za-z0-9_.:%-]*) task_fail 'Prepared NTRIP caster is invalid.' ;; esac; bounded_integer "$(json_option port)" 1 65535 'NTRIP caster port'
+		case "$(json_option mountpoint)" in ''|*[!A-Za-z0-9_./-]*) task_fail 'Prepared NTRIP mountpoint is invalid.' ;; esac; case "$(json_option username)" in ''|*[!A-Za-z0-9_.@+/-]*) task_fail 'Prepared NTRIP username is invalid.' ;; esac
+		set -- /usr/bin/ntripclient -s "$(json_option server)" -r "$(json_option port)" -m "$(json_option mountpoint)" -u "$(json_option username)" -p "$password" -M "$(json_option mode)" -D "$(json_option device)" -B "$(json_option baud)" -Y "$(json_option parity)" -A "$(json_option data_bits)" -T "$(json_option stop_bits)"
+		run_native 1 "$@"; password=""
+		;;
+esac
+
+{
+	printf 'Action: %s\nTarget: %s\nNative executable: %s\nNative exit: %s\n\n' "$action_id" "$(jsonfilter -i "$job_dir/metadata.json" -e '@.target_summary' 2>/dev/null || true)" "$native_executable" "$native_result"
+	head -c 126976 "$native_out" 2>/dev/null || true
+} > "$job_dir/stdout.next"
+mv "$job_dir/stdout.next" "$job_dir/stdout"
+[ ! -s "$native_err" ] || head -c 28672 "$native_err" >> "$job_dir/stderr"
+
+if [ "$native_result" -eq 0 ]; then
+	status_set complete; worker_success=1
+	printf '%s\n' 'Phase 4 native operation completed; owned helper/private state and locks are being cleaned.' >> "$job_dir/stdout"
+	printf '%s\n' 'Success'
+	exit 0
+fi
+
+printf 'Phase 4 native operation exited with status %s.\n' "$native_result" >> "$job_dir/stderr"
+status_set failed
+exit "$native_result"

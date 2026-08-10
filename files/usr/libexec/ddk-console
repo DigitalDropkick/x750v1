@@ -10,6 +10,7 @@ local usb_identity = dofile("/usr/share/ddk-field-console/usb-identity.lua")
 local operator_actions = dofile("/usr/share/ddk-field-console/operator-actions.lua")
 local operator_apple = dofile("/usr/share/ddk-field-console/operator-apple.lua")
 local operator_phase3 = dofile("/usr/share/ddk-field-console/operator-phase3.lua")
+local operator_phase4 = dofile("/usr/share/ddk-field-console/operator-phase4.lua")
 
 local TOOL_ROOT = "/usr/share/ddk-field-console/tools"
 local JOB_ROOT = "/tmp/ddk/jobs"
@@ -39,6 +40,7 @@ local USB_SYSFS_ROOT = "/sys/bus/usb/devices"
 local DEFAULT_JOB_WORKER = "/usr/libexec/ddk-job-worker"
 local APPLE_JOB_WORKER = "/usr/libexec/ddk-apple-worker"
 local PHASE3_JOB_WORKER = "/usr/libexec/ddk-phase3-worker"
+local PHASE4_JOB_WORKER = "/usr/libexec/ddk-phase4-worker"
 
 local function trim(value)
 	return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
@@ -1230,6 +1232,8 @@ local function string_array(value)
 	return result
 end
 
+local phase4_relay_devices
+
 local function load_capabilities()
 	local _, package_map = package_inventory()
 	local hardware = hardware_snapshot()
@@ -1326,6 +1330,8 @@ local function load_capabilities()
 					avrdude = hardware.firmware.connection_count or 0,
 					dfu = hardware.firmware.dfu_count or 0,
 					serial_programmer = hardware.firmware.serial_count or 0
+				} or manifest.id == "automation" and {
+					relay = phase4_relay_devices and #phase4_relay_devices() or 0
 				} or nil,
 				actions = type(manifest.actions) == "table" and manifest.actions or {},
 				help_text = manifest.help_text or "",
@@ -1374,7 +1380,9 @@ local upload_policies = {
 	apple_recovery_input = { maximum = 268435456, extensions = { bin = true, img = true, dfu = true, ibss = true, ibec = true, payload = true, txt = true, script = true, cfg = true } },
 	apple_ticket = { maximum = 1048576, extensions = { shsh = true, ticket = true, bin = true, plist = true } },
 	storage_image = { maximum = 17179869184, extensions = { raw = true, img = true, bin = true, dd = true, squashfs = true, sqfs = true } },
-	device_input = { maximum = 268435456, extensions = { bin = true, hex = true, elf = true, uf2 = true, dfu = true, fw = true, rom = true, img = true, cfg = true, json = true, zip = true, tar = true, gz = true } }
+	device_input = { maximum = 268435456, extensions = { bin = true, hex = true, elf = true, uf2 = true, dfu = true, fw = true, rom = true, img = true, cfg = true, json = true, zip = true, tar = true, gz = true } },
+	forensics_input = { maximum = 268435456, extensions = { bin = true, exe = true, dll = true, elf = true, so = true, apk = true, zip = true, img = true, raw = true, txt = true, rules = true, yar = true, yara = true, json = true, cfg = true, pcap = true, pcapng = true } },
+	capture_input = { maximum = 1073741824, extensions = { pcap = true, pcapng = true, cap = true } }
 }
 
 local function valid_upload_id(value)
@@ -1650,6 +1658,66 @@ local function adb_devices_probe()
 	return finish(devices, #devices > 0 and "READY" or "NO AUTHORIZED REVIEWED USB ADB TRANSPORT")
 end
 
+local function phase4_wireless_interfaces()
+	local result, seen = {}, {}
+	for line in capture("/usr/sbin/iw dev", 32768, 10):gmatch("[^\r\n]+") do
+		local name = line:match("^%s+Interface%s+([A-Za-z0-9_.-]+)%s*$")
+		if name and #name <= 15 and not seen[name] and fs.stat("/sys/class/net/" .. name) then
+			seen[name] = true
+			result[#result + 1] = { value = name, name = name, label = name }
+		end
+	end
+	table.sort(result, function(a, b) return a.value < b.value end)
+	return result
+end
+
+local function phase4_bluetooth_devices()
+	local result = {}
+	local iterator = fs.dir("/sys/class/bluetooth")
+	if iterator then
+		for name in iterator do
+			if name:match("^hci%d+$") then
+				local output = capture("/usr/bin/hciconfig " .. name, 8192, 10)
+				if output:match("%sUP%s") and output:match("%sRUNNING%s") then
+					result[#result + 1] = { value = name, name = name, label = name .. " / UP RUNNING" }
+				end
+			end
+		end
+	end
+	table.sort(result, function(a, b) return a.value < b.value end)
+	return result
+end
+
+local function phase4_usb_devices()
+	local result, seen = {}, {}
+	local lines = usb_lines()
+	for _, line in ipairs(lines) do
+		local bus, device, usb_id, description = line:match("^Bus%s+(%d+)%s+Device%s+(%d+):%s+ID%s+([0-9A-Fa-f]+:[0-9A-Fa-f]+)%s*(.*)$")
+		if bus and device and usb_id then
+			usb_id = usb_id:lower()
+			local value = bus .. ":" .. device .. ":" .. usb_id
+			if not seen[value] then
+				seen[value] = true
+				result[#result + 1] = { value = value, usb_id = usb_id, bus = bus, device = device, label = "Bus " .. bus .. " Device " .. device .. " / " .. usb_id .. (description ~= "" and (" / " .. safe_label(description, 96)) or "") }
+			end
+		end
+	end
+	return result
+end
+
+phase4_relay_devices = function()
+	local result, seen = {}, {}
+	for line in capture("/usr/bin/crelay -i", 32768, 10):gmatch("[^\r\n]+") do
+		local serial = line:match("%([Ss]erial%s+([A-Za-z0-9_.-]+)%)") or line:match("[Ss]erial[:%s]+([A-Za-z0-9_.-]+)")
+		if serial and #serial <= 128 and not seen[serial] then
+			seen[serial] = true
+			result[#result + 1] = { value = serial, serial = serial, relays = 16, label = safe_label(line, 128) }
+		end
+	end
+	table.sort(result, function(a, b) return a.value < b.value end)
+	return result
+end
+
 local function operator_context(action_id)
 	local lan = ubus_object("ubus call network.interface.lan status")
 	local lan_address = ""
@@ -1675,11 +1743,17 @@ local function operator_context(action_id)
 	end
 	local rtl = rtl_sdr_probe()
 	local camera = camera_probe()
+	local wireless_interfaces = phase4_wireless_interfaces()
+	local bluetooth_devices = action_id == "bluetooth.scan" and phase4_bluetooth_devices() or {}
+	local usb_devices = action_id == "usb.inventory" and phase4_usb_devices() or {}
+	local relay_devices = action_id == "automation.relay" and phase4_relay_devices() or {}
 	local camera_devices = {}
 	for _, item in ipairs(camera.nodes or {}) do
 		if item.index == "0" then
 			camera_devices[#camera_devices + 1] = {
+				value = item.node,
 				node = item.node,
+				usb_id = item.usb_id,
 				label = item.node .. " / " .. item.usb_id .. (item.name ~= "" and (" / " .. item.name) or "")
 			}
 		end
@@ -1689,7 +1763,10 @@ local function operator_context(action_id)
 	for _, item in ipairs(serial_inventory or {}) do
 		if item.generic_use_allowed and not device_open_by_process(item.node) then
 			serial_devices[#serial_devices + 1] = {
+				value = item.node,
 				node = item.node,
+				topology = item.usb.parent,
+				usb_id = item.usb.vendor_id .. ":" .. item.usb.product_id,
 				label = item.node .. " / " .. item.usb.vendor_id .. ":" .. item.usb.product_id .. " / " .. item.owner
 			}
 		end
@@ -1698,7 +1775,9 @@ local function operator_context(action_id)
 	local gps_devices = {}
 	for _, item in ipairs(gps.available_nodes or {}) do
 		gps_devices[#gps_devices + 1] = {
+			value = item.node,
 			node = item.node,
+			usb_id = item.usb_id,
 			label = item.node .. " / " .. item.usb_id .. " / " .. trim(item.manufacturer .. " " .. item.product)
 		}
 	end
@@ -1738,6 +1817,10 @@ local function operator_context(action_id)
 	local phase3 = phase3_context(action_id)
 	return {
 		interfaces = interface_list(),
+		wireless_interfaces = wireless_interfaces,
+		bluetooth_devices = bluetooth_devices,
+		usb_devices = usb_devices,
+		relay_devices = relay_devices,
 		lan_interface = lan.l3_device or lan.device or "",
 		lan_cidr = lan_address,
 		local_addresses = local_addresses,
@@ -1799,6 +1882,13 @@ end
 local function operator_module_for(action_id)
 	if type(action_id) == "string" and action_id:match("^apple[.]") then return operator_apple end
 	if type(action_id) == "string" and (action_id:match("^firmware[.]") or action_id:match("^storage[.]")) then return operator_phase3 end
+	if ({
+		["monitoring.snapshot"] = true, ["wireless.survey"] = true, ["usb.inventory"] = true,
+		["forensics.inspect_file"] = true, ["capture.replay"] = true, ["adsb.receive"] = true,
+		["radio.ais"] = true, ["bluetooth.scan"] = true, ["automation.mqtt_publish"] = true,
+		["automation.relay"] = true, ["industrial.modbus_read"] = true, ["auth.inventory"] = true,
+		["auth.program"] = true, ["camera.stream"] = true, ["gps.ntrip"] = true
+	})[action_id] then return operator_phase4 end
 	return operator_actions
 end
 
@@ -1837,7 +1927,22 @@ local operator_backends = {
 	["storage.repair"] = { worker = "phase3_storage", worker_executable = "/usr/libexec/ddk-phase3-worker", executables = { "/usr/sbin/e2fsck", "/usr/sbin/badblocks" } },
 	["storage.image"] = { worker = "phase3_storage", worker_executable = "/usr/libexec/ddk-phase3-worker", executable = "/bin/dd" },
 	["storage.restore"] = { worker = "phase3_storage", worker_executable = "/usr/libexec/ddk-phase3-worker", executable = "/bin/dd" },
-	["storage.squashfs"] = { worker = "phase3_squashfs", worker_executable = "/usr/libexec/ddk-phase3-worker", executable = "/usr/sbin/unsquashfs" }
+	["storage.squashfs"] = { worker = "phase3_squashfs", worker_executable = "/usr/libexec/ddk-phase3-worker", executable = "/usr/sbin/unsquashfs" },
+	["monitoring.snapshot"] = { worker = "phase4_monitoring", worker_executable = PHASE4_JOB_WORKER, executables = { "/usr/bin/vnstat", "/usr/bin/iftop" } },
+	["wireless.survey"] = { worker = "phase4_wireless", worker_executable = PHASE4_JOB_WORKER, executables = { "/usr/bin/iwinfo", "/usr/sbin/iw" } },
+	["usb.inventory"] = { worker = "phase4_usb", worker_executable = PHASE4_JOB_WORKER, executable = "/usr/bin/lsusb" },
+	["forensics.inspect_file"] = { worker = "phase4_forensics", worker_executable = PHASE4_JOB_WORKER, executables = { "/usr/bin/file", "/usr/bin/hashdeep", "/usr/bin/ssdeep", "/usr/bin/checksec", "/usr/bin/yara" } },
+	["capture.replay"] = { worker = "phase4_replay", worker_executable = PHASE4_JOB_WORKER, executable = "/usr/bin/tcpreplay" },
+	["adsb.receive"] = { worker = "phase4_adsb", worker_executable = PHASE4_JOB_WORKER, executable = "/usr/bin/readsb" },
+	["radio.ais"] = { worker = "phase4_ais", worker_executable = PHASE4_JOB_WORKER, executable = "/usr/bin/rtl_ais" },
+	["bluetooth.scan"] = { worker = "phase4_bluetooth", worker_executable = PHASE4_JOB_WORKER, executable = "/usr/bin/hcitool" },
+	["automation.mqtt_publish"] = { worker = "phase4_mqtt", worker_executable = PHASE4_JOB_WORKER, executable = "/usr/bin/mosquitto_pub" },
+	["automation.relay"] = { worker = "phase4_relay", worker_executable = PHASE4_JOB_WORKER, executable = "/usr/bin/crelay" },
+	["industrial.modbus_read"] = { worker = "phase4_modbus", worker_executable = PHASE4_JOB_WORKER, executable = "/usr/bin/mbcollect" },
+	["auth.inventory"] = { worker = "phase4_auth_inventory", worker_executable = PHASE4_JOB_WORKER, executables = { "/usr/bin/pcsc_scan", "/usr/bin/ykinfo" } },
+	["auth.program"] = { worker = "phase4_auth_program", worker_executable = PHASE4_JOB_WORKER, executable = "/usr/bin/ykpersonalize" },
+	["camera.stream"] = { worker = "phase4_camera_stream", worker_executable = PHASE4_JOB_WORKER, executable = "/usr/bin/mjpg_streamer" },
+	["gps.ntrip"] = { worker = "phase4_ntrip", worker_executable = PHASE4_JOB_WORKER, executable = "/usr/bin/ntripclient" }
 }
 
 local function backend_allows_executable(backend, executable)
@@ -1929,6 +2034,23 @@ local function prepare_operator_action(action_id, encoded)
 	    #plan.private_input_hex % 2 ~= 0 or plan.private_input_hex:find("[^0-9a-f]")) then
 		return nil, "Operator action builder produced invalid private input"
 	end
+	local private_input_count, private_input_bytes, private_input_names = 0, 0, {}
+	if plan.private_inputs ~= nil and type(plan.private_inputs) ~= "table" then return nil, "Operator action builder produced an invalid private input list" end
+	for index, private_input in ipairs(plan.private_inputs or {}) do
+		private_input_count = index
+		local name = type(private_input) == "table" and private_input.name or nil
+		local encoded = type(private_input) == "table" and private_input.hex or nil
+		if index > 4 or type(name) ~= "string" or not name:match("^[a-z][a-z0-9-]+$") or #name > 32 or private_input_names[name] or
+		   type(encoded) ~= "string" or #encoded < 2 or #encoded > 16384 or #encoded % 2 ~= 0 or encoded:find("[^0-9a-f]") then
+			return nil, "Operator action builder produced an invalid named private input"
+		end
+		private_input_names[name] = true
+		private_input_bytes = private_input_bytes + #encoded / 2
+	end
+	for key in pairs(plan.private_inputs or {}) do
+		if type(key) ~= "number" or key < 1 or key > private_input_count or key ~= math.floor(key) then return nil, "Operator action private input list is not dense" end
+	end
+	if private_input_bytes > 16384 then return nil, "Operator action private inputs exceed the 16 KiB request boundary" end
 	if plan.decode_argv ~= nil then
 		if type(plan.decode_argv) ~= "table" or plan.decode_argv[1] ~= (backend.decode_executable or backend.executable) then
 			return nil, "Operator action builder produced an invalid decode argv"
@@ -2111,7 +2233,7 @@ local function job_process_active(job_id)
 		return status == "queued" and stat ~= nil and os.time() - (stat.mtime or 0) <= 30
 	end
 	local cmdline = (fs.readfile("/proc/" .. pid .. "/cmdline") or ""):gsub("%z", " ")
-	return (cmdline:find(DEFAULT_JOB_WORKER, 1, true) ~= nil or cmdline:find(APPLE_JOB_WORKER, 1, true) ~= nil or cmdline:find(PHASE3_JOB_WORKER, 1, true) ~= nil) and cmdline:find(job_id, 1, true) ~= nil
+	return (cmdline:find(DEFAULT_JOB_WORKER, 1, true) ~= nil or cmdline:find(APPLE_JOB_WORKER, 1, true) ~= nil or cmdline:find(PHASE3_JOB_WORKER, 1, true) ~= nil or cmdline:find(PHASE4_JOB_WORKER, 1, true) ~= nil) and cmdline:find(job_id, 1, true) ~= nil
 end
 
 local function cleanup_transient()
@@ -2277,6 +2399,21 @@ local job_actions = {
 	["storage.image"] = { worker = "phase3_storage", label = "Raw Storage Image / Recovery", class = "ACTION", singleton = true, operator_only = true, required_hardware = "storage", resource = "storage" },
 	["storage.restore"] = { worker = "phase3_storage", label = "Raw Storage Restore", class = "DISRUPTIVE", singleton = true, operator_only = true, required_hardware = "storage", resource = "storage" },
 	["storage.squashfs"] = { worker = "phase3_squashfs", label = "SquashFS Recovery", class = "ACTION", singleton = true, operator_only = true, resource = "storage-recovery" },
+	["monitoring.snapshot"] = { worker = "phase4_monitoring", label = "Monitoring Snapshot", class = "INFO", singleton = true, operator_only = true, resource = "monitoring" },
+	["wireless.survey"] = { worker = "phase4_wireless", label = "Wireless Survey", class = "INFO", singleton = true, operator_only = true, resource = "wireless" },
+	["usb.inventory"] = { worker = "phase4_usb", label = "USB Inventory", class = "INFO", singleton = true, operator_only = true, resource = "usb-inventory" },
+	["forensics.inspect_file"] = { worker = "phase4_forensics", label = "Forensic File Inspection", class = "SECURITY", singleton = true, operator_only = true, resource = "forensics" },
+	["capture.replay"] = { worker = "phase4_replay", label = "Authenticated Packet Replay", class = "DISRUPTIVE", singleton = true, operator_only = true, resource = "network-replay" },
+	["adsb.receive"] = { worker = "phase4_adsb", label = "ADS-B Receiver", class = "ACTION", singleton = true, operator_only = true, required_hardware = "rtl_sdr", resource = "rtl_sdr" },
+	["radio.ais"] = { worker = "phase4_ais", label = "AIS Receiver", class = "ACTION", singleton = true, operator_only = true, required_hardware = "rtl_sdr", resource = "rtl_sdr" },
+	["bluetooth.scan"] = { worker = "phase4_bluetooth", label = "Bluetooth Discovery", class = "SECURITY", singleton = true, operator_only = true, required_hardware = "phase4_bluetooth", resource = "bluetooth" },
+	["automation.mqtt_publish"] = { worker = "phase4_mqtt", label = "MQTT Publish", class = "ACTION", singleton = true, operator_only = true, resource = "mqtt" },
+	["automation.relay"] = { worker = "phase4_relay", label = "USB Relay Control", class = "DISRUPTIVE", singleton = true, operator_only = true, required_hardware = "phase4_relay", resource = "relay" },
+	["industrial.modbus_read"] = { worker = "phase4_modbus", label = "Modbus Register Read", class = "ACTION", singleton = true, operator_only = true, resource = "modbus" },
+	["auth.inventory"] = { worker = "phase4_auth_inventory", label = "Smartcard / Token Inventory", class = "INFO", singleton = true, operator_only = true, required_hardware = "phase4_smartcard", resource = "smartcard" },
+	["auth.program"] = { worker = "phase4_auth_program", label = "YubiKey Personalization", class = "SECURITY", singleton = true, operator_only = true, required_hardware = "phase4_smartcard", resource = "smartcard" },
+	["camera.stream"] = { worker = "phase4_camera_stream", label = "Temporary Authenticated Camera Stream", class = "DISRUPTIVE", singleton = true, operator_only = true, required_hardware = "camera", resource = "camera" },
+	["gps.ntrip"] = { worker = "phase4_ntrip", label = "NTRIP Correction Client", class = "ACTION", singleton = true, operator_only = true, required_hardware = "gps", resource = "serial" },
 	["can.capture"] = {
 		worker = "can_capture",
 		label = "Passive CAN Frame Snapshot",
@@ -2434,7 +2571,7 @@ local function start_job(action_id, operator_plan)
 		resource = operator_plan.resource
 		singleton = operator_plan.singleton
 		worker_executable = backend.worker_executable or DEFAULT_JOB_WORKER
-		if worker_executable ~= DEFAULT_JOB_WORKER and worker_executable ~= APPLE_JOB_WORKER and worker_executable ~= PHASE3_JOB_WORKER then return nil, "Prepared action selected an invalid DDK worker" end
+		if worker_executable ~= DEFAULT_JOB_WORKER and worker_executable ~= APPLE_JOB_WORKER and worker_executable ~= PHASE3_JOB_WORKER and worker_executable ~= PHASE4_JOB_WORKER then return nil, "Prepared action selected an invalid DDK worker" end
 	end
 	if spec.required_hardware == "rtl_sdr" then
 		local probe = rtl_sdr_probe()
@@ -2456,6 +2593,12 @@ local function start_job(action_id, operator_plan)
 	elseif spec.required_hardware == "can" then
 		local probe = can_probe()
 		if not probe.ready then return nil, "Passive CAN capture is not ready: " .. probe.reason end
+	elseif spec.required_hardware == "phase4_bluetooth" then
+		if #phase4_bluetooth_devices() < 1 then return nil, "No active reviewed Bluetooth HCI controller is present" end
+	elseif spec.required_hardware == "phase4_relay" then
+		if #phase4_relay_devices() < 1 then return nil, "No compatible relay controller with a selectable serial identity is present" end
+	elseif spec.required_hardware == "phase4_smartcard" then
+		if not hardware_snapshot().classes.smartcard then return nil, "No reviewed smartcard reader or YubiKey hardware is present" end
 	elseif spec.required_hardware == "android" then
 		local probe = identity_probe("android")
 		if not probe.action_ready then return nil, "Reviewed Android USB hardware with an ADB interface is not present" end
@@ -2601,6 +2744,15 @@ local function start_job(action_id, operator_plan)
 		cleanup_prelaunch_job()
 		return nil, "Unable to initialize DDK job metadata"
 	end
+	for _, private_input in ipairs(operator_plan and operator_plan.private_inputs or {}) do
+		local private_path = job_dir .. "/private-" .. private_input.name .. ".hex"
+		if not write_file(private_path, private_input.hex .. "\n") then
+			for _, key in ipairs(lock_keys) do release_lock(key, job_id) end
+			cleanup_prelaunch_job()
+			return nil, "Unable to isolate a private Operator Mode input"
+		end
+		fs.chmod(private_path, "0600")
+	end
 	if operator_plan then
 		local allowed_artifacts = {}
 		for _, artifact in ipairs(operator_plan.artifacts or {}) do
@@ -2720,7 +2872,7 @@ local function stop_job(job_id)
 	if not pid or pid < 2 then return nil, "Worker PID is unavailable" end
 	local cmdline = fs.readfile("/proc/" .. pid .. "/cmdline") or ""
 	cmdline = cmdline:gsub("%z", " ")
-	if (not cmdline:find(DEFAULT_JOB_WORKER, 1, true) and not cmdline:find(APPLE_JOB_WORKER, 1, true) and not cmdline:find(PHASE3_JOB_WORKER, 1, true)) or not cmdline:find(job_id, 1, true) then
+	if (not cmdline:find(DEFAULT_JOB_WORKER, 1, true) and not cmdline:find(APPLE_JOB_WORKER, 1, true) and not cmdline:find(PHASE3_JOB_WORKER, 1, true) and not cmdline:find(PHASE4_JOB_WORKER, 1, true)) or not cmdline:find(job_id, 1, true) then
 		return nil, "PID does not belong to this DDK job"
 	end
 	write_file(JOB_ROOT .. "/" .. job_id .. "/status", "stopping\n")

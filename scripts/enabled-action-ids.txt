@@ -1,10 +1,15 @@
 # Exact ACTION IDs approved after code, hardware-gate, and operational review.
+adsb.receive
 android.adb_diagnostics
 apple.mobile_capture
 apple.mobile_diagnostics
+automation.mqtt_publish
 can.capture
 camera.still_snapshot
+gps.ntrip
 gps.snapshot
+industrial.modbus_read
+radio.ais
 radio.rtl433_snapshot
 serial.session
 storage.image

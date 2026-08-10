@@ -2,16 +2,16 @@
   "id": "modbus-industrial",
   "name": "Industrial / Modbus",
   "category": "Industrial",
-  "description": "Modbus, precision-time, serial gateway, and NTRIP utilities.",
+  "description": "Structured Modbus/TCP and reviewed non-EC25 Modbus/RTU holding-register reads.",
   "package_names": ["mbtools", "mbusd", "libmodbus", "linuxptp", "ntripcaster", "ntripclient", "ntripserver"],
   "expected_binaries": ["mbpoll", "mbusd", "ptp4l", "ntripclient"],
-  "required_hardware": ["serial"],
-  "status_probe": "serial",
+  "required_hardware": [],
+  "status_probe": "software",
   "risk_level": "ACTION",
-  "enabled": false,
+  "enabled": true,
   "actions": [
-    {"id": "industrial.modbus_read", "class": "ACTION", "enabled": false},
+    {"id": "industrial.modbus_read", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
     {"id": "industrial.modbus_write", "class": "DISRUPTIVE", "enabled": false}
   ],
-  "help_text": "Read/write controls are pending exact installed-client syntax, typed transport/unit/function/register/datatype/value schemas, target validation, write confirmation, and approved-device tests."
+  "help_text": "The exact mbcollect runtime supports bounded master-mode holding-register reads through a DDK-generated config for TCP or reviewed non-EC25 RTU. Register write remains unavailable because this target has no mbpoll payload and mbcollect exposes no write operation; mbusd is a gateway, not a register-write client."
 }

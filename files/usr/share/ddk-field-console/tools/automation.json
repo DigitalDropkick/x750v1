@@ -2,16 +2,16 @@
   "id": "automation",
   "name": "Automation / MQTT",
   "category": "Automation",
-  "description": "MQTT client, event-trigger, and relay/control tooling.",
+  "description": "Structured one-shot MQTT publishing and hardware-gated USB relay control.",
   "package_names": ["mosquitto-client-ssl", "triggerhappy", "crelay"],
   "expected_binaries": ["mosquitto_pub", "mosquitto_sub", "thd", "crelay"],
   "required_hardware": [],
   "status_probe": "software",
   "risk_level": "ACTION",
-  "enabled": false,
+  "enabled": true,
   "actions": [
-    {"id": "automation.mqtt_publish", "class": "ACTION", "enabled": false},
-    {"id": "automation.relay", "class": "DISRUPTIVE", "enabled": false}
+    {"id": "automation.mqtt_publish", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "automation.relay", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "relay", "enabled": true}
   ],
-  "help_text": "Operator Mode still needs typed broker/topic/payload and relay-target schemas, credential isolation, exact destination allowlists, confirmation policy, and side-effect tests."
+  "help_text": "MQTT uses typed broker/topic/QoS/TLS/retain/repeat controls and redacted one-time password/payload inputs. Relay control requires a freshly enumerated serial-identified crelay target and target-bound confirmation for physical state changes; no daemon is started."
 }

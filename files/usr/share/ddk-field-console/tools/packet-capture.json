@@ -11,7 +11,7 @@
   "enabled": true,
   "actions": [
     {"id": "capture.lan_metadata_snapshot", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "capture.replay", "class": "DISRUPTIVE", "enabled": false}
+    {"id": "capture.replay", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Operator Mode passes a bounded filter as one argv element, requires native tcpdump BPF compilation before capture, supports decoded text and PCAP output, and preserves the legacy metadata profile for compatibility. Packet replay remains a separate unimplemented action."
+  "help_text": "Capture supports structured BPF/decode/PCAP workflows. Replay separately binds a sealed validated PCAP to an exact current interface with loop, packet, duration, and native speed controls plus target-bound confirmation and cancellation."
 }

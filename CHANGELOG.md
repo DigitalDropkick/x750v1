@@ -37,6 +37,14 @@
 - Added the exact `ddk-phase3-worker` with native-version/argv/target/input revalidation, target/resource locks, cancellation, 100 MiB extroot reserve enforcement, fixed artifacts, and partial-output/workspace cleanup.
 - Reframed the v2 static SSH handoffs as supplemental native references; structured GUI actions are now the primary interface for represented mobile, firmware, and storage work.
 
+### Phase 4 tool-family completion
+
+- Added 15 reusable `operator-v1` actions through pure `operator-phase4.lua` schemas and the exact allowlisted `ddk-phase4-worker` for monitoring, wireless/USB inventory, file forensics, packet replay, ADS-B/AIS, Bluetooth discovery, MQTT/relay, Modbus reads, smartcard/YubiKey, temporary camera streams, and NTRIP.
+- Added named one-time private inputs for MQTT payload/password, YubiKey secrets, camera passwords, and NTRIP passwords; metadata and invocation previews retain only redacted markers.
+- Added sealed forensic/capture input kinds, fixed authenticated Phase 4 artifact ACLs, live target selection, independent target/input/argv validation, wall/output limits, resource locks, cancellation, helper ownership, and cleanup.
+- Recorded exact remaining blockers for CAN transmit, Modbus writes, USB power/attach, Wi-Fi monitor-mode changes, and raw cellular commands in `docs/PHASE4-OPERATOR.md`.
+- Deployed Phase 4 with rollback snapshot `/root/ddk-backups/20260810T200750Z-field-console-v1`; 49 production checks passed with 0 warnings, authenticated desktop/mobile browser acceptance passed all Phase 4 controls, six safe native workflow families executed, the MQTT failure path proved secret redaction/cleanup, and all 47 deployed files matched source byte for byte with no residual worker/tool/listener/upload.
+
 ### Validation and release status
 
 - Updated local policy validation so `ACTION`, `SECURITY`, and reviewed `DISRUPTIVE` actions may be enabled when fully wired; removed tests whose purpose was to enforce the obsolete GUI-disabled/SSH-only policy.

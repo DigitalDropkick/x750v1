@@ -11,7 +11,7 @@
   "enabled": true,
   "actions": [
     {"id": "radio.rtl433_snapshot", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "radio.ais", "class": "ACTION", "enabled": false}
+    {"id": "radio.ais", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "RTL-433 exposes hardware-gated device, frequency, rate, gain, decoder, duration, analyzer, metadata, decoded-output, and bounded raw-IQ controls. AIS still needs exact native parameter mapping, artifacts, and attached-tuner tests."
+  "help_text": "RTL-433 and AIS expose hardware-gated reviewed tuner selection. AIS maps the exact rtl_ais dual-frequency/sample/output/gain/PPM options, logs decoded NMEA locally, creates an authenticated artifact, and uses the shared tuner lock and bounded lifecycle."
 }

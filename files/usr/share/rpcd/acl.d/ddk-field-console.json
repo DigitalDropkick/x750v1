@@ -41,6 +41,15 @@
 				"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/nmap.gnmap": [ "read" ],
 				"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/capture.pcap": [ "read" ],
 				"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/iperf3.json": [ "read" ]
+				,"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/monitoring.txt": [ "read" ]
+				,"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/wireless-survey.txt": [ "read" ]
+				,"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/usb-inventory.txt": [ "read" ]
+				,"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/forensics-report.txt": [ "read" ]
+				,"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/adsb.txt": [ "read" ]
+				,"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/ais-nmea.txt": [ "read" ]
+				,"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/bluetooth-scan.txt": [ "read" ]
+				,"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/modbus-read.txt": [ "read" ]
+				,"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/smartcard-inventory.txt": [ "read" ]
 			}
 		},
 		"write": {

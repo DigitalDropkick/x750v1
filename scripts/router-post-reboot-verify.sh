@@ -81,8 +81,8 @@ pass 'network, firewall, wireless, uhttpd, rpcd, rtl_tcp, and camera configurati
 if netstat -lntup 2>/dev/null | grep -q 'ddk'; then fail 'a DDK listener exists'; fi
 # BusyBox on this target has no standalone pgrep.
 # shellcheck disable=SC2009
-if ps w | grep -E '[d]dk-(job|apple|phase3)-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
-if pidof nmap tcpdump iperf3 uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver socat picocom usbmuxd idevice_id ideviceinfo idevicepair irecovery idevicerestore openocd avrdude dfu-util dfu-programmer stm32flash bossac lpc21isp smartctl e2fsck badblocks unsquashfs >/dev/null 2>&1; then fail 'a bounded-operation client or temporary helper is unexpectedly active'; fi
+if ps w | grep -E '[d]dk-(job|apple|phase3|phase4)-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
+if pidof nmap tcpdump iperf3 uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver socat picocom usbmuxd idevice_id ideviceinfo idevicepair irecovery idevicerestore openocd avrdude dfu-util dfu-programmer stm32flash bossac lpc21isp smartctl e2fsck badblocks unsquashfs vnstat iftop tcpreplay hcitool mosquitto_pub mbcollect pcsc_scan pcscd ykinfo ykpersonalize ntripclient >/dev/null 2>&1; then fail 'a bounded-operation client or temporary helper is unexpectedly active'; fi
 if netstat -lntup 2>/dev/null | grep -Eq ':(3333|4444|5038|6666|27015)[[:space:]]'; then fail 'an Operator Mode temporary listener remained after boot'; fi
 pass 'no DDK listener or idle operation worker exists'
 

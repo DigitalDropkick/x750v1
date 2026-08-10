@@ -24,7 +24,7 @@ allowed_target() {
 		/usr/lib/lua/luci/view/ddk/*) return 0 ;;
 		/www/luci-static/resources/ddk/*) return 0 ;;
 		/www/ddk/gl_home.html) return 0 ;;
-		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker) return 0 ;;
+		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker|/usr/libexec/ddk-phase4-worker) return 0 ;;
 		/usr/share/ddk-field-console/*) return 0 ;;
 		*) return 1 ;;
 	esac
@@ -82,6 +82,14 @@ done
 [ -x /usr/sbin/usbmuxd ] || fail 'the already-installed usbmuxd executable is missing; no package will be installed'
 for phase3_binary in /usr/bin/openocd /usr/bin/avrdude /usr/bin/dfu-util /usr/bin/dfu-programmer /usr/bin/stm32flash /usr/bin/bossac /usr/sbin/lpc21isp /usr/sbin/smartctl /usr/sbin/e2fsck /usr/sbin/badblocks /usr/sbin/unsquashfs /usr/bin/cmp /bin/dd /bin/tar; do
 	[ -x "$phase3_binary" ] || fail "the already-installed Phase 3 executable is missing: $phase3_binary; no package will be installed"
+done
+for phase4_binary in /usr/bin/vnstat /usr/bin/iftop /usr/bin/iwinfo /usr/sbin/iw /usr/bin/lsusb /usr/bin/hashdeep /usr/bin/ssdeep /usr/bin/checksec /usr/bin/yara /usr/bin/tcpreplay /usr/bin/readsb /usr/bin/rtl_ais /usr/bin/hcitool /usr/bin/hciconfig /usr/bin/mosquitto_pub /usr/bin/crelay /usr/bin/mbcollect /usr/bin/pcsc_scan /usr/sbin/pcscd /usr/bin/ykinfo /usr/bin/ykpersonalize /usr/bin/mjpg_streamer /usr/bin/ntripclient; do
+	[ -x "$phase4_binary" ] || fail "the already-installed Phase 4 executable is missing: $phase4_binary; no package will be installed"
+done
+for phase4_package_version in vnstat2:2.9-1 iftop:2018-10-03-77901c8c-2 iw:5.16-1 iwinfo:2022-12-15-8d158096-1 usbutils:014-1 file:5.41-1 hashdeep:4.4-3 ssdeep:2.14.1-2 checksec:2.5.0-1 yara:4.1.3-1 tcpreplay:4.4.1-1 readsb:3.9.0-1 rtl-ais:0.3-4 bluez-utils:5.64-1 mosquitto-client-ssl:2.0.15-1 crelay:0.14-2 mbtools:2014-10-29-149e9c69-3 pcsc-tools:1.5.7-1 pcscd:1.9.9-1 ykpers:1.20.0-4 mjpg-streamer:1.0.0-5 ntripclient:1.51-2; do
+	phase4_package="${phase4_package_version%%:*}"
+	phase4_version="${phase4_package_version#*:}"
+	opkg status "$phase4_package" 2>/dev/null | grep -Fqx "Version: $phase4_version" || fail "the installed $phase4_package package drifted from reviewed version $phase4_version"
 done
 LC_ALL=C /usr/bin/nmap --version 2>&1 | grep -Fq 'Nmap version 7.91 ' || fail 'the installed Nmap version drifted from reviewed 7.91 syntax'
 tcpdump_version="$(LC_ALL=C /usr/sbin/tcpdump --version 2>&1 || true)"
@@ -152,11 +160,13 @@ DDK_LUA_FILE="$source_root/usr/libexec/ddk-console" lua -e 'assert(loadfile(os.g
 DDK_OPERATOR_FILE="$source_root/usr/share/ddk-field-console/operator-actions.lua" lua -e 'assert(loadfile(os.getenv("DDK_OPERATOR_FILE")))'
 DDK_APPLE_OPERATOR_FILE="$source_root/usr/share/ddk-field-console/operator-apple.lua" lua -e 'assert(loadfile(os.getenv("DDK_APPLE_OPERATOR_FILE")))'
 DDK_PHASE3_OPERATOR_FILE="$source_root/usr/share/ddk-field-console/operator-phase3.lua" lua -e 'assert(loadfile(os.getenv("DDK_PHASE3_OPERATOR_FILE")))'
+DDK_PHASE4_OPERATOR_FILE="$source_root/usr/share/ddk-field-console/operator-phase4.lua" lua -e 'assert(loadfile(os.getenv("DDK_PHASE4_OPERATOR_FILE")))'
 DDK_IDENTITY_FILE="$source_root/usr/share/ddk-field-console/usb-identity.lua" lua -e 'assert(loadfile(os.getenv("DDK_IDENTITY_FILE")))'
 DDK_TEMPLATE_FILE="$source_root/usr/lib/lua/luci/view/ddk/shell.htm" lua -e 'local parser = require "luci.template.parser"; assert(parser.parse(os.getenv("DDK_TEMPLATE_FILE")))'
 sh -n "$source_root/usr/libexec/ddk-job-worker"
 sh -n "$source_root/usr/libexec/ddk-apple-worker"
 sh -n "$source_root/usr/libexec/ddk-phase3-worker"
+sh -n "$source_root/usr/libexec/ddk-phase4-worker"
 
 find "$source_root" -type f -name '*.json' | while IFS= read -r json_file; do
 	jsonfilter -i "$json_file" -e '@' >/dev/null
@@ -209,7 +219,7 @@ find "$source_root" -type f | sort | while IFS= read -r source_file; do
 	mkdir -p "$target_dir"
 	cp "$source_file" "$temporary"
 	case "$target" in
-		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker) chmod 755 "$temporary" ;;
+		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker|/usr/libexec/ddk-phase4-worker) chmod 755 "$temporary" ;;
 		*) chmod 644 "$temporary" ;;
 	esac
 	mv "$temporary" "$target"

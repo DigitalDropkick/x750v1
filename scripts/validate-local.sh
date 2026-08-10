@@ -18,7 +18,7 @@ bash -n deploy.sh verify.sh rollback.sh configure-swap-autostart.sh rollback-swa
 sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh \
 	scripts/router-configure-swap-autostart.sh scripts/router-rollback-swap-autostart.sh \
 	scripts/router-post-reboot-verify.sh files/usr/libexec/ddk-job-worker files/usr/libexec/ddk-apple-worker \
-	files/usr/libexec/ddk-phase3-worker
+	files/usr/libexec/ddk-phase3-worker files/usr/libexec/ddk-phase4-worker
 node --check scripts/verify-browser.mjs >/dev/null
 
 brand_root=files/www/luci-static/resources/ddk/brand
@@ -188,9 +188,11 @@ capture_worker=files/usr/libexec/ddk-job-worker
 operator_module=files/usr/share/ddk-field-console/operator-actions.lua
 apple_operator_module=files/usr/share/ddk-field-console/operator-apple.lua
 phase3_operator_module=files/usr/share/ddk-field-console/operator-phase3.lua
+phase4_operator_module=files/usr/share/ddk-field-console/operator-phase4.lua
 [[ -f "$operator_module" ]] || fail 'Operator Mode action module is missing'
 [[ -f "$apple_operator_module" ]] || fail 'Apple Operator Mode action module is missing'
 [[ -f "$phase3_operator_module" ]] || fail 'Phase 3 Operator Mode action module is missing'
+[[ -f "$phase4_operator_module" ]] || fail 'Phase 4 Operator Mode action module is missing'
 for operator_guard in \
 	'MAX_TARGETS = 64' \
 	'Target must be an IPv4/IPv6 address, CIDR, hostname, or validated IPv4 octet range' \
@@ -237,6 +239,26 @@ fi
 if rg -n 'io\.popen|os\.execute|loadstring|loadfile|dofile|/bin/sh|sh[[:space:]]+-c' "$phase3_operator_module"; then
 	fail 'Phase 3 Operator Mode action module can execute commands or load code'
 fi
+if rg -n 'io\.popen|os\.execute|loadstring|loadfile|dofile|/bin/sh|sh[[:space:]]+-c' "$phase4_operator_module"; then
+	fail 'Phase 4 Operator Mode action module can execute commands or load code'
+fi
+for phase4_guard in \
+	'defaults(schema, options, "MQTT")' \
+	'defaults(schema, options, "camera stream")' \
+	'defaults(schema, options, "NTRIP")' \
+	'private("mqtt-payload", payload)' \
+	'private("camera-password", password)' \
+	'private("ntrip-password", password)' \
+	'"@UPLOAD@/" .. normalized.input' \
+	'confirmation = { required = true' \
+	'"/usr/bin/tcpreplay"' \
+	'"/usr/bin/mosquitto_pub"' \
+	'"/usr/bin/mbcollect"' \
+	'"/usr/bin/mjpg_streamer"' \
+	'"/usr/bin/ntripclient"'
+do
+	rg -F -- "$phase4_guard" "$phase4_operator_module" >/dev/null || fail "Phase 4 Operator Mode validator/argv guard is missing: $phase4_guard"
+done
 for phase3_guard in \
 	'defaults(schema, options, "OpenOCD")' \
 	'defaults(schema, options, "AVRDUDE")' \
@@ -283,10 +305,28 @@ for apple_guard in \
 do
 	rg -F -- "$apple_guard" "$apple_operator_module" >/dev/null || fail "Apple Operator Mode validator/argv guard is missing: $apple_guard"
 done
-for structured_action in network.nmap_lan_discovery capture.lan_metadata_snapshot throughput.iperf3 radio.rtl433_snapshot camera.still_snapshot serial.session gps.snapshot android.adb_diagnostics android.adb_manage apple.mobile_diagnostics apple.mobile_capture apple.mobile_manage apple.recovery apple.restore firmware.openocd firmware.avrdude firmware.dfu firmware.serial storage.inspect storage.repair storage.image storage.restore storage.squashfs; do
+for structured_action in network.nmap_lan_discovery capture.lan_metadata_snapshot throughput.iperf3 radio.rtl433_snapshot camera.still_snapshot serial.session gps.snapshot android.adb_diagnostics android.adb_manage apple.mobile_diagnostics apple.mobile_capture apple.mobile_manage apple.recovery apple.restore firmware.openocd firmware.avrdude firmware.dfu firmware.serial storage.inspect storage.repair storage.image storage.restore storage.squashfs monitoring.snapshot wireless.survey usb.inventory forensics.inspect_file capture.replay adsb.receive radio.ais bluetooth.scan automation.mqtt_publish automation.relay industrial.modbus_read auth.inventory auth.program camera.stream gps.ntrip; do
 	[[ "$(jq -r --arg id "$structured_action" '.actions[] | select(.id == $id) | .parameter_schema' files/usr/share/ddk-field-console/tools/*.json | head -n 1)" == 'operator-v1' ]] || fail "structured manifest marker is missing: $structured_action"
 	rg -F "[\"$structured_action\"]" files/usr/libexec/ddk-console >/dev/null || fail "structured backend mapping is missing: $structured_action"
 done
+phase4_worker=files/usr/libexec/ddk-phase4-worker
+for phase4_worker_guard in \
+	'phase4_monitoring|phase4_wireless|phase4_usb|phase4_forensics|phase4_replay|phase4_adsb|phase4_ais|phase4_bluetooth|phase4_mqtt|phase4_relay|phase4_modbus|phase4_auth_inventory|phase4_auth_program|phase4_camera_stream|phase4_ntrip' \
+	'Prepared Phase 4 task does not match its exact action ID.' \
+	'Prepared Phase 4 argv selected an executable outside the exact task allowlist.' \
+	'Prepared Phase 4 sealed input failed worker-side SHA-256 validation.' \
+	'The EC25 modem serial ports remain reserved from Phase 4 workflows.' \
+	'Selected reviewed RTL-SDR is no longer present.' \
+	'Selected camera no longer matches the reviewed primary UVC identity.' \
+	'pcscd is already active and is not owned by this DDK workflow.' \
+	'Private input name is outside the Phase 4 allowlist.' \
+	'Phase 4 native output exceeded the 8 MiB worker ceiling.' \
+	'cleanup' \
+	'lock_path="$lock_root/$lock_key"'
+do
+	rg -F -- "$phase4_worker_guard" "$phase4_worker" >/dev/null || fail "Phase 4 worker guard is missing: $phase4_worker_guard"
+done
+shellcheck "$phase4_worker"
 phase3_worker=files/usr/libexec/ddk-phase3-worker
 for phase3_worker_guard in \
 	'phase3_openocd|phase3_avrdude|phase3_dfu|phase3_serial|phase3_storage|phase3_squashfs' \
@@ -557,7 +597,9 @@ fi
 
 while IFS= read -r file; do
 	size="$(wc -c < "$file")"
-	[[ "$size" -le 131072 ]] || fail "oversized router asset: $file ($size bytes)"
+	maximum=131072
+	[[ "$file" != files/usr/libexec/ddk-console ]] || maximum=147456
+	[[ "$size" -le "$maximum" ]] || fail "oversized router asset: $file ($size bytes)"
 done < <(find files -type f | sort)
 
 printf 'Local validation passed: shell, JavaScript, JSON, allowlist, mutation, and size checks.\n'

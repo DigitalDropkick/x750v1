@@ -89,7 +89,7 @@ Long work never occupies a LuCI request:
 3. The client reviews the server-built plan and starts it by prepared ID. Consequential plans require the exact target-bound confirmation phrase.
 4. The helper atomically claims the plan, rechecks its exact action/worker/executable mapping, enforces a maximum of two active jobs, and atomically acquires global/action/resource locks.
 5. It creates `/tmp/ddk/jobs/<generated-job-id>/` with restrictive permissions, optionally creates the matching DDK extroot artifact directory and exact declared workspaces, resolves only registered fixed artifact/upload/workspace placeholders, and writes one literal argument per line.
-6. One exact allowlisted worker (`/usr/libexec/ddk-job-worker`, `/usr/libexec/ddk-apple-worker`, or `/usr/libexec/ddk-phase3-worker`) is detached with stdin, stdout, and stderr disconnected from the LuCI request.
+6. One exact allowlisted worker (`/usr/libexec/ddk-job-worker`, `/usr/libexec/ddk-apple-worker`, `/usr/libexec/ddk-phase3-worker`, or `/usr/libexec/ddk-phase4-worker`) is detached with stdin, stdout, and stderr disconnected from the LuCI request.
 7. The worker independently rechecks its action, metadata, executable and material live target state, then atomically updates status while tracking the native child for cancellation.
 8. The browser polls the helper for that generated job ID.
 
@@ -104,9 +104,9 @@ Limits:
 - transient output only under `/tmp/ddk/`;
 - only `TERM` may be sent, and only after PID, job directory, and worker command line all match.
 
-The system includes an asynchronous read-only demo, a sanitized system-report task, and structured Nmap 7.91, tcpdump 4.9.3, iperf3 3.11, RTL-433 20.11, fswebcam 20140113, socat 1.7.4.1/stty 9.0, gpsdecode 3.23.1, Android, Apple, firmware-programming, and storage/recovery actions, plus the preserved passive CAN and cellular snapshots. Nmap supports validated targets and practical installed scan/output options without a `/24` clamp. tcpdump supports live interface selection, a validated one-element BPF filter, decoded/PCAP output, interface-state comparison, and PCAP validation. iperf3 supports client and temporary server workflows and revalidates server bind addresses immediately before launch. Firmware/storage use exact live USB/serial/block inventories, server-owned config/part choices, sealed images, and independent worker target/system-media gates. Each has its own wall/output/artifact controls and direct-child cancellation. Older fixed workers remain only for compatibility and regression coverage.
+The system includes an asynchronous read-only demo, a sanitized system-report task, and structured Nmap, tcpdump/tcpreplay, iperf3, RTL-433/ADS-B/AIS, UVC still/stream, serial/GNSS/NTRIP, Android, Apple, firmware/storage, monitoring, wireless/USB inventory, forensics, MQTT/relay, Modbus-read, Bluetooth, and smartcard/YubiKey actions, plus preserved passive CAN and cellular snapshots. Phase 4 uses a dedicated pure planner and independently validating worker for exact target binaries and live hardware. Each family has action-specific wall/output/artifact controls and direct-child cancellation. Older fixed workers remain only for compatibility and regression coverage. See [PHASE4-OPERATOR.md](PHASE4-OPERATOR.md).
 
-CAN and cellular retain their v2 fixed-profile implementations until migrated. Their current bounds and missing-hardware/runtime gates remain enforced; action classification does not prevent future structured expansion.
+CAN and cellular retain their v2 fixed-profile implementations where the exact target still lacks a safe structured runtime. Their bounds and missing-hardware/runtime gates remain enforced; action classification does not prevent future structured expansion.
 
 ## Artifact handling
 

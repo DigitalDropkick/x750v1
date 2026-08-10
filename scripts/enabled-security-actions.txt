@@ -1,3 +1,6 @@
 # Exact SECURITY action IDs approved after code and operational review.
+auth.program
+bluetooth.scan
 capture.lan_metadata_snapshot
+forensics.inspect_file
 network.nmap_lan_discovery

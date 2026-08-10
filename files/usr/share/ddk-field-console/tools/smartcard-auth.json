@@ -2,16 +2,16 @@
   "id": "smartcard-auth",
   "name": "Security / Authentication",
   "category": "Security / Authentication",
-  "description": "Smart-card, FIDO, YubiKey, OATH, and token tooling.",
+  "description": "On-demand PC/SC/YubiKey inventory and confirmed YubiKey personalization.",
   "package_names": ["libfido2-1", "ykpers", "ykclient", "oath-toolkit", "stoken", "pcsc-tools", "pcscd", "ccid"],
   "expected_binaries": ["ykinfo", "ykpersonalize", "oathtool", "stoken", "pcsc_scan"],
   "required_hardware": ["smartcard"],
   "status_probe": "smartcard",
   "risk_level": "SECURITY",
-  "enabled": false,
+  "enabled": true,
   "actions": [
-    {"id": "auth.inventory", "class": "INFO", "enabled": false},
-    {"id": "auth.program", "class": "SECURITY", "enabled": false}
+    {"id": "auth.inventory", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "auth.program", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Inventory/programming is pending exact reader/token selection, installed-tool schemas, protected PIN/key input handling, target confirmation, redacted output, and approved-token tests."
+  "help_text": "Inventory starts pcscd only inside the reader workflow and stops it afterward, or selects a YubiKey index for ykinfo. Personalization exposes dry-run/commit profiles, keeps key material in one-time redacted private inputs, and requires exact token/slot confirmation before writes or deletion."
 }

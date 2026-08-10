@@ -2,15 +2,15 @@
   "id": "bluetooth",
   "name": "Bluetooth",
   "category": "Bluetooth",
-  "description": "Bluetooth controller discovery and future bounded scans.",
+  "description": "Bounded classic and LE discovery through a live, already-up HCI controller.",
   "package_names": ["bluez-utils", "bluez-utils-extra", "bluez-daemon"],
   "expected_binaries": ["hciconfig", "hcitool"],
   "required_hardware": ["bluetooth"],
   "status_probe": "bluetooth",
   "risk_level": "SECURITY",
-  "enabled": false,
+  "enabled": true,
   "actions": [
-    {"id": "bluetooth.scan", "class": "SECURITY", "enabled": false}
+    {"id": "bluetooth.scan", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Structured discovery is pending exact installed-tool help inspection and an attached, server-selected HCI controller; package presence alone is not runnable hardware."
+  "help_text": "Operator Mode exposes bounded classic/LE discovery only for an already-up server-selected HCI controller. It does not start bluetoothd, bring an interface up, pair, connect, or submit raw HCI commands."
 }
