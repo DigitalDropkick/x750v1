@@ -1,5 +1,10 @@
 # Exact ACTION IDs approved after code, hardware-gate, and operational review.
+android.adb_diagnostics
+apple.mobile_capture
+apple.mobile_diagnostics
 can.capture
 camera.still_snapshot
 gps.snapshot
 radio.rtl433_snapshot
+serial.session
+throughput.iperf3

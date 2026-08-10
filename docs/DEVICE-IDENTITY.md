@@ -1,5 +1,7 @@
 # Mobile Device and Programmer Identity
 
+> Version 2.0 identity behavior remains valid and is preserved in 2.1. Its SSH-only handoff is now a fallback, not the final product boundary; see [Operator Mode](OPERATOR-MODE.md).
+
 Version 2.0 adds three immediate authenticated INFO actions:
 
 - `android.identify`
@@ -60,11 +62,11 @@ Generic FTDI, USB-serial, hub, storage, modem, and Apple Bluetooth identities ar
 - The sysfs root is a source-code constant; the browser cannot submit a path.
 - Missing or changing devices fail as unavailable metadata rather than becoming an execution target.
 
-The module state is `READY / NO DEVICE` when the software is installed but no reviewed hardware is attached. Identity and SSH-handoff actions remain usable so the operator can inspect the empty state and prepare before connecting hardware.
+The module state is `READY / NO DEVICE` when the software is installed but no reviewed hardware is attached. Identity and fallback-guide actions remain usable so the operator can inspect the empty state and prepare before connecting hardware. Hardware-dependent ADB Operator actions remain disabled until a reviewed Android USB identity is present, then perform a fresh live transport correlation.
 
 ## Full tool access
 
-DDK does not patch, wrap, replace, or restrict the installed CLI utilities. The companion `*.operator_guide` actions show executable readiness and copyable SSH references, but execute none of them. Full native operation remains available through SSH as documented in [SSH-TOOL-HANDOFFS.md](SSH-TOOL-HANDOFFS.md).
+DDK does not patch, replace, or weaken the installed CLI utilities. The companion `*.operator_guide` actions show executable readiness and copyable SSH references, but execute none of them. Android and Apple now have separate structured workflows documented in [ANDROID-ADB.md](ANDROID-ADB.md) and [APPLE-OPERATOR.md](APPLE-OPERATOR.md); the guides remain fallbacks for native workflows that require a future PTY, archive, secret-input, or hardware-specific protocol. Programming workflows are still being implemented and hardware-tested.
 
 ## Acceptance model
 

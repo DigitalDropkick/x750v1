@@ -1,0 +1,5 @@
+# Exact DISRUPTIVE action IDs approved after code, target, confirmation, and rollback review.
+android.adb_manage
+apple.mobile_manage
+apple.recovery
+apple.restore

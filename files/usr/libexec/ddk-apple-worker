@@ -1,0 +1,360 @@
+#!/bin/sh
+# shellcheck disable=SC2317
+
+set -eu
+umask 077
+
+job_id="${1:-}"
+task="${2:-}"
+job_root="/tmp/ddk/jobs"
+lock_root="/tmp/ddk/locks"
+artifact_root="/overlay/ddk-field-console/artifacts/$job_id"
+job_numbers="${job_id#job-}"
+job_epoch="${job_numbers%%-*}"
+job_pid="${job_numbers#*-}"
+
+[ "$job_numbers" != "$job_id" ] || exit 64
+[ "$job_epoch" != "$job_numbers" ] || exit 64
+case "$job_epoch:$job_pid" in *[!0-9:]*|:*|*:) exit 64 ;; esac
+case "$task" in apple_mobile|apple_recovery|apple_restore) ;; *) exit 64 ;; esac
+
+job_dir="$job_root/$job_id"
+[ -d "$job_dir" ] && [ ! -L "$job_dir" ] && [ -f "$job_dir/metadata.json" ] && [ -f "$job_dir/argv" ] || exit 66
+
+status_set() {
+	printf '%s\n' "$1" > "$job_dir/status.next"
+	mv "$job_dir/status.next" "$job_dir/status"
+}
+
+native_pid=""
+usbmuxd_pid=""
+restore_workspace=""
+worker_success=0
+[ "$task" != 'apple_restore' ] || restore_workspace="$artifact_root/workspace-restore-cache"
+
+stop_pid() {
+	stop_value="$1"
+	case "$stop_value" in ''|*[!0-9]*) return 0 ;; esac
+	kill -TERM "$stop_value" 2>/dev/null || true
+	sleep 1
+	kill -KILL "$stop_value" 2>/dev/null || true
+	wait "$stop_value" 2>/dev/null || true
+}
+
+cleanup_workspace() {
+	case "$restore_workspace" in /overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/workspace-restore-cache)
+		[ ! -e "$restore_workspace" ] || rm -rf -- "$restore_workspace"
+		;;
+	esac
+	restore_workspace=""
+}
+
+cleanup_usbmuxd() {
+	[ -n "$usbmuxd_pid" ] || return 0
+	stop_pid "$usbmuxd_pid"
+	usbmuxd_pid=""
+}
+
+cleanup_partial_artifacts() {
+	[ "$worker_success" -eq 0 ] || return 0
+	case "$artifact_root" in /overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*)
+		rm -f "$artifact_root/apple-screenshot.tiff" "$artifact_root/apple-syslog.txt" "$artifact_root/apple-restore.log"
+		rmdir "$artifact_root" 2>/dev/null || true
+		;;
+	esac
+}
+
+release_locks() {
+	cleanup_usbmuxd
+	cleanup_workspace
+	cleanup_partial_artifacts
+	rm -f "$job_dir/apple-native.out" "$job_dir/apple-native.err" "$job_dir/apple-devices.txt" \
+		"$job_dir/apple-devices.err" "$job_dir/apple-recovery-preflight" "$job_dir/apple-recovery-preflight.err" \
+		"$job_dir"/apple-upload-*.sha256
+	[ -f "$job_dir/lock-keys" ] || return 0
+	while IFS= read -r lock_key; do
+		case "$lock_key" in ''|*[!a-z0-9_.-]*) continue ;; esac
+		lock_path="$lock_root/$lock_key"
+		[ "$(cat "$lock_path/owner" 2>/dev/null || true)" = "$job_id" ] || continue
+		rm -f "$lock_path/owner"
+		rmdir "$lock_path" 2>/dev/null || true
+	done < "$job_dir/lock-keys"
+}
+
+stop_job() {
+	trap - HUP INT TERM
+	[ -z "$native_pid" ] || stop_pid "$native_pid"
+	native_pid=""
+	cleanup_usbmuxd
+	cleanup_workspace
+	status_set stopped
+	printf '%s\n' 'Apple worker stopped by an authenticated DDK request; owned helper and workspace cleanup completed.' >> "$job_dir/stderr"
+	exit 143
+}
+
+task_fail() {
+	printf '%s\n' "$1" >> "$job_dir/stderr"
+	status_set failed
+	exit 65
+}
+
+validate_sealed_input() {
+	sealed_input="$1"
+	case "$sealed_input" in /overlay/ddk-field-console/uploads/upload-*/sealed.bin) ;; *) task_fail 'Prepared Apple input path is outside DDK upload storage.' ;; esac
+	upload_dir="${sealed_input%/sealed.bin}"
+	upload_name="${upload_dir##*/}"
+	upload_numbers="${upload_name#upload-}"
+	upload_first="${upload_numbers%%-*}"
+	upload_rest="${upload_numbers#*-}"
+	upload_second="${upload_rest%%-*}"
+	upload_third="${upload_rest#*-}"
+	if [ "$upload_name" = "$upload_numbers" ] || [ "$upload_rest" = "$upload_numbers" ] || [ "$upload_third" = "$upload_rest" ]; then task_fail 'Prepared Apple upload ID structure is invalid.'; fi
+	case "$upload_first:$upload_second:$upload_third" in *[!0-9:]*|:*|*:|*::*) task_fail 'Prepared Apple upload ID contains a non-numeric component.' ;; esac
+	if [ ! -f "$job_dir/input-uploads.json" ] || [ -L "$job_dir/input-uploads.json" ]; then task_fail 'Prepared Apple input metadata is absent or unsafe.'; fi
+	input_match=0
+	input_index=0
+	while [ "$input_index" -lt 4 ]; do
+		input_path="$(jsonfilter -i "$job_dir/input-uploads.json" -e "@[$input_index].sealed_path" 2>/dev/null || true)"
+		if [ "$input_path" = "$sealed_input" ]; then
+			input_size="$(jsonfilter -i "$job_dir/input-uploads.json" -e "@[$input_index].size" 2>/dev/null || true)"
+			input_sha256="$(jsonfilter -i "$job_dir/input-uploads.json" -e "@[$input_index].sha256" 2>/dev/null || true)"
+			input_match=1
+			break
+		fi
+		input_index=$((input_index + 1))
+	done
+	[ "$input_match" -eq 1 ] || task_fail 'Prepared Apple argv references an undeclared sealed input.'
+	case "$input_size" in ''|*[!0-9]*) task_fail 'Prepared Apple input size is invalid.' ;; esac
+	case "$input_sha256" in ''|*[!0-9a-f]*) task_fail 'Prepared Apple input SHA-256 is invalid.' ;; esac
+	[ "${#input_sha256}" -eq 64 ] || task_fail 'Prepared Apple input SHA-256 length is invalid.'
+	input_stat_size="$(stat -c '%s' "$sealed_input" 2>/dev/null || true)"
+	input_mode="$(stat -c '%a' "$sealed_input" 2>/dev/null || true)"
+	if [ ! -f "$sealed_input" ] || [ -L "$sealed_input" ] || [ "$input_stat_size" != "$input_size" ] || [ "$input_mode" != 600 ]; then task_fail 'Prepared Apple sealed input failed worker-side path, mode, or size validation.'; fi
+	input_hash_file="$job_dir/apple-upload-$input_index.sha256"
+	/usr/bin/timeout 1800 /usr/bin/sha256sum "$sealed_input" > "$input_hash_file" 2>/dev/null &
+	native_pid=$!
+	input_hash_result=0
+	wait "$native_pid" 2>/dev/null || input_hash_result=$?
+	native_pid=""
+	if [ "$input_hash_result" -ne 0 ] || [ "$(awk 'NR == 1 {print $1}' "$input_hash_file")" != "$input_sha256" ]; then task_fail 'Prepared Apple sealed input failed worker-side SHA-256 verification.'; fi
+	rm -f "$input_hash_file"
+}
+
+trap release_locks EXIT
+trap stop_job HUP INT TERM
+printf '%s\n' "$$" > "$job_dir/pid"
+: > "$job_dir/stdout"
+: > "$job_dir/stderr"
+status_set running
+
+action_id="$(jsonfilter -i "$job_dir/metadata.json" -e '@.action_id' 2>/dev/null || true)"
+operation="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.operation' 2>/dev/null || true)"
+[ -n "$operation" ] || operation="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.mode' 2>/dev/null || true)"
+selected_device="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.device' 2>/dev/null || true)"
+wall_timeout="$(cat "$job_dir/wall-timeout" 2>/dev/null || true)"
+case "$wall_timeout" in ''|*[!0-9]*) task_fail 'Prepared Apple wall timeout is invalid.' ;; esac
+if [ "$wall_timeout" -lt 10 ] || [ "$wall_timeout" -gt 28800 ]; then task_fail 'Prepared Apple wall timeout is outside the reviewed range.'; fi
+
+case "$task:$action_id" in
+	apple_mobile:apple.mobile_diagnostics|apple_mobile:apple.mobile_manage|apple_mobile:apple.mobile_capture) ;;
+	apple_recovery:apple.recovery|apple_restore:apple.restore) ;;
+	*) task_fail 'Prepared Apple task does not match its exact action ID.' ;;
+esac
+
+set --
+argv_count=0
+while IFS= read -r argv_item; do
+	[ -n "$argv_item" ] || task_fail 'Prepared Apple argv contains an empty element.'
+	case "$argv_item" in *"$(printf '\r')"*|*"$(printf '\t')"*) task_fail 'Prepared Apple argv contains a control character.' ;; esac
+	argv_count=$((argv_count + 1))
+	[ "$argv_count" -le 80 ] || task_fail 'Prepared Apple argv exceeds the reviewed argument count.'
+	set -- "$@" "$argv_item"
+done < "$job_dir/argv"
+[ "$#" -ge 2 ] || task_fail 'Prepared Apple argv is incomplete.'
+
+native_executable="$1"
+case "$task:$native_executable" in
+	apple_mobile:/usr/bin/ideviceinfo|apple_mobile:/usr/bin/idevicename|apple_mobile:/usr/bin/idevicedate|apple_mobile:/usr/bin/idevicepair|apple_mobile:/usr/bin/idevicediagnostics|apple_mobile:/usr/bin/ideviceenterrecovery|apple_mobile:/usr/bin/idevicesetlocation|apple_mobile:/usr/bin/idevicescreenshot|apple_mobile:/usr/bin/idevicesyslog) ;;
+	apple_recovery:/usr/bin/irecovery|apple_restore:/usr/bin/idevicerestore) ;;
+	*) task_fail 'Prepared Apple argv selected an executable outside the exact worker allowlist.' ;;
+esac
+[ -x "$native_executable" ] || task_fail 'The prepared Apple native executable is unavailable.'
+case "$task" in
+	apple_mobile)
+		[ "$(LC_ALL=C /usr/bin/ideviceinfo --version 2>&1 || true)" = 'ideviceinfo 1.3.0' ] || task_fail 'libimobiledevice utilities drifted from the reviewed 1.3.0 contract.'
+		[ "$(LC_ALL=C /usr/sbin/usbmuxd --version 2>&1 || true)" = 'usbmuxd 1.1.1' ] || task_fail 'usbmuxd drifted from the reviewed 1.1.1 contract.'
+		;;
+	apple_recovery) [ "$(LC_ALL=C /usr/bin/irecovery --version 2>&1 || true)" = 'irecovery 1.0.0' ] || task_fail 'irecovery drifted from the reviewed 1.0.0 contract.' ;;
+	apple_restore)
+		[ "$(LC_ALL=C /usr/bin/idevicerestore --version 2>&1 || true)" = 'idevicerestore 1.0.0' ] || task_fail 'idevicerestore drifted from the reviewed 1.0.0 contract.'
+		[ "$(LC_ALL=C /usr/sbin/usbmuxd --version 2>&1 || true)" = 'usbmuxd 1.1.1' ] || task_fail 'usbmuxd drifted from the reviewed 1.1.1 contract.'
+		;;
+esac
+
+for argv_item in "$@"; do
+	case "$argv_item" in
+		*@JOB@*|*@ARTIFACT@*|*@UPLOAD@*|*@WORK@*) task_fail 'An unresolved DDK path placeholder reached the Apple worker.' ;;
+		/tmp/ddk/*) task_fail 'Prepared Apple argv references an unexpected transient path.' ;;
+		/overlay/ddk-field-console/artifacts/*)
+			case "$argv_item" in
+				"$artifact_root/apple-screenshot.tiff"|"$artifact_root/workspace-restore-cache") ;;
+				*) task_fail 'Prepared Apple argv escaped its exact artifact/workspace path.' ;;
+			esac ;;
+		/overlay/ddk-field-console/uploads/upload-[0-9]*-[0-9]*-[0-9]*/sealed.bin)
+			validate_sealed_input "$argv_item" ;;
+		/overlay/*) task_fail 'Prepared Apple argv references an unreviewed extroot path.' ;;
+	esac
+done
+
+start_usbmuxd() {
+	[ -x /usr/sbin/usbmuxd ] || task_fail 'The exact usbmuxd helper is unavailable.'
+	if pidof usbmuxd >/dev/null 2>&1; then task_fail 'A pre-existing usbmuxd process is active; the DDK worker will not take ownership of it.'; fi
+	/usr/sbin/usbmuxd -f -p -l "$job_dir/usbmuxd.log" >/dev/null 2>&1 &
+	usbmuxd_pid=$!
+	sleep 1
+	kill -0 "$usbmuxd_pid" 2>/dev/null || task_fail 'The temporary DDK-owned usbmuxd helper did not remain active.'
+}
+
+preflight_normal() {
+	udid="$1"
+	case "$udid" in ''|*[!A-Za-z0-9-]*) task_fail 'Prepared Apple UDID is invalid.' ;; esac
+	if [ "${#udid}" -lt 8 ] || [ "${#udid}" -gt 64 ]; then task_fail 'Prepared Apple UDID length is invalid.'; fi
+	start_usbmuxd
+	/usr/bin/idevice_id -l > "$job_dir/apple-devices.txt" 2> "$job_dir/apple-devices.err" || task_fail 'Unable to query devices through the temporary DDK-owned usbmuxd helper.'
+	grep -Fqx "$udid" "$job_dir/apple-devices.txt" || task_fail 'The exact selected Apple UDID was not present after fresh usbmuxd discovery.'
+}
+
+preflight_recovery() {
+	ecid="$1"
+	case "$ecid" in
+		0x*) ecid_value="${ecid#0x}"; case "$ecid_value" in ''|*[!0-9a-fA-F]*) task_fail 'Prepared Apple ECID is invalid.' ;; esac ;;
+		*) case "$ecid" in ''|*[!0-9]*) task_fail 'Prepared Apple ECID is invalid.' ;; esac ;;
+	esac
+	if [ "${#ecid}" -lt 5 ] || [ "${#ecid}" -gt 34 ]; then task_fail 'Prepared Apple ECID length is invalid.'; fi
+	/usr/bin/irecovery -i "$ecid" -q > "$job_dir/apple-recovery-preflight" 2> "$job_dir/apple-recovery-preflight.err" || task_fail 'The exact selected recovery/DFU ECID was not available to irecovery.'
+}
+
+case "$task" in
+	apple_mobile)
+		preflight_normal "$selected_device"
+		;;
+	apple_recovery)
+		case "$selected_device" in ecid:*) recovery_ecid="${selected_device#ecid:}" ;; *) task_fail 'Prepared recovery target selector is invalid.' ;; esac
+		preflight_recovery "$recovery_ecid"
+		;;
+	apple_restore)
+		if [ ! -d "$restore_workspace" ] || [ -L "$restore_workspace" ]; then task_fail 'Prepared Apple restore workspace is absent or unsafe.'; fi
+		case "$selected_device" in
+			udid:*) preflight_normal "${selected_device#udid:}" ;;
+			ecid:*) preflight_recovery "${selected_device#ecid:}" ;;
+			*) task_fail 'Prepared restore target selector is invalid.' ;;
+		esac
+		;;
+esac
+
+native_output="$job_dir/apple-native.out"
+native_error="$job_dir/apple-native.err"
+duration_success=0
+monitored_file=""
+monitored_limit=0
+
+if [ "$action_id" = 'apple.mobile_capture' ] && [ "$operation" = 'syslog' ]; then
+	native_output="$artifact_root/apple-syslog.txt"
+	monitored_file="$native_output"
+	monitored_limit=33554432
+	duration_success=1
+elif [ "$action_id" = 'apple.restore' ]; then
+	native_output="$artifact_root/apple-restore.log"
+	native_error="$native_output"
+	monitored_file="$native_output"
+	monitored_limit=16777216
+fi
+
+if [ "$native_output" = "$native_error" ]; then "$@" > "$native_output" 2>&1 & else "$@" > "$native_output" 2> "$native_error" & fi
+native_pid=$!
+started_epoch="$(date +%s)"
+native_timeout="$wall_timeout"
+if [ "$action_id" = 'apple.mobile_capture' ] && [ "$operation" = 'syslog' ]; then
+	native_timeout="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.duration' 2>/dev/null || true)"
+	case "$native_timeout" in ''|*[!0-9]*) task_fail 'Prepared Apple syslog duration is invalid.' ;; esac
+	if [ "$native_timeout" -lt 5 ] || [ "$native_timeout" -gt 3600 ]; then task_fail 'Prepared Apple syslog duration is outside the reviewed range.'; fi
+fi
+deadline_epoch=$((started_epoch + native_timeout))
+timed_out=0
+size_exceeded=0
+reserve_exhausted=0
+last_space_check=0
+
+while kill -0 "$native_pid" 2>/dev/null; do
+	now_epoch="$(date +%s)"
+	if [ "$now_epoch" -ge "$deadline_epoch" ]; then timed_out=1; stop_pid "$native_pid"; break; fi
+	if [ -n "$monitored_file" ] && [ -f "$monitored_file" ]; then
+		monitored_size="$(stat -c '%s' "$monitored_file" 2>/dev/null || printf 0)"
+		case "$monitored_size" in ''|*[!0-9]*) monitored_size=0 ;; esac
+		if [ "$monitored_size" -gt "$monitored_limit" ]; then size_exceeded=1; stop_pid "$native_pid"; break; fi
+	fi
+	if [ "$task" = 'apple_restore' ] && [ $((now_epoch - last_space_check)) -ge 5 ]; then
+		last_space_check="$now_epoch"
+		available_kb="$(df -Pk /overlay | awk 'NR == 2 {print $4}')"
+		case "$available_kb" in ''|*[!0-9]*) available_kb=0 ;; esac
+		if [ "$available_kb" -lt 102400 ]; then reserve_exhausted=1; stop_pid "$native_pid"; break; fi
+	fi
+	sleep 1
+done
+
+native_result=0
+wait "$native_pid" 2>/dev/null || native_result=$?
+native_pid=""
+
+if [ "$timed_out" -eq 1 ] && [ "$duration_success" -eq 1 ]; then native_result=0
+elif [ "$timed_out" -eq 1 ]; then printf 'Apple native operation exceeded the validated %s-second wall timeout.\n' "$wall_timeout" >> "$job_dir/stderr"; native_result=124
+fi
+if [ "$size_exceeded" -eq 1 ]; then printf 'Apple native output exceeded its reviewed artifact ceiling.\n' >> "$job_dir/stderr"; native_result=65; [ "$task" = 'apple_restore' ] || rm -f "$monitored_file"; fi
+if [ "$reserve_exhausted" -eq 1 ]; then printf '%s\n' 'Apple restore stopped before violating the protected 100 MiB extroot reserve.' >> "$job_dir/stderr"; native_result=65; fi
+
+if [ "$action_id" = 'apple.mobile_capture' ] && [ "$operation" = 'screenshot' ] && [ "$native_result" -eq 0 ]; then
+	screenshot="$artifact_root/apple-screenshot.tiff"
+	if [ ! -f "$screenshot" ] || [ -L "$screenshot" ]; then task_fail 'idevicescreenshot did not create a regular DDK artifact.'; fi
+	screenshot_size="$(stat -c '%s' "$screenshot" 2>/dev/null || printf 0)"
+	if [ "$screenshot_size" -le 8 ] || [ "$screenshot_size" -gt 67108864 ]; then task_fail 'Apple screenshot is empty, truncated, or exceeds 64 MiB.'; fi
+	screenshot_magic="$(hexdump -n 4 -e '4/1 "%02x"' "$screenshot" 2>/dev/null || true)"
+	case "$screenshot_magic" in 4d4d002a|49492a00) ;; *) task_fail 'Apple screenshot TIFF magic is invalid.' ;; esac
+	chmod 600 "$screenshot"
+elif [ "$action_id" = 'apple.mobile_capture' ] && [ "$operation" = 'syslog' ] && [ "$native_result" -eq 0 ]; then
+	syslog_size="$(stat -c '%s' "$artifact_root/apple-syslog.txt" 2>/dev/null || printf 0)"
+	case "$syslog_size" in ''|*[!0-9]*) syslog_size=0 ;; esac
+	if [ "$syslog_size" -le 0 ] || [ "$syslog_size" -gt 33554432 ] || [ -L "$artifact_root/apple-syslog.txt" ]; then
+		rm -f "$artifact_root/apple-syslog.txt"
+		task_fail 'Apple syslog capture was empty, unsafe, or exceeded 32 MiB.'
+	fi
+	chmod 600 "$artifact_root/apple-syslog.txt"
+fi
+
+if [ "$action_id" = 'apple.restore' ]; then
+	restore_size="$(stat -c '%s' "$artifact_root/apple-restore.log" 2>/dev/null || printf 0)"
+	case "$restore_size" in ''|*[!0-9]*) restore_size=0 ;; esac
+	if [ "$restore_size" -gt 0 ] && [ "$restore_size" -le 16777216 ] && [ ! -L "$artifact_root/apple-restore.log" ]; then chmod 600 "$artifact_root/apple-restore.log"; fi
+	{
+		printf '%s\n' 'DIGITAL DROPKICK — IDEVICERESTORE RESULT'
+		printf 'Target: %s\nOperation: %s\nNative exit: %s\n\n' "$selected_device" "$operation" "$native_result"
+		head -c 126976 "$artifact_root/apple-restore.log" 2>/dev/null || true
+	} > "$job_dir/stdout"
+else
+	{
+		printf 'Target: %s\nOperation: %s\nNative exit: %s\n\n' "$selected_device" "$operation" "$native_result"
+		head -c 126976 "$native_output" 2>/dev/null || true
+	} > "$job_dir/stdout"
+	if [ -s "$native_error" ]; then head -c 28672 "$native_error" >> "$job_dir/stderr"; fi
+fi
+
+if [ "$native_result" -eq 0 ]; then
+	status_set complete
+	printf '%s\n' 'Owned Apple helper lifecycle and isolated workspace cleanup will complete as the worker exits.' >> "$job_dir/stdout"
+	worker_success=1
+	printf '%s\n' 'Success'
+	exit 0
+fi
+
+printf 'Apple native operation exited with status %s.\n' "$native_result" >> "$job_dir/stderr"
+status_set failed
+exit "$native_result"

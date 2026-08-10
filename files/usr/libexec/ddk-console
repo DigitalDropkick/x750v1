@@ -7,18 +7,36 @@ local fs = require "nixio.fs"
 local json = require "luci.jsonc"
 local nixio = require "nixio"
 local usb_identity = dofile("/usr/share/ddk-field-console/usb-identity.lua")
+local operator_actions = dofile("/usr/share/ddk-field-console/operator-actions.lua")
+local operator_apple = dofile("/usr/share/ddk-field-console/operator-apple.lua")
 
 local TOOL_ROOT = "/usr/share/ddk-field-console/tools"
 local JOB_ROOT = "/tmp/ddk/jobs"
 local REPORT_ROOT = "/tmp/ddk/reports"
+local PREPARED_ROOT = "/tmp/ddk/prepared"
+local LOCK_ROOT = "/tmp/ddk/locks"
+local UPLOAD_PARENT = "/overlay/ddk-field-console"
+local UPLOAD_ROOT = UPLOAD_PARENT .. "/uploads"
+local ARTIFACT_ROOT = UPLOAD_PARENT .. "/artifacts"
 local MAX_CAPTURE = 131072
 local MAX_STDERR = 32768
 local MAX_CAMERA_ARTIFACT = 262144
+local MAX_OPERATOR_ENVELOPE = 24576
+local MAX_OPERATOR_ARTIFACT = 1073741824
+local MAX_TMP_OPERATOR_ARTIFACT = 16777216
+local MAX_OPERATOR_WORKSPACE_RESERVE = 17179869184
+local MIN_OVERLAY_RESERVE = 104857600
 local MAX_ACTIVE_JOBS = 2
 local MAX_RETAINED_JOBS = 20
 local JOB_MAX_AGE = 4 * 60 * 60
 local REPORT_MAX_AGE = 24 * 60 * 60
+local PREPARED_MAX_AGE = 5 * 60
+local RESERVED_UPLOAD_MAX_AGE = 60 * 60
+local SEALED_UPLOAD_MAX_AGE = 24 * 60 * 60
+local MAX_RETAINED_UPLOADS = 10
 local USB_SYSFS_ROOT = "/sys/bus/usb/devices"
+local DEFAULT_JOB_WORKER = "/usr/libexec/ddk-job-worker"
+local APPLE_JOB_WORKER = "/usr/libexec/ddk-apple-worker"
 
 local function trim(value)
 	return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
@@ -60,9 +78,11 @@ local function shell_quote(value)
 	return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
 end
 
-local function capture(command, limit)
-	-- All callers pass source-code constants. No request value reaches this string.
-	local handle = io.popen("LC_ALL=C timeout 12 sh -c " .. shell_quote(command) .. " 2>&1")
+local function capture(command, limit, timeout_seconds)
+	-- Callers pass source-code constants or paths composed only from strict server-side identifiers.
+	local timeout_value = tonumber(timeout_seconds) or 12
+	if timeout_value < 1 or timeout_value > 1800 or timeout_value ~= math.floor(timeout_value) then timeout_value = 12 end
+	local handle = io.popen("LC_ALL=C timeout " .. tostring(timeout_value) .. " sh -c " .. shell_quote(command) .. " 2>&1")
 	if not handle then
 		return "", false
 	end
@@ -96,6 +116,47 @@ local function parse_json(value)
 	end
 	local ok, parsed = pcall(json.parse, value)
 	return ok and parsed or nil
+end
+
+local function base64url_decode(value)
+	if type(value) ~= "string" or value == "" or #value > math.ceil(MAX_OPERATOR_ENVELOPE * 4 / 3) + 4 or
+	   value:find("[^A-Za-z0-9_-]") then
+		return nil, "Structured payload is not valid base64url"
+	end
+	local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	local input = value:gsub("-", "+"):gsub("_", "/")
+	local remainder = #input % 4
+	if remainder == 1 then return nil, "Structured payload has invalid base64url length" end
+	if remainder > 0 then input = input .. string.rep("=", 4 - remainder) end
+	local output, accumulator, bits = {}, 0, 0
+	for index = 1, #input do
+		local character = input:sub(index, index)
+		if character == "=" then break end
+		local position = alphabet:find(character, 1, true)
+		if not position then return nil, "Structured payload contains invalid base64url data" end
+		accumulator = accumulator * 64 + position - 1
+		bits = bits + 6
+		if bits >= 8 then
+			bits = bits - 8
+			output[#output + 1] = string.char(math.floor(accumulator / (2 ^ bits)) % 256)
+			accumulator = accumulator % (2 ^ bits)
+			if #output > MAX_OPERATOR_ENVELOPE then return nil, "Structured payload exceeds the 24 KiB limit" end
+		end
+	end
+	return table.concat(output)
+end
+
+local function parse_operator_envelope(encoded)
+	local decoded, err = base64url_decode(encoded)
+	if not decoded then return nil, err end
+	local envelope = parse_json(decoded)
+	if type(envelope) ~= "table" then return nil, "Structured payload must decode to a JSON object" end
+	for key in pairs(envelope) do
+		if key ~= "version" and key ~= "options" then return nil, "Unknown structured envelope field: " .. tostring(key) end
+	end
+	if envelope.version ~= 1 then return nil, "Unsupported structured action envelope version" end
+	if type(envelope.options) ~= "table" then return nil, "Structured action options must be a JSON object" end
+	return envelope.options
 end
 
 local function release_value(name)
@@ -256,10 +317,10 @@ local function rtl_sdr_probe()
 	local probe = {
 		accepted_usb_ids = { "0bda:2832", "0bda:2838" },
 		reviewed_count = 0,
+		devices = {},
 		ready = false,
 		reason = "REVIEWED HARDWARE NOT DETECTED"
 	}
-	local candidate
 	local iterator = fs.dir("/sys/bus/usb/devices")
 	if iterator then
 		for name in iterator do
@@ -280,29 +341,24 @@ local function rtl_sdr_probe()
 						end
 					end
 				end
-				candidate = {
+				local candidate = {
 					usb_id = vendor_id .. ":" .. product_id,
+					serial = serial,
+					selector = ":" .. serial,
 					serial_valid = serial_valid,
-					claimed_driver = claimed_driver
+					claimed_driver = claimed_driver,
+					label = (vendor_id .. ":" .. product_id) .. " / serial " .. (serial_valid and serial or "unavailable")
 				}
+				if serial_valid and claimed_driver == "" then probe.devices[#probe.devices + 1] = candidate end
 			end
 		end
 	end
-
-	if probe.reviewed_count > 1 then
-		probe.reason = "MULTIPLE REVIEWED DONGLES DETECTED"
-	elseif probe.reviewed_count == 1 and candidate then
-		probe.usb_id = candidate.usb_id
-		probe.serial_valid = candidate.serial_valid
-		probe.claimed_driver = candidate.claimed_driver
-		if not candidate.serial_valid then
-			probe.reason = "USB SERIAL UNAVAILABLE OR UNSAFE"
-		elseif candidate.claimed_driver ~= "" then
-			probe.reason = "KERNEL DRIVER CLAIMS THE TUNER"
-		else
-			probe.ready = true
-			probe.reason = "READY - EXACTLY ONE REVIEWED DONGLE"
-		end
+	table.sort(probe.devices, function(a, b) return a.selector < b.selector end)
+	if #probe.devices > 0 then
+		probe.ready = true
+		probe.reason = string.format("READY - %d REVIEWED DONGLE%s SELECTABLE", #probe.devices, #probe.devices == 1 and "" or "S")
+	elseif probe.reviewed_count > 0 then
+		probe.reason = "REVIEWED DONGLE PRESENT BUT SERIAL OR DRIVER OWNERSHIP IS UNSAFE"
 	end
 	return probe
 end
@@ -362,16 +418,12 @@ local function camera_probe()
 	table.sort(probe.nodes, function(a, b) return a.node < b.node end)
 	table.sort(primary_nodes, function(a, b) return a.node < b.node end)
 
-	if probe.reviewed_device_count > 1 then
-		probe.reason = "MULTIPLE REVIEWED UVC CAMERAS DETECTED"
-	elseif probe.reviewed_device_count == 1 and probe.reviewed_node_count > 0 then
+	if probe.reviewed_device_count >= 1 and probe.reviewed_node_count > 0 then
 		if #primary_nodes == 0 then
 			probe.reason = "UVC PRIMARY CAPTURE NODE NOT DETECTED"
-		elseif #primary_nodes > 1 then
-			probe.reason = "MULTIPLE UVC PRIMARY NODES DETECTED"
 		else
 			probe.ready = true
-			probe.reason = "READY - ONE REVIEWED UVC CAMERA"
+			probe.reason = string.format("READY - %d REVIEWED UVC PRIMARY NODE%s SELECTABLE", #primary_nodes, #primary_nodes == 1 and "" or "S")
 			probe.device = primary_nodes[1].node
 			probe.usb_id = primary_nodes[1].usb_id
 			probe.name = primary_nodes[1].name
@@ -459,25 +511,21 @@ local function gps_probe()
 	for _ in pairs(usb_devices) do probe.reviewed_device_count = probe.reviewed_device_count + 1 end
 	probe.reviewed_node_count = #probe.nodes
 	probe.hardware_present = probe.reviewed_device_count > 0
-	if probe.reviewed_device_count > 1 then
-		probe.reason = "MULTIPLE REVIEWED USB GNSS RECEIVERS DETECTED"
-	elseif probe.reviewed_device_count == 1 then
-		if probe.reviewed_node_count == 0 then
-			probe.reason = "REVIEWED GNSS SERIAL NODE NOT DETECTED"
-		elseif probe.reviewed_node_count > 1 then
-			probe.reason = "MULTIPLE GNSS SERIAL NODES ARE AMBIGUOUS"
-		elseif candidate and candidate.busy then
-			probe.reason = "GNSS SERIAL NODE IS ALREADY IN USE"
-		elseif not binary_exists("gpsdecode") then
-			probe.reason = "GPSDECODE EXECUTABLE IS UNAVAILABLE"
-		elseif candidate then
-			probe.ready = true
-			probe.reason = "READY - ONE REVIEWED USB GNSS RECEIVER"
-			probe.device = candidate.node
-			probe.usb_id = candidate.usb_id
-			probe.driver = candidate.driver
-			probe.name = trim(candidate.manufacturer .. " " .. candidate.product)
-		end
+	local available = {}
+	for _, item in ipairs(probe.nodes) do if not item.busy then available[#available + 1] = item end end
+	probe.available_nodes = available
+	if #available > 0 and binary_exists("gpsdecode") then
+		candidate = available[1]
+		probe.ready = true
+		probe.reason = string.format("READY - %d REVIEWED GNSS NODE%s SELECTABLE", #available, #available == 1 and "" or "S")
+		probe.device = candidate.node
+		probe.usb_id = candidate.usb_id
+		probe.driver = candidate.driver
+		probe.name = trim(candidate.manufacturer .. " " .. candidate.product)
+	elseif probe.reviewed_node_count > 0 and #available == 0 then
+		probe.reason = "ALL REVIEWED GNSS SERIAL NODES ARE ALREADY IN USE"
+	elseif probe.hardware_present and not binary_exists("gpsdecode") then
+		probe.reason = "GPSDECODE EXECUTABLE IS UNAVAILABLE"
 	end
 	return probe
 end
@@ -558,16 +606,63 @@ local identity_nouns = {
 	programmer = "reviewed firmware programmer"
 }
 
+local function apple_normal_udid(value)
+	value = trim(value)
+	if #value >= 8 and #value <= 64 and value:match("^[A-Za-z0-9-]+$") then return value end
+	return nil
+end
+
+local function apple_recovery_ecid(value)
+	value = trim(value)
+	local ecid = value:match("[Ee][Cc][Ii][Dd]:?%s*(0[xX][0-9A-Fa-f]+)")
+	if ecid then ecid = ecid:lower()
+	else
+		ecid = value:match("[Ee][Cc][Ii][Dd]:?%s*([0-9A-Fa-f]+)")
+		if ecid then ecid = "0x" .. ecid:lower()
+		elseif value:match("^0[xX][0-9A-Fa-f]+$") then ecid = value:lower()
+		elseif value:match("^%d+$") then ecid = value
+		elseif value:match("^[0-9A-Fa-f]+$") then ecid = "0x" .. value:lower() end
+	end
+	if not ecid then return nil end
+	if #ecid < 5 or #ecid > 34 then return nil end
+	return ecid
+end
+
 local function identity_probe(kind)
 	local devices = identity_inventory()[kind] or {}
 	local noun = identity_nouns[kind] or "reviewed device"
 	local count = #devices
+	local action_ready = count > 0
+	local normal_count, recovery_count, dfu_count = 0, 0, 0
+	if kind == "android" then
+		action_ready = false
+		for _, device in ipairs(devices) do
+			for _, interface in ipairs(device.interfaces or {}) do
+				if interface.signature == "ff:42:01" then action_ready = true; break end
+			end
+			if action_ready then break end
+		end
+	elseif kind == "apple_mobile" then
+		for _, device in ipairs(devices) do
+			if device.identity == "APPLE MOBILE DESCRIPTOR" and apple_normal_udid(device.serial) then normal_count = normal_count + 1
+			elseif device.identity == "RECOVERY MODE DESCRIPTOR" and apple_recovery_ecid(device.serial) then recovery_count = recovery_count + 1
+			elseif device.identity == "DFU MODE DESCRIPTOR" and apple_recovery_ecid(device.serial) then dfu_count = dfu_count + 1 end
+		end
+		action_ready = normal_count + recovery_count + dfu_count > 0
+	end
+	local reason
+	if count == 0 then reason = "READY / NO DEVICE - NO " .. noun:upper() .. " DETECTED"
+	elseif kind == "android" and not action_ready then reason = "REVIEWED ANDROID USB IDENTITY DETECTED WITHOUT AN ADB INTERFACE"
+	elseif kind == "apple_mobile" and not action_ready then reason = "REVIEWED APPLE USB IDENTITY DETECTED WITHOUT A SELECTABLE UDID OR ECID"
+	else reason = string.format("READY - %d %s%s DETECTED", count, noun:upper(), count == 1 and "" or "S") end
 	return {
 		hardware_present = count > 0,
 		count = count,
-		action_ready = true,
-		reason = count > 0 and string.format("READY - %d %s%s DETECTED", count, noun:upper(), count == 1 and "" or "S") or
-			("READY / NO DEVICE - NO " .. noun:upper() .. " DETECTED")
+		action_ready = action_ready,
+		normal_count = normal_count,
+		recovery_count = recovery_count,
+		dfu_count = dfu_count,
+		reason = reason
 	}
 end
 
@@ -632,11 +727,10 @@ local operator_guides = {
 			"Copy to device: adb push LOCAL_PATH REMOTE_PATH",
 			"Install an APK: adb install LOCAL_APK",
 			"Bootloader transition: adb reboot bootloader",
-			"Recovery sideload: adb sideload UPDATE_ZIP",
 			"Full command reference: adb help",
 			"Cleanup after use: adb kill-server"
 		},
-		warning = "ADB may start its local server and can change customer-device data. Confirm authorization, unlock/trust state, backups, and the exact target before any shell, push, install, reboot, or sideload operation."
+		warning = "ADB may start its local server and can change customer-device data. Confirm authorization, unlock/trust state, backups, and the exact target before any shell, push, install, reboot, backup, or restore operation. The inspected 1.0.32 help does not advertise sideload."
 	},
 	apple_mobile = {
 		title = "APPLE MOBILE FULL CLI HANDOFF",
@@ -728,6 +822,10 @@ local function serial_attribution()
 		local parent = parent_path:match("([^/]+)$") or ""
 		local exact_ec25 = vendor_id == "2c7c" and product_id == "0125" and
 			manufacturer:lower() == "quectel" and product:lower():match("^ec25") ~= nil and driver == "option"
+		local reviewed_driver = driver == "cdc_acm" or driver == "ftdi_sio" or driver == "cp210x" or
+			driver == "pl2303" or driver == "ch341" or driver == "usbserial"
+		local valid_usb_identity = vendor_id:match("^[0-9a-f][0-9a-f][0-9a-f][0-9a-f]$") ~= nil and
+			product_id:match("^[0-9a-f][0-9a-f][0-9a-f][0-9a-f]$") ~= nil
 		local classification
 		local owner
 
@@ -735,6 +833,11 @@ local function serial_attribution()
 			classification = "MODEM RESERVED"
 			owner = "Quectel EC25-AF cellular modem"
 			summary.modem_reserved = summary.modem_reserved + 1
+		elseif reviewed_driver and valid_usb_identity then
+			classification = "REVIEWED GENERAL PURPOSE"
+			owner = trim(manufacturer .. " " .. product)
+			if owner == "" then owner = "USB serial adapter " .. vendor_id .. ":" .. product_id end
+			summary.reviewed_general_purpose = summary.reviewed_general_purpose + 1
 		elseif vendor_id ~= "" and product_id ~= "" then
 			classification = "UNREVIEWED SERIAL"
 			owner = trim(manufacturer .. " " .. product)
@@ -750,7 +853,7 @@ local function serial_attribution()
 			node = node,
 			classification = classification,
 			owner = owner,
-			generic_use_allowed = false,
+			generic_use_allowed = classification == "REVIEWED GENERAL PURPOSE",
 			usb = {
 				vendor_id = vendor_id,
 				product_id = product_id,
@@ -789,7 +892,7 @@ local function serial_attribution_text()
 			lines[#lines + 1] = "  Parent: " .. (device.usb.parent ~= "" and device.usb.parent or "unavailable")
 			lines[#lines + 1] = "  Interface: " .. (device.usb.interface_number ~= "" and device.usb.interface_number or "unavailable")
 			lines[#lines + 1] = "  Driver: " .. (device.usb.driver ~= "" and device.usb.driver or "unavailable")
-			lines[#lines + 1] = "  Generic use allowed: NO"
+			lines[#lines + 1] = "  Generic use allowed: " .. (device.generic_use_allowed and "YES" or "NO")
 			lines[#lines + 1] = ""
 		end
 	end
@@ -1053,6 +1156,11 @@ local function load_capabilities()
 				console_enabled = manifest.enabled == true,
 				action_ready = action_ready,
 				readiness_reason = readiness_reason,
+				mode_counts = manifest.id == "apple-repair" and {
+					normal = hardware.identity.apple_mobile.normal_count or 0,
+					recovery = hardware.identity.apple_mobile.recovery_count or 0,
+					dfu = hardware.identity.apple_mobile.dfu_count or 0
+				} or nil,
 				actions = type(manifest.actions) == "table" and manifest.actions or {},
 				help_text = manifest.help_text or "",
 				software = {
@@ -1092,6 +1200,220 @@ local info_actions = {
 	["packages.count"] = { label = "Installed Package Count", command = "opkg list-installed | wc -l" }
 }
 
+local upload_policies = {
+	firmware_image = { maximum = 268435456, extensions = { bin = true, hex = true, elf = true, uf2 = true, dfu = true, fw = true, rom = true, img = true } },
+	android_package = { maximum = 268435456, extensions = { apk = true, apks = true, zip = true } },
+	android_backup = { maximum = 1073741824, extensions = { ab = true } },
+	apple_restore = { maximum = 12884901888, extensions = { ipsw = true, zip = true } },
+	apple_recovery_input = { maximum = 268435456, extensions = { bin = true, img = true, dfu = true, ibss = true, ibec = true, payload = true, txt = true, script = true, cfg = true } },
+	apple_ticket = { maximum = 1048576, extensions = { shsh = true, ticket = true, bin = true, plist = true } },
+	device_input = { maximum = 268435456, extensions = { bin = true, hex = true, elf = true, uf2 = true, dfu = true, fw = true, rom = true, img = true, cfg = true, json = true, zip = true, tar = true, gz = true } }
+}
+
+local function valid_upload_id(value)
+	return type(value) == "string" and value:match("^upload%-%d+%-%d+%-%d+$") ~= nil
+end
+
+local function valid_upload_name(value, policy)
+	if type(value) ~= "string" or #value < 1 or #value > 128 or value:find("..", 1, true) or
+	   value:find("[/\\%z\1-\31\127]") or not value:match("^[A-Za-z0-9][A-Za-z0-9_. ()+%-]*$") then return false end
+	local extension = value:lower():match("[.]([a-z0-9]+)$")
+	return extension ~= nil and policy.extensions[extension] == true
+end
+
+local function upload_metadata(path)
+	return parse_json(fs.readfile(path .. "/metadata.json")) or parse_json(fs.readfile(path .. "/request.json"))
+end
+
+local function remove_upload_tree(path)
+	local prefix = UPLOAD_ROOT .. "/"
+	if path:sub(1, #prefix) ~= prefix or not valid_upload_id(path:sub(#prefix + 1)) then return false end
+	for _, name in ipairs({ "payload.bin", "sealed.bin", "request.json", "metadata.json" }) do
+		local child = path .. "/" .. name
+		local stat = fs.lstat(child)
+		if stat and stat.type == "reg" then fs.unlink(child)
+		elseif name == "payload.bin" and stat and stat.type == "dir" then fs.rmdir(child) end
+	end
+	fs.rmdir(path)
+	return true
+end
+
+local function cleanup_uploads()
+	local now = os.time()
+	local iterator = fs.dir(UPLOAD_ROOT)
+	if not iterator then return end
+	for name in iterator do
+		if valid_upload_id(name) then
+			local path = UPLOAD_ROOT .. "/" .. name
+			local metadata = upload_metadata(path)
+			local expires = type(metadata) == "table" and tonumber(metadata.expires_at) or nil
+			local stat = fs.stat(path)
+			local locked = fs.stat(LOCK_ROOT .. "/upload-" .. name) ~= nil
+			if not locked and ((expires and expires < now) or (not expires and stat and now - (stat.mtime or now) > RESERVED_UPLOAD_MAX_AGE)) then remove_upload_tree(path) end
+		end
+	end
+end
+
+local function retained_upload_count()
+	local count = 0
+	local iterator = fs.dir(UPLOAD_ROOT)
+	if iterator then for name in iterator do if valid_upload_id(name) then count = count + 1 end end end
+	return count
+end
+
+local function reserve_upload(kind, encoded)
+	local policy = upload_policies[kind]
+	if not policy then return nil, "Unknown DDK upload kind" end
+	local options, err = parse_operator_envelope(encoded)
+	if not options then return nil, err end
+	for key in pairs(options) do if key ~= "name" and key ~= "size" then return nil, "Unknown upload reservation field: " .. tostring(key) end end
+	if not valid_upload_name(options.name, policy) then return nil, "Upload name or extension is not allowed for the selected DDK input kind" end
+	if type(options.size) ~= "number" or options.size ~= math.floor(options.size) or options.size < 1 or options.size > policy.maximum then
+		return nil, "Declared upload size is outside the selected DDK input limit"
+	end
+	local available_kb = tonumber(trim(capture("df -Pk /overlay | awk 'NR == 2 {print $4}'", 128, 5))) or 0
+	if available_kb < math.ceil((options.size + MIN_OVERLAY_RESERVE) / 1024) then
+		return nil, "Extroot does not have enough free space for this upload and the protected appliance reserve"
+	end
+	fs.mkdirr(UPLOAD_ROOT)
+	fs.chmod(UPLOAD_PARENT, "0700")
+	fs.chmod(UPLOAD_ROOT, "0700")
+	local root_stat = fs.stat(UPLOAD_ROOT)
+	if not root_stat or root_stat.type ~= "dir" then return nil, "Unable to initialize DDK-controlled upload storage" end
+	cleanup_uploads()
+	if retained_upload_count() >= MAX_RETAINED_UPLOADS then return nil, "Ten DDK input files are already retained; delete or wait for expiry before reserving another" end
+	local created = os.time()
+	local upload_id, path
+	for counter = 1, 100 do
+		upload_id = string.format("upload-%d-%d-%d", created, nixio.getpid(), counter)
+		path = UPLOAD_ROOT .. "/" .. upload_id
+		if not fs.stat(path) and fs.mkdir(path, "0700") then break end
+		upload_id, path = nil, nil
+	end
+	if not upload_id then return nil, "Unable to allocate a DDK upload reservation" end
+	local metadata = {
+		id = upload_id, phase = "reserved", kind = kind, original_name = options.name,
+		declared_size = options.size, maximum_size = policy.maximum, created_at = created,
+		expires_at = created + RESERVED_UPLOAD_MAX_AGE
+	}
+	local metadata_body = json.stringify(metadata)
+	if not metadata_body or not write_file(path .. "/request.json", metadata_body .. "\n") then
+		remove_upload_tree(path)
+		return nil, "Unable to persist the DDK upload reservation"
+	end
+	fs.chmod(path .. "/request.json", "0600")
+	return { id = upload_id, kind = kind, original_name = options.name, declared_size = options.size, maximum_size = policy.maximum, upload_path = path .. "/payload.bin", expires_at = metadata.expires_at }
+end
+
+local function finalize_upload(upload_id)
+	if not valid_upload_id(upload_id) then return nil, "Invalid DDK upload ID" end
+	cleanup_uploads()
+	local path = UPLOAD_ROOT .. "/" .. upload_id
+	local metadata = parse_json(fs.readfile(path .. "/request.json"))
+	local expires_at = type(metadata) == "table" and tonumber(metadata.expires_at) or nil
+	if type(metadata) ~= "table" or metadata.id ~= upload_id or metadata.phase ~= "reserved" or
+	   not expires_at or expires_at < os.time() then
+		return nil, "Upload reservation was not found or expired"
+	end
+	local policy = upload_policies[metadata.kind]
+	if not policy or not valid_upload_name(metadata.original_name, policy) then return nil, "Upload reservation metadata is invalid" end
+	local payload = path .. "/payload.bin"
+	local stat = fs.lstat(payload)
+	if not stat or stat.type ~= "reg" or stat.size ~= metadata.declared_size or stat.size < 1 or stat.size > policy.maximum then
+		return nil, "Uploaded file is absent, unsafe, or does not match the declared bounded size"
+	end
+	local sealed = path .. "/sealed.bin"
+	if fs.lstat(sealed) or not fs.rename(payload, sealed) then return nil, "Unable to atomically seal the uploaded file" end
+	fs.chmod(sealed, "0600")
+	if not fs.mkdir(payload, "0000") then remove_upload_tree(path); return nil, "Unable to close the authenticated upload path after sealing" end
+	local sealed_stat = fs.lstat(sealed)
+	if not sealed_stat or sealed_stat.type ~= "reg" or sealed_stat.size ~= metadata.declared_size then remove_upload_tree(path); return nil, "Sealed upload failed its post-rename validation" end
+	local head = read_limited(sealed, 15) or ""
+	if (metadata.kind == "android_package" or metadata.kind == "apple_restore") and head:sub(1, 4) ~= string.char(80, 75, 3, 4) then
+		remove_upload_tree(path)
+		return nil, "Uploaded package/archive does not have the required ZIP signature"
+	end
+	if metadata.kind == "android_backup" and head ~= "ANDROID BACKUP\n" then
+		remove_upload_tree(path)
+		return nil, "Uploaded Android backup does not have the required ADB backup header"
+	end
+	local digest_output = capture("/usr/bin/sha256sum " .. sealed, 256, 1800)
+	local digest = digest_output:match("^(%x+)%s")
+	if not digest or #digest ~= 64 then remove_upload_tree(path); return nil, "Unable to compute the sealed upload SHA-256" end
+	metadata.phase = "sealed"
+	metadata.size = sealed_stat.size
+	metadata.sha256 = digest:lower()
+	metadata.sealed_at = os.time()
+	metadata.expires_at = metadata.sealed_at + SEALED_UPLOAD_MAX_AGE
+	local metadata_body = json.stringify(metadata)
+	if not metadata_body or not write_file(path .. "/metadata.json", metadata_body .. "\n") then
+		remove_upload_tree(path)
+		return nil, "Unable to persist sealed upload metadata"
+	end
+	fs.chmod(path .. "/metadata.json", "0600")
+	fs.unlink(path .. "/request.json")
+	return { id = metadata.id, kind = metadata.kind, original_name = metadata.original_name, size = metadata.size, sha256 = metadata.sha256, sealed_at = metadata.sealed_at, expires_at = metadata.expires_at }
+end
+
+local function sealed_upload_record(upload_id, expected_kind)
+	if not valid_upload_id(upload_id) then return nil, "Invalid DDK upload ID" end
+	local path = UPLOAD_ROOT .. "/" .. upload_id
+	local metadata = parse_json(fs.readfile(path .. "/metadata.json"))
+	local expires_at = type(metadata) == "table" and tonumber(metadata.expires_at) or nil
+	local size = type(metadata) == "table" and tonumber(metadata.size) or nil
+	local policy = type(metadata) == "table" and upload_policies[metadata.kind] or nil
+	if type(metadata) ~= "table" or metadata.id ~= upload_id or metadata.phase ~= "sealed" or
+	   not expires_at or expires_at < os.time() or not policy or
+	   (expected_kind and metadata.kind ~= expected_kind) or not valid_upload_name(metadata.original_name, policy) or
+	   not size or size ~= math.floor(size) or size < 1 or size > policy.maximum or
+	   type(metadata.sha256) ~= "string" or not metadata.sha256:match("^[0-9a-f]+$") or #metadata.sha256 ~= 64 then
+		return nil, "Sealed DDK upload metadata is invalid, expired, or the wrong kind"
+	end
+	local sealed_path = path .. "/sealed.bin"
+	local sealed_stat = fs.lstat(sealed_path)
+	local closed_path_stat = fs.lstat(path .. "/payload.bin")
+	if not sealed_stat or sealed_stat.type ~= "reg" or sealed_stat.size ~= size or
+	   not closed_path_stat or closed_path_stat.type ~= "dir" then
+		return nil, "Sealed DDK upload storage does not match its validated metadata"
+	end
+	return {
+		id = upload_id, kind = metadata.kind, original_name = metadata.original_name,
+		size = size, sha256 = metadata.sha256, sealed_at = metadata.sealed_at,
+		expires_at = expires_at, sealed_path = sealed_path
+	}
+end
+
+local function list_uploads()
+	cleanup_uploads()
+	local uploads = {}
+	local iterator = fs.dir(UPLOAD_ROOT)
+	if iterator then
+		for name in iterator do
+			if valid_upload_id(name) then
+				local metadata = sealed_upload_record(name)
+				if metadata then
+					metadata.sealed_path = nil
+					uploads[#uploads + 1] = metadata
+				end
+			end
+		end
+	end
+	table.sort(uploads, function(a, b) return (a.sealed_at or 0) > (b.sealed_at or 0) end)
+	return uploads
+end
+
+local function delete_upload_unlocked(upload_id)
+	if not valid_upload_id(upload_id) then return nil, "Invalid DDK upload ID" end
+	local path = UPLOAD_ROOT .. "/" .. upload_id
+	if not fs.stat(path) then return nil, "DDK upload was not found" end
+	if not remove_upload_tree(path) then return nil, "Unable to remove the DDK upload" end
+	return { id = upload_id, deleted = true }
+end
+
+local delete_upload
+local acquire_lock
+local release_lock
+
 local function valid_job_id(value)
 	return type(value) == "string" and value:match("^job%-%d+%-%d+$") ~= nil
 end
@@ -1100,20 +1422,424 @@ local function valid_report_id(value)
 	return type(value) == "string" and value:match("^report%-%d+%-%d+$") ~= nil
 end
 
-local function remove_tree(path)
-	if not path:match("^/tmp/ddk/jobs/job%-%d+%-%d+$") then return false end
+local function valid_prepared_id(value)
+	return type(value) == "string" and value:match("^prep%-%d+%-%d+%-%d+$") ~= nil
+end
+
+local function adb_devices_probe()
+	if not binary_exists("/usr/bin/adb") then return {}, "ADB 1.0.32 IS UNAVAILABLE" end
+	local identities = {}
+	for _, device in ipairs(identity_inventory().android or {}) do
+		local adb_interface = false
+		for _, interface in ipairs(device.interfaces or {}) do
+			if interface.signature == "ff:42:01" then adb_interface = true; break end
+		end
+		if adb_interface then identities[#identities + 1] = device end
+	end
+	if #identities == 0 then return {}, "NO REVIEWED USB ADB IDENTITY" end
+	fs.mkdirr(LOCK_ROOT)
+	fs.chmod("/tmp/ddk", "0700")
+	fs.chmod(LOCK_ROOT, "0700")
+	local probe_owner = "probe-" .. tostring(os.time()) .. "-" .. tostring(nixio.getpid())
+	local locked = acquire_lock("resource-adb", probe_owner)
+	if not locked then return {}, "ADB RESOURCE IS BUSY" end
+	local function finish(devices, reason)
+		release_lock("resource-adb", probe_owner)
+		return devices, reason
+	end
+	if trim(capture("netstat -lnt 2>/dev/null | grep -E '(^|[.:])5038[[:space:]]'")) ~= "" then
+		return finish({}, "ISOLATED DDK ADB SERVER PORT 5038 IS ALREADY IN USE")
+	end
+	local output = capture("/usr/bin/adb -P 5038 devices -l", MAX_CAPTURE, 15)
+	capture("/usr/bin/adb -P 5038 kill-server", 4096, 10)
+	if trim(capture("netstat -lnt 2>/dev/null | grep -E '(^|[.:])5038[[:space:]]'")) ~= "" then
+		return finish({}, "TEMPORARY DDK ADB SERVER DID NOT CLEAN UP")
+	end
+	local rows = {}
+	for line in output:gmatch("[^\r\n]+") do
+		local serial, state, detail = line:match("^([^%s]+)%s+([^%s]+)%s*(.*)$")
+		if serial and state and serial ~= "List" and serial ~= "*" and #serial <= 128 and
+		   serial:match("^[A-Za-z0-9._-]+$") and state:match("^[a-z]+$") then
+			rows[#rows + 1] = { serial = serial, state = state, detail = detail or "" }
+		end
+	end
+	local devices = {}
+	for _, row in ipairs(rows) do
+		local matched
+		for _, identity in ipairs(identities) do
+			if identity.serial ~= "" and identity.serial == row.serial then matched = identity; break end
+		end
+		if not matched and #rows == 1 and #identities == 1 then matched = identities[1] end
+		if matched then
+			local model = row.detail:match("model:([^%s]+)") or matched.product or "Android"
+			devices[#devices + 1] = {
+				serial = row.serial, state = row.state,
+				label = row.serial .. " / " .. row.state .. " / " .. trim(model):sub(1, 64),
+				usb_id = matched.usb_id, topology = matched.topology
+			}
+		end
+	end
+	table.sort(devices, function(a, b) return a.label < b.label end)
+	return finish(devices, #devices > 0 and "READY" or "NO AUTHORIZED REVIEWED USB ADB TRANSPORT")
+end
+
+local function operator_context(action_id)
+	local lan = ubus_object("ubus call network.interface.lan status")
+	local lan_address = ""
+	local local_addresses = {}
+	local addresses = lan["ipv4-address"]
+	if type(addresses) == "table" and type(addresses[1]) == "table" and
+	   type(addresses[1].address) == "string" and type(addresses[1].mask) == "number" then
+		lan_address = addresses[1].address .. "/" .. tostring(addresses[1].mask)
+	end
+	local address_output = capture("ip -o addr show")
+	for line in address_output:gmatch("[^\n]+") do
+		local interface, family, address = line:match("^%d+:%s+([^%s]+)%s+(inet6?)%s+([^%s/]+)")
+		if interface and address then
+			interface = interface:gsub("@.*$", "")
+			if interface:match("^[A-Za-z0-9_.-]+$") and address:match("^[A-Za-z0-9:.]+$") then
+				local_addresses[#local_addresses + 1] = { address = address, interface = interface, family = family }
+			end
+		end
+	end
+	local congestion = {}
+	for name in (fs.readfile("/proc/sys/net/ipv4/tcp_available_congestion_control") or ""):gmatch("%S+") do
+		if name:match("^[A-Za-z0-9_.-]+$") then congestion[#congestion + 1] = name end
+	end
+	local rtl = rtl_sdr_probe()
+	local camera = camera_probe()
+	local camera_devices = {}
+	for _, item in ipairs(camera.nodes or {}) do
+		if item.index == "0" then
+			camera_devices[#camera_devices + 1] = {
+				node = item.node,
+				label = item.node .. " / " .. item.usb_id .. (item.name ~= "" and (" / " .. item.name) or "")
+			}
+		end
+	end
+	local serial_inventory = serial_attribution()
+	local serial_devices = {}
+	for _, item in ipairs(serial_inventory or {}) do
+		if item.generic_use_allowed and not device_open_by_process(item.node) then
+			serial_devices[#serial_devices + 1] = {
+				node = item.node,
+				label = item.node .. " / " .. item.usb.vendor_id .. ":" .. item.usb.product_id .. " / " .. item.owner
+			}
+		end
+	end
+	local gps = gps_probe()
+	local gps_devices = {}
+	for _, item in ipairs(gps.available_nodes or {}) do
+		gps_devices[#gps_devices + 1] = {
+			node = item.node,
+			label = item.node .. " / " .. item.usb_id .. " / " .. trim(item.manufacturer .. " " .. item.product)
+		}
+	end
+	local android_devices, android_reason = {}, "ADB DISCOVERY NOT REQUESTED"
+	if action_id == "android.adb_diagnostics" or action_id == "android.adb_manage" then
+		android_devices, android_reason = adb_devices_probe()
+	end
+	local apple_normal_devices, apple_recovery_devices, apple_restore_devices = {}, {}, {}
+	if type(action_id) == "string" and action_id:match("^apple[.]") then
+		local seen_normal, seen_recovery = {}, {}
+		for _, device in ipairs(identity_inventory().apple_mobile or {}) do
+			local serial = trim(device.serial)
+			local normal_udid = apple_normal_udid(serial)
+			if device.identity == "APPLE MOBILE DESCRIPTOR" and normal_udid and not seen_normal[normal_udid] then
+				serial = normal_udid
+				seen_normal[serial] = true
+				local label = serial .. " / NORMAL / " .. (device.product ~= "" and device.product or device.usb_id)
+				apple_normal_devices[#apple_normal_devices + 1] = { value = serial, label = label, udid = serial, mode = "normal", usb_id = device.usb_id, topology = device.topology }
+				apple_restore_devices[#apple_restore_devices + 1] = { value = "udid:" .. serial, label = label, selector = "udid", identifier = serial, mode = "normal" }
+			elseif device.identity == "RECOVERY MODE DESCRIPTOR" or device.identity == "DFU MODE DESCRIPTOR" then
+				local ecid = apple_recovery_ecid(serial)
+				if ecid then
+					if not seen_recovery[ecid] then
+						seen_recovery[ecid] = true
+						local mode = device.identity == "DFU MODE DESCRIPTOR" and "dfu" or "recovery"
+						local label = ecid .. " / " .. mode:upper() .. " / " .. (device.product ~= "" and device.product or device.usb_id)
+						apple_recovery_devices[#apple_recovery_devices + 1] = { value = "ecid:" .. ecid, label = label, ecid = ecid, mode = mode, usb_id = device.usb_id, topology = device.topology }
+						apple_restore_devices[#apple_restore_devices + 1] = { value = "ecid:" .. ecid, label = label, selector = "ecid", identifier = ecid, mode = mode }
+					end
+				end
+			end
+		end
+		table.sort(apple_normal_devices, function(a, b) return a.value < b.value end)
+		table.sort(apple_recovery_devices, function(a, b) return a.value < b.value end)
+		table.sort(apple_restore_devices, function(a, b) return a.value < b.value end)
+	end
+	return {
+		interfaces = interface_list(),
+		lan_interface = lan.l3_device or lan.device or "",
+		lan_cidr = lan_address,
+		local_addresses = local_addresses,
+		congestion_controls = congestion,
+		rtl_devices = rtl.devices or {},
+		camera_devices = camera_devices,
+		serial_devices = serial_devices,
+		gps_devices = gps_devices,
+		android_devices = android_devices,
+		android_reason = android_reason,
+		apple_normal_devices = apple_normal_devices,
+		apple_recovery_devices = apple_recovery_devices,
+		apple_restore_devices = apple_restore_devices,
+		uploads = list_uploads()
+	}
+end
+
+local function remove_prepared_tree(path)
+	if not path:match("^/tmp/ddk/prepared/prep%-%d+%-%d+%-%d+[.]claim%-%d+$") and
+	   not path:match("^/tmp/ddk/prepared/prep%-%d+%-%d+%-%d+$") then return false end
 	local iterator = fs.dir(path)
 	if iterator then
 		for name in iterator do
-			if name ~= "." and name ~= ".." then
+			if name ~= "." and name ~= ".." and name:match("^[A-Za-z0-9_.-]+$") then
 				local child = path .. "/" .. name
-				local stat = fs.stat(child)
-				if stat and stat.type == "dir" then remove_tree(child) else fs.unlink(child) end
+				local stat = fs.lstat(child)
+				if stat and stat.type == "reg" then fs.unlink(child) end
 			end
 		end
 	end
 	fs.rmdir(path)
 	return true
+end
+
+local function cleanup_prepared()
+	local now = os.time()
+	local iterator = fs.dir(PREPARED_ROOT)
+	if not iterator then return end
+	for name in iterator do
+		if valid_prepared_id(name) or name:match("^prep%-%d+%-%d+%-%d+[.]claim%-%d+$") then
+			local path = PREPARED_ROOT .. "/" .. name
+			local stat = fs.stat(path)
+			if stat and now - (stat.mtime or now) > PREPARED_MAX_AGE then remove_prepared_tree(path) end
+		end
+	end
+end
+
+local function describe_operator_action(action_id)
+	local module = type(action_id) == "string" and action_id:match("^apple[.]") and operator_apple or operator_actions
+	local schema, err = module.describe(action_id, operator_context(action_id))
+	if not schema then return nil, err end
+	local executables = type(schema.native) == "table" and schema.native.executables or nil
+	if type(executables) ~= "table" then executables = { schema.native and schema.native.executable or "" } end
+	for _, executable in ipairs(executables) do
+		if not binary_exists(executable) then return nil, "An exact native executable required by this action is unavailable: " .. tostring(executable) end
+	end
+	return schema
+end
+
+local operator_backends = {
+	["network.nmap_lan_discovery"] = { worker = "operator_nmap", executable = "/usr/bin/nmap" },
+	["capture.lan_metadata_snapshot"] = { worker = "operator_tcpdump", executable = "/usr/sbin/tcpdump" },
+	["throughput.iperf3"] = { worker = "operator_iperf3", executable = "/usr/bin/iperf3" },
+	["radio.rtl433_snapshot"] = { worker = "operator_rtl433", executable = "/usr/bin/rtl_433" },
+	["camera.still_snapshot"] = { worker = "operator_camera", executable = "/usr/bin/fswebcam" },
+	["serial.session"] = { worker = "operator_serial", executable = "/usr/bin/socat" },
+	["gps.snapshot"] = { worker = "operator_gps", executable = "/bin/dd", decode_executable = "/usr/bin/gpsdecode" },
+	["android.adb_diagnostics"] = { worker = "operator_adb", executable = "/usr/bin/adb" },
+	["android.adb_manage"] = { worker = "operator_adb", executable = "/usr/bin/adb" },
+	["apple.mobile_diagnostics"] = { worker = "apple_mobile", worker_executable = "/usr/libexec/ddk-apple-worker", executables = { "/usr/bin/ideviceinfo", "/usr/bin/idevicename", "/usr/bin/idevicedate", "/usr/bin/idevicepair", "/usr/bin/idevicediagnostics" } },
+	["apple.mobile_manage"] = { worker = "apple_mobile", worker_executable = "/usr/libexec/ddk-apple-worker", executables = { "/usr/bin/idevicepair", "/usr/bin/idevicename", "/usr/bin/idevicedate", "/usr/bin/idevicediagnostics", "/usr/bin/ideviceenterrecovery", "/usr/bin/idevicesetlocation" } },
+	["apple.mobile_capture"] = { worker = "apple_mobile", worker_executable = "/usr/libexec/ddk-apple-worker", executables = { "/usr/bin/idevicescreenshot", "/usr/bin/idevicesyslog" } },
+	["apple.recovery"] = { worker = "apple_recovery", worker_executable = "/usr/libexec/ddk-apple-worker", executable = "/usr/bin/irecovery" },
+	["apple.restore"] = { worker = "apple_restore", worker_executable = "/usr/libexec/ddk-apple-worker", executable = "/usr/bin/idevicerestore" }
+}
+
+local function backend_allows_executable(backend, executable)
+	if type(backend) ~= "table" or type(executable) ~= "string" then return false end
+	if backend.executable == executable then return true end
+	for _, allowed in ipairs(backend.executables or {}) do if allowed == executable then return true end end
+	return false
+end
+
+local function prepare_operator_action(action_id, encoded)
+	local options, err = parse_operator_envelope(encoded)
+	if not options then return nil, err end
+	local plan
+	local module = type(action_id) == "string" and action_id:match("^apple[.]") and operator_apple or operator_actions
+	plan, err = module.prepare(action_id, options, operator_context(action_id))
+	if not plan then return nil, err end
+	local backend = operator_backends[action_id]
+	if not backend or plan.action_id ~= action_id or plan.worker ~= backend.worker or
+	   type(plan.argv) ~= "table" or not backend_allows_executable(backend, plan.argv[1]) or not binary_exists(plan.argv[1]) then
+		return nil, "Operator action builder produced an invalid native execution plan"
+	end
+	if backend.decode_executable and not binary_exists(backend.decode_executable) then return nil, "The exact native decoder executable is unavailable" end
+	for _, argument in ipairs(plan.argv) do
+		if type(argument) ~= "string" or argument == "" or argument:find("[%z\r\n]") then
+			return nil, "Operator action builder produced an invalid argv element"
+		end
+	end
+	if type(plan.artifacts) ~= "table" then return nil, "Operator action builder did not declare an artifact list" end
+	local artifact_names, artifact_count = {}, 0
+	for index, artifact in ipairs(plan.artifacts) do
+		artifact_count = index
+		local name = type(artifact) == "table" and artifact.name or nil
+		local maximum = type(artifact) == "table" and tonumber(artifact.max_size) or nil
+		local storage = type(artifact) == "table" and (artifact.storage or "tmp") or nil
+		if type(name) ~= "string" or not name:match("^[A-Za-z0-9][A-Za-z0-9_.-]+$") or name:find("..", 1, true) or
+		   artifact_names[name] or not maximum or maximum ~= math.floor(maximum) or maximum < 1 or maximum > MAX_OPERATOR_ARTIFACT or
+		   (storage ~= "tmp" and storage ~= "extroot") or (storage == "tmp" and maximum > MAX_TMP_OPERATOR_ARTIFACT) or
+		   type(artifact.kind) ~= "string" or not artifact.kind:match("^[A-Za-z0-9_.-]+$") or
+		   type(artifact.content_type) ~= "string" or not artifact.content_type:match("^[A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+$") then
+			return nil, "Operator action builder declared an invalid artifact"
+		end
+		artifact.storage = storage
+		artifact_names[name] = true
+	end
+	for key in pairs(plan.artifacts) do
+		if type(key) ~= "number" or key < 1 or key > artifact_count or key ~= math.floor(key) then
+			return nil, "Operator action artifact list is not dense"
+		end
+	end
+	local workspace_names, workspace_count = {}, 0
+	if plan.workspaces ~= nil and type(plan.workspaces) ~= "table" then return nil, "Operator action builder declared an invalid workspace list" end
+	for index, workspace in ipairs(plan.workspaces or {}) do
+		workspace_count = index
+		local name = type(workspace) == "table" and workspace.name or nil
+		local storage = type(workspace) == "table" and workspace.storage or nil
+		local reserve = type(workspace) == "table" and tonumber(workspace.reserve_size) or nil
+		if index > 2 or type(name) ~= "string" or not name:match("^[A-Za-z0-9][A-Za-z0-9-]+$") or workspace_names[name] or
+		   storage ~= "extroot" or not reserve or reserve ~= math.floor(reserve) or reserve < 1048576 or reserve > MAX_OPERATOR_WORKSPACE_RESERVE then
+			return nil, "Operator action builder declared an invalid isolated workspace"
+		end
+		workspace_names[name] = true
+	end
+	for key in pairs(plan.workspaces or {}) do
+		if type(key) ~= "number" or key < 1 or key > workspace_count or key ~= math.floor(key) then return nil, "Operator action workspace list is not dense" end
+	end
+	local validated_uploads, upload_count, seen_uploads = {}, 0, {}
+	if plan.input_uploads ~= nil and type(plan.input_uploads) ~= "table" then
+		return nil, "Operator action builder declared an invalid input upload list"
+	end
+	for index, declaration in ipairs(plan.input_uploads or {}) do
+		upload_count = index
+		if index > 4 or type(declaration) ~= "table" or not valid_upload_id(declaration.id) or
+		   type(declaration.kind) ~= "string" or not upload_policies[declaration.kind] or seen_uploads[declaration.id] then
+			return nil, "Operator action builder declared an invalid input upload"
+		end
+		local upload, upload_error = sealed_upload_record(declaration.id, declaration.kind)
+		if not upload then return nil, upload_error end
+		seen_uploads[declaration.id] = true
+		validated_uploads[#validated_uploads + 1] = upload
+	end
+	for key in pairs(plan.input_uploads or {}) do
+		if type(key) ~= "number" or key < 1 or key > upload_count or key ~= math.floor(key) then
+			return nil, "Operator action input upload list is not dense"
+		end
+	end
+	plan.input_uploads = validated_uploads
+	if plan.private_input_hex ~= nil and
+	   (type(plan.private_input_hex) ~= "string" or #plan.private_input_hex == 0 or #plan.private_input_hex > 8192 or
+	    #plan.private_input_hex % 2 ~= 0 or plan.private_input_hex:find("[^0-9a-f]")) then
+		return nil, "Operator action builder produced invalid private input"
+	end
+	if plan.decode_argv ~= nil then
+		if type(plan.decode_argv) ~= "table" or plan.decode_argv[1] ~= (backend.decode_executable or backend.executable) then
+			return nil, "Operator action builder produced an invalid decode argv"
+		end
+		for _, argument in ipairs(plan.decode_argv) do
+			if type(argument) ~= "string" or argument == "" or argument:find("[%z\r\n]") then
+				return nil, "Operator action builder produced an invalid decode argv element"
+			end
+		end
+	end
+	plan.created_at = os.time()
+	plan.expires_at = plan.created_at + PREPARED_MAX_AGE
+	fs.mkdirr(PREPARED_ROOT)
+	fs.chmod("/tmp/ddk", "0700")
+	fs.chmod(PREPARED_ROOT, "0700")
+	cleanup_prepared()
+	local prepared_id, prepared_path
+	for counter = 1, 100 do
+		prepared_id = string.format("prep-%d-%d-%d", plan.created_at, nixio.getpid(), counter)
+		prepared_path = PREPARED_ROOT .. "/" .. prepared_id
+		if not fs.stat(prepared_path) and fs.mkdir(prepared_path, "0700") then break end
+		prepared_id, prepared_path = nil, nil
+	end
+	if not prepared_id then return nil, "Unable to allocate a prepared action request" end
+	local encoded_plan = json.stringify(plan)
+	if not encoded_plan or not write_file(prepared_path .. "/plan.json", encoded_plan .. "\n") then
+		remove_prepared_tree(prepared_path)
+		return nil, "Unable to persist the prepared action request"
+	end
+	fs.chmod(prepared_path .. "/plan.json", "0600")
+	return {
+		prepared_id = prepared_id,
+		expires_at = plan.expires_at,
+		action_id = plan.action_id,
+		label = plan.label,
+		class = plan.class,
+		normalized_options = plan.options,
+		target_summary = plan.target_summary,
+		argv_preview = plan.argv_preview,
+		wall_timeout = plan.wall_timeout,
+		artifacts = plan.artifacts,
+		workspaces = plan.workspaces or {},
+		input_uploads = (function()
+			local result = {}
+			for _, upload in ipairs(plan.input_uploads or {}) do
+				result[#result + 1] = { id = upload.id, kind = upload.kind, original_name = upload.original_name, size = upload.size, sha256 = upload.sha256, expires_at = upload.expires_at }
+			end
+			return result
+		end)(),
+		confirmation = plan.confirmation
+	}
+end
+
+local function claim_prepared_action(prepared_id, encoded_confirmation)
+	if not valid_prepared_id(prepared_id) then return nil, nil, "Invalid prepared action ID" end
+	cleanup_prepared()
+	local path = PREPARED_ROOT .. "/" .. prepared_id
+	local claim_path = path .. ".claim-" .. tostring(nixio.getpid())
+	if not fs.rename(path, claim_path) then return nil, nil, "Prepared action was not found, expired, or already claimed" end
+	local plan = parse_json(fs.readfile(claim_path .. "/plan.json"))
+	if type(plan) ~= "table" or plan.action_id == nil or plan.expires_at == nil or plan.expires_at < os.time() then
+		remove_prepared_tree(claim_path)
+		return nil, nil, "Prepared action is invalid or expired"
+	end
+	local confirmation = type(plan.confirmation) == "table" and plan.confirmation or {}
+	if confirmation.required then
+		local supplied, err = base64url_decode(encoded_confirmation)
+		if not supplied or supplied ~= confirmation.phrase then
+			remove_prepared_tree(claim_path)
+			return nil, nil, err or "The target-bound confirmation phrase did not match"
+		end
+	elseif encoded_confirmation ~= nil then
+		remove_prepared_tree(claim_path)
+		return nil, nil, "This action does not accept a confirmation value"
+	end
+	return plan, claim_path
+end
+
+local function remove_owned_tree(root, path)
+	if path ~= root and path:sub(1, #root + 1) ~= root .. "/" then return false end
+	local stat = fs.lstat(path)
+	if not stat then return true end
+	if stat.type ~= "dir" then fs.unlink(path); return true end
+	local iterator = fs.dir(path)
+	if iterator then
+		for name in iterator do
+			if name ~= "." and name ~= ".." then remove_owned_tree(root, path .. "/" .. name) end
+		end
+	end
+	fs.rmdir(path)
+	return fs.lstat(path) == nil
+end
+
+local function remove_artifact_tree(job_id)
+	if not valid_job_id(job_id) then return false end
+	local root = ARTIFACT_ROOT .. "/" .. job_id
+	return remove_owned_tree(root, root)
+end
+
+local function remove_tree(path)
+	local job_id = path:match("^/tmp/ddk/jobs/(job%-%d+%-%d+)$")
+	if not job_id then return false end
+	local removed = remove_owned_tree(path, path)
+	remove_artifact_tree(job_id)
+	return removed
 end
 
 local function job_state(job_id)
@@ -1124,7 +1850,8 @@ local function job_state(job_id)
 	local stderr, stderr_truncated = read_limited(base .. "/stderr", MAX_STDERR)
 	local metadata = parse_json(fs.readfile(base .. "/metadata.json")) or {}
 	local artifact
-	if status == "complete" and metadata.action_id == "camera.still_snapshot" then
+	local artifacts = {}
+	if status == "complete" and metadata.action_id == "camera.still_snapshot" and metadata.operator_mode ~= true then
 		local artifact_path = base .. "/snapshot.jpg"
 		local artifact_stat = fs.lstat(artifact_path)
 		if artifact_stat and artifact_stat.type == "reg" and artifact_stat.size > 0 and
@@ -1142,12 +1869,36 @@ local function job_state(job_id)
 			end
 		end
 	end
+	if status == "complete" and type(metadata.artifacts) == "table" then
+		for _, definition in ipairs(metadata.artifacts) do
+			local name = type(definition) == "table" and definition.name or ""
+			local maximum = type(definition) == "table" and tonumber(definition.max_size) or 0
+			local storage = type(definition) == "table" and (definition.storage or "tmp") or "tmp"
+			if name:match("^[A-Za-z0-9][A-Za-z0-9_.-]+$") and not name:find("..", 1, true) and
+			   maximum and maximum > 0 and maximum <= MAX_OPERATOR_ARTIFACT and
+			   (storage == "tmp" or storage == "extroot") then
+				local path = (storage == "extroot" and (ARTIFACT_ROOT .. "/" .. job_id) or base) .. "/" .. name
+				local stat = fs.lstat(path)
+				if stat and stat.type == "reg" and stat.size > 0 and stat.size <= maximum then
+					artifacts[#artifacts + 1] = {
+						name = name,
+						kind = definition.kind or "operator_artifact",
+						storage = storage,
+						filename = "ddk-" .. job_id .. "-" .. name,
+						content_type = definition.content_type or "application/octet-stream",
+						size = stat.size
+					}
+				end
+			end
+		end
+	end
 	return {
 		id = job_id,
 		status = status,
 		pid = tonumber(trim(fs.readfile(base .. "/pid"))),
 		metadata = metadata,
 		artifact = artifact,
+		artifacts = artifacts,
 		stdout = stdout or "",
 		stderr = stderr or "",
 		stdout_truncated = stdout_truncated,
@@ -1155,7 +1906,22 @@ local function job_state(job_id)
 	}
 end
 
+local function job_process_active(job_id)
+	if not valid_job_id(job_id) then return false end
+	local base = JOB_ROOT .. "/" .. job_id
+	local status = trim(fs.readfile(base .. "/status"))
+	if status ~= "queued" and status ~= "running" and status ~= "stopping" then return false end
+	local pid = tonumber(trim(fs.readfile(base .. "/pid")))
+	if not pid or pid < 2 then
+		local stat = fs.stat(base)
+		return status == "queued" and stat ~= nil and os.time() - (stat.mtime or 0) <= 30
+	end
+	local cmdline = (fs.readfile("/proc/" .. pid .. "/cmdline") or ""):gsub("%z", " ")
+	return (cmdline:find(DEFAULT_JOB_WORKER, 1, true) ~= nil or cmdline:find(APPLE_JOB_WORKER, 1, true) ~= nil) and cmdline:find(job_id, 1, true) ~= nil
+end
+
 local function cleanup_transient()
+	cleanup_prepared()
 	local now = os.time()
 	local retained = {}
 	local iterator = fs.dir(JOB_ROOT)
@@ -1165,7 +1931,13 @@ local function cleanup_transient()
 				local path = JOB_ROOT .. "/" .. name
 				local stat = fs.stat(path)
 				local state = trim(fs.readfile(path .. "/status"))
-				local active = state == "queued" or state == "running" or state == "stopping"
+				local declared_active = state == "queued" or state == "running" or state == "stopping"
+				local active = declared_active and job_process_active(name)
+				if declared_active and not active then
+					write_file(path .. "/status", "failed\n")
+					local handle = io.open(path .. "/stderr", "ab")
+					if handle then handle:write("The recorded DDK worker is no longer active; stale job state was recovered.\n"); handle:close() end
+				end
 				local mtime = stat and stat.mtime or now
 				if not active and now - mtime > JOB_MAX_AGE then
 					remove_tree(path)
@@ -1178,6 +1950,13 @@ local function cleanup_transient()
 	table.sort(retained, function(a, b) return a.mtime > b.mtime end)
 	for index = MAX_RETAINED_JOBS + 1, #retained do
 		if not retained[index].active then remove_tree(JOB_ROOT .. "/" .. retained[index].name) end
+	end
+
+	iterator = fs.dir(ARTIFACT_ROOT)
+	if iterator then
+		for name in iterator do
+			if valid_job_id(name) and not fs.lstat(JOB_ROOT .. "/" .. name) then remove_artifact_tree(name) end
+		end
 	end
 
 	iterator = fs.dir(REPORT_ROOT)
@@ -1214,29 +1993,86 @@ local job_actions = {
 		class = "SECURITY",
 		singleton = true
 	},
-	["radio.rtl433_snapshot"] = {
-		worker = "rtl433_snapshot",
-		label = "RTL-433 Sensor Snapshot",
+	["throughput.iperf3"] = {
+		worker = "operator_iperf3",
+		label = "iperf3 Operator Test",
 		class = "ACTION",
 		singleton = true,
+		operator_only = true,
+		resource = "throughput"
+	},
+	["radio.rtl433_snapshot"] = {
+		worker = "operator_rtl433",
+		label = "RTL-433 Operator Receive",
+		class = "ACTION",
+		singleton = true,
+		operator_only = true,
 		required_hardware = "rtl_sdr",
 		resource = "rtl_sdr"
 	},
 	["camera.still_snapshot"] = {
-		worker = "camera_snapshot",
-		label = "Camera Still Snapshot",
+		worker = "operator_camera",
+		label = "Camera Still Operator",
 		class = "ACTION",
 		singleton = true,
+		operator_only = true,
 		required_hardware = "camera",
 		resource = "camera"
 	},
-	["gps.snapshot"] = {
-		worker = "gps_snapshot",
-		label = "GPS / GNSS Position Snapshot",
+	["serial.session"] = {
+		worker = "operator_serial",
+		label = "Bounded Serial Operator",
 		class = "ACTION",
 		singleton = true,
+		operator_only = true,
+		resource = "serial"
+	},
+	["gps.snapshot"] = {
+		worker = "operator_gps",
+		label = "GPS / GNSS Operator Receive",
+		class = "ACTION",
+		singleton = true,
+		operator_only = true,
 		required_hardware = "gps",
-		resource = "gps"
+		resource = "serial"
+	},
+	["android.adb_diagnostics"] = {
+		worker = "operator_adb",
+		label = "Android ADB Diagnostics & Backup",
+		class = "ACTION",
+		singleton = true,
+		operator_only = true,
+		required_hardware = "android",
+		resource = "adb"
+	},
+	["android.adb_manage"] = {
+		worker = "operator_adb",
+		label = "Android ADB Device Management",
+		class = "DISRUPTIVE",
+		singleton = true,
+		operator_only = true,
+		required_hardware = "android",
+		resource = "adb"
+	},
+	["apple.mobile_diagnostics"] = {
+		worker = "apple_mobile", label = "Apple Mobile Diagnostics", class = "ACTION", singleton = true,
+		operator_only = true, required_hardware = "apple_normal", resource = "apple_mobile"
+	},
+	["apple.mobile_manage"] = {
+		worker = "apple_mobile", label = "Apple Mobile Device Management", class = "DISRUPTIVE", singleton = true,
+		operator_only = true, required_hardware = "apple_normal", resource = "apple_mobile"
+	},
+	["apple.mobile_capture"] = {
+		worker = "apple_mobile", label = "Apple Screenshot & Syslog Capture", class = "ACTION", singleton = true,
+		operator_only = true, required_hardware = "apple_normal", resource = "apple_mobile"
+	},
+	["apple.recovery"] = {
+		worker = "apple_recovery", label = "Apple Recovery / DFU Operator", class = "DISRUPTIVE", singleton = true,
+		operator_only = true, required_hardware = "apple_recovery", resource = "apple_mobile"
+	},
+	["apple.restore"] = {
+		worker = "apple_restore", label = "Apple IPSW Restore Operator", class = "DISRUPTIVE", singleton = true,
+		operator_only = true, required_hardware = "apple_any", resource = "apple_mobile"
 	},
 	["can.capture"] = {
 		worker = "can_capture",
@@ -1254,8 +2090,7 @@ local function active_job_count()
 	if iterator then
 		for name in iterator do
 			if valid_job_id(name) then
-				local state = trim(fs.readfile(JOB_ROOT .. "/" .. name .. "/status"))
-				if state == "queued" or state == "running" or state == "stopping" then count = count + 1 end
+				if job_process_active(name) then count = count + 1 end
 			end
 		end
 	end
@@ -1268,8 +2103,7 @@ local function has_active_action(action_id)
 		for name in iterator do
 			if valid_job_id(name) then
 				local base = JOB_ROOT .. "/" .. name
-				local state = trim(fs.readfile(base .. "/status"))
-				if state == "queued" or state == "running" or state == "stopping" then
+				if job_process_active(name) then
 					local metadata = parse_json(fs.readfile(base .. "/metadata.json"))
 					if metadata and metadata.action_id == action_id then return true end
 				end
@@ -1285,8 +2119,7 @@ local function has_active_resource(resource_id)
 		for name in iterator do
 			if valid_job_id(name) then
 				local base = JOB_ROOT .. "/" .. name
-				local state = trim(fs.readfile(base .. "/status"))
-				if state == "queued" or state == "running" or state == "stopping" then
+				if job_process_active(name) then
 					local metadata = parse_json(fs.readfile(base .. "/metadata.json"))
 					if metadata and metadata.resource == resource_id then return true end
 				end
@@ -1296,9 +2129,110 @@ local function has_active_resource(resource_id)
 	return false
 end
 
-local function start_job(action_id)
+local function lock_owner_active(job_id)
+	return job_process_active(job_id)
+end
+
+acquire_lock = function(key, job_id)
+	if type(key) ~= "string" or not key:match("^[a-z0-9][a-z0-9_.-]+$") then return false, "Invalid DDK lock key" end
+	local path = LOCK_ROOT .. "/" .. key
+	for attempt = 1, 2 do
+		if fs.mkdir(path, "0700") then
+			if not write_file(path .. "/owner", job_id .. "\n") then
+				fs.rmdir(path)
+				return false, "Unable to record DDK lock ownership"
+			end
+			fs.chmod(path .. "/owner", "0600")
+			return true
+		end
+		local owner = trim(fs.readfile(path .. "/owner"))
+		local stat = fs.stat(path)
+		if owner == "" then
+			if not stat or os.time() - (stat.mtime or os.time()) <= 5 then return false, "DDK resource is already locked" end
+		elseif owner:match("^delete%-%d+%-%d+$") and stat and os.time() - (stat.mtime or os.time()) <= 30 then
+			return false, "DDK resource is already locked"
+		elseif owner:match("^probe%-%d+%-%d+$") and stat and os.time() - (stat.mtime or os.time()) <= 60 then
+			return false, "DDK resource is already locked"
+		elseif lock_owner_active(owner) then
+			return false, "DDK resource is already locked"
+		end
+		fs.unlink(path .. "/owner")
+		fs.rmdir(path)
+	end
+	return false, "Unable to claim DDK resource lock"
+end
+
+release_lock = function(key, job_id)
+	if type(key) ~= "string" or not key:match("^[a-z0-9][a-z0-9_.-]+$") then return end
+	local path = LOCK_ROOT .. "/" .. key
+	if trim(fs.readfile(path .. "/owner")) == job_id then
+		fs.unlink(path .. "/owner")
+		fs.rmdir(path)
+	end
+end
+
+delete_upload = function(upload_id)
+	if not valid_upload_id(upload_id) then return nil, "Invalid DDK upload ID" end
+	fs.mkdirr(LOCK_ROOT)
+	fs.chmod("/tmp/ddk", "0700")
+	fs.chmod(LOCK_ROOT, "0700")
+	local owner = "delete-" .. tostring(os.time()) .. "-" .. tostring(nixio.getpid())
+	local key = "upload-" .. upload_id
+	local locked, lock_error = acquire_lock(key, owner)
+	if not locked then return nil, lock_error or "DDK upload is in use by an active job" end
+	local result, err = delete_upload_unlocked(upload_id)
+	release_lock(key, owner)
+	return result, err
+end
+
+local function acquire_job_locks(job_id, action_id, singleton, resource, extra_keys)
+	local keys = {}
+	local slot_key
+	for slot = 1, MAX_ACTIVE_JOBS do
+		local candidate = "slot-" .. tostring(slot)
+		if acquire_lock(candidate, job_id) then slot_key = candidate; break end
+	end
+	if not slot_key then return nil, "Two DDK jobs are already active" end
+	keys[#keys + 1] = slot_key
+	local requested = {}
+	if singleton then requested[#requested + 1] = "action-" .. action_id end
+	if resource then requested[#requested + 1] = "resource-" .. resource end
+	for _, key in ipairs(extra_keys or {}) do requested[#requested + 1] = key end
+	for _, key in ipairs(requested) do
+		local ok, err = acquire_lock(key, job_id)
+		if not ok then
+			for _, acquired in ipairs(keys) do release_lock(acquired, job_id) end
+			return nil, err
+		end
+		keys[#keys + 1] = key
+	end
+	return keys
+end
+
+local function start_job(action_id, operator_plan)
 	local spec = job_actions[action_id]
 	if not spec then return nil, "Unknown or disabled job action" end
+	if spec.operator_only and not operator_plan then return nil, "This action requires a validated Operator Mode request" end
+	local worker = spec.worker
+	local label = spec.label
+	local class = spec.class
+	local resource = spec.resource
+	local singleton = spec.singleton
+	local worker_executable = DEFAULT_JOB_WORKER
+	if operator_plan then
+		local backend = operator_backends[action_id]
+		if not backend or operator_plan.action_id ~= action_id or operator_plan.worker ~= backend.worker or
+		   type(operator_plan.argv) ~= "table" or not backend_allows_executable(backend, operator_plan.argv[1]) then
+			return nil, "Prepared action does not match an exact Operator Mode backend"
+		end
+		worker = operator_plan.worker
+		label = operator_plan.label
+		class = operator_plan.class
+		resource = operator_plan.resource
+		singleton = operator_plan.singleton
+		worker_executable = backend.worker_executable or DEFAULT_JOB_WORKER
+		if worker_executable ~= DEFAULT_JOB_WORKER and worker_executable ~= APPLE_JOB_WORKER then return nil, "Prepared action selected an invalid DDK worker" end
+	end
 	if spec.required_hardware == "rtl_sdr" then
 		local probe = rtl_sdr_probe()
 		if not probe.ready then return nil, "Reviewed RTL-SDR hardware is not ready: " .. probe.reason end
@@ -1319,47 +2253,224 @@ local function start_job(action_id)
 	elseif spec.required_hardware == "can" then
 		local probe = can_probe()
 		if not probe.ready then return nil, "Passive CAN capture is not ready: " .. probe.reason end
+	elseif spec.required_hardware == "android" then
+		local probe = identity_probe("android")
+		if not probe.action_ready then return nil, "Reviewed Android USB hardware with an ADB interface is not present" end
+	elseif spec.required_hardware == "apple_normal" then
+		local probe = identity_probe("apple_mobile")
+		if (probe.normal_count or 0) < 1 then return nil, "Reviewed normal-mode Apple USB hardware is not present" end
+	elseif spec.required_hardware == "apple_recovery" then
+		local probe = identity_probe("apple_mobile")
+		if (probe.recovery_count or 0) + (probe.dfu_count or 0) < 1 then return nil, "Reviewed Apple recovery/DFU USB hardware with a parseable ECID is not present" end
+	elseif spec.required_hardware == "apple_any" then
+		local probe = identity_probe("apple_mobile")
+		if not probe.action_ready then return nil, "Reviewed Apple USB hardware with a selectable UDID or ECID is not present" end
 	end
 	fs.mkdirr(JOB_ROOT)
 	fs.mkdirr(REPORT_ROOT)
+	fs.mkdirr(LOCK_ROOT)
 	fs.chmod("/tmp/ddk", "0700")
 	fs.chmod(JOB_ROOT, "0700")
 	fs.chmod(REPORT_ROOT, "0700")
+	fs.chmod(LOCK_ROOT, "0700")
 	cleanup_transient()
 	if active_job_count() >= MAX_ACTIVE_JOBS then return nil, "Two DDK jobs are already active" end
-	if spec.singleton and has_active_action(action_id) then
+	if singleton and has_active_action(action_id) then
 		return nil, "This bounded job is already active"
 	end
-	if spec.resource and has_active_resource(spec.resource) then
+	if resource and has_active_resource(resource) then
 		return nil, "The required hardware resource is already in use by a DDK job"
 	end
+	local extroot_artifact_ceiling = 0
+	for _, artifact in ipairs(operator_plan and operator_plan.artifacts or {}) do
+		if type(artifact) == "table" and artifact.storage == "extroot" then
+			extroot_artifact_ceiling = extroot_artifact_ceiling + (tonumber(artifact.max_size) or 0)
+		end
+	end
+	local extroot_workspace_reserve = 0
+	for _, workspace in ipairs(operator_plan and operator_plan.workspaces or {}) do
+		if type(workspace) == "table" and workspace.storage == "extroot" then extroot_workspace_reserve = extroot_workspace_reserve + (tonumber(workspace.reserve_size) or 0) end
+	end
+	local extroot_job_ceiling = extroot_artifact_ceiling + extroot_workspace_reserve
+	if extroot_job_ceiling > 0 then
+		local available_kb = tonumber(trim(capture("df -Pk /overlay | awk 'NR == 2 {print $4}'", 128, 5))) or 0
+		local required_kb = math.ceil((extroot_job_ceiling + MIN_OVERLAY_RESERVE) / 1024)
+		if available_kb < required_kb then return nil, "Extroot does not have enough free space for the reviewed artifact/workspace ceiling and appliance reserve" end
+	end
 
-	local job_id = string.format("job-%d-%d", os.time(), nixio.getpid())
-	local job_dir = JOB_ROOT .. "/" .. job_id
-	if fs.stat(job_dir) then return nil, "Generated job ID collision" end
-	fs.mkdir(job_dir, "0700")
-	local report_id = spec.worker == "system_report" and job_id:gsub("^job%-", "report-") or nil
+	local job_id, job_dir
+	for offset = 0, 9 do
+		job_id = string.format("job-%d-%d", os.time() + offset, nixio.getpid())
+		job_dir = JOB_ROOT .. "/" .. job_id
+		if not fs.stat(job_dir) then break end
+		job_id, job_dir = nil, nil
+	end
+	if not job_id then return nil, "Unable to allocate a unique DDK job ID" end
+	if not fs.mkdir(job_dir, "0700") then return nil, "Unable to create the DDK job directory" end
+	local extroot_allocated = false
+	local function cleanup_prelaunch_job()
+		if extroot_allocated then remove_artifact_tree(job_id) end
+		remove_owned_tree(job_dir, job_dir)
+	end
+	if not write_file(job_dir .. "/status", "queued\n") then
+		cleanup_prelaunch_job()
+		return nil, "Unable to initialize the DDK job directory"
+	end
+	if extroot_job_ceiling > 0 then
+		fs.mkdirr(UPLOAD_PARENT)
+		fs.mkdirr(ARTIFACT_ROOT)
+		fs.chmod(UPLOAD_PARENT, "0700")
+		fs.chmod(ARTIFACT_ROOT, "0700")
+		local artifact_job_dir = ARTIFACT_ROOT .. "/" .. job_id
+		if fs.lstat(artifact_job_dir) or not fs.mkdir(artifact_job_dir, "0700") then
+			cleanup_prelaunch_job()
+			return nil, "Unable to allocate isolated extroot artifact storage"
+		end
+		extroot_allocated = true
+		for _, workspace in ipairs(operator_plan and operator_plan.workspaces or {}) do
+			local workspace_path = artifact_job_dir .. "/workspace-" .. workspace.name
+			if fs.lstat(workspace_path) or not fs.mkdir(workspace_path, "0700") then
+				cleanup_prelaunch_job()
+				return nil, "Unable to allocate an isolated extroot workspace"
+			end
+		end
+	end
+	local upload_lock_keys = {}
+	for _, upload in ipairs(operator_plan and operator_plan.input_uploads or {}) do
+		if type(upload) ~= "table" or not valid_upload_id(upload.id) then
+			cleanup_prelaunch_job()
+			return nil, "Prepared action contains an invalid input upload"
+		end
+		upload_lock_keys[#upload_lock_keys + 1] = "upload-" .. upload.id
+	end
+	local lock_keys, lock_error = acquire_job_locks(job_id, action_id, singleton, resource, upload_lock_keys)
+	if not lock_keys then cleanup_prelaunch_job(); return nil, lock_error end
+	local live_uploads, upload_map = {}, {}
+	for _, expected in ipairs(operator_plan and operator_plan.input_uploads or {}) do
+		local upload, upload_error = sealed_upload_record(expected.id, expected.kind)
+		if not upload or upload.sha256 ~= expected.sha256 or upload.size ~= expected.size then
+			for _, key in ipairs(lock_keys) do release_lock(key, job_id) end
+			cleanup_prelaunch_job()
+			return nil, upload_error or "Prepared input upload changed before job start"
+		end
+		live_uploads[#live_uploads + 1] = upload
+		upload_map[upload.id] = upload
+	end
+	local report_id = worker == "system_report" and job_id:gsub("^job%-", "report-") or nil
 	local metadata = {
 		id = job_id,
 		action_id = action_id,
-		label = spec.label,
-		class = spec.class,
-		resource = spec.resource,
+		label = label,
+		class = class,
+		resource = resource,
 		created_at = os.time(),
-		report_id = report_id
+		report_id = report_id,
+		operator_mode = operator_plan and true or false,
+		options = operator_plan and operator_plan.options or nil,
+		target_summary = operator_plan and operator_plan.target_summary or nil,
+		argv_preview = operator_plan and operator_plan.argv_preview or nil,
+		artifacts = operator_plan and operator_plan.artifacts or nil,
+		workspaces = operator_plan and operator_plan.workspaces or nil,
+		input_uploads = (function()
+			local result = {}
+			for _, upload in ipairs(live_uploads) do
+				result[#result + 1] = { id = upload.id, kind = upload.kind, original_name = upload.original_name, size = upload.size, sha256 = upload.sha256, expires_at = upload.expires_at }
+			end
+			return result
+		end)()
 	}
-	write_file(job_dir .. "/status", "queued\n")
-	write_file(job_dir .. "/stdout", "")
-	write_file(job_dir .. "/stderr", "")
-	write_file(job_dir .. "/metadata.json", json.stringify(metadata) .. "\n")
+	local metadata_body = json.stringify(metadata)
+	local input_upload_body = #live_uploads > 0 and json.stringify(live_uploads) or nil
+	if not metadata_body or not write_file(job_dir .. "/stdout", "") or not write_file(job_dir .. "/stderr", "") or
+	   not write_file(job_dir .. "/metadata.json", metadata_body .. "\n") or
+	   (#live_uploads > 0 and (not input_upload_body or not write_file(job_dir .. "/input-uploads.json", input_upload_body .. "\n"))) or
+		   not write_file(job_dir .. "/lock-keys", table.concat(lock_keys, "\n") .. "\n") then
+		for _, key in ipairs(lock_keys) do release_lock(key, job_id) end
+		cleanup_prelaunch_job()
+		return nil, "Unable to initialize DDK job metadata"
+	end
+	if operator_plan then
+		local allowed_artifacts = {}
+		for _, artifact in ipairs(operator_plan.artifacts or {}) do
+			if type(artifact) == "table" and type(artifact.name) == "string" then allowed_artifacts[artifact.name] = artifact.storage or "tmp" end
+		end
+		local allowed_workspaces = {}
+		for _, workspace in ipairs(operator_plan.workspaces or {}) do
+			if type(workspace) == "table" and type(workspace.name) == "string" and workspace.storage == "extroot" then allowed_workspaces[workspace.name] = true end
+		end
+		local function resolve_argv(source)
+			local lines = {}
+			for _, original in ipairs(source or {}) do
+				local argument = original
+				local artifact_name = type(argument) == "string" and argument:match("^@JOB@/([A-Za-z0-9][A-Za-z0-9_.-]+)$") or nil
+				local extroot_artifact_name = type(argument) == "string" and argument:match("^@ARTIFACT@/([A-Za-z0-9][A-Za-z0-9_.-]+)$") or nil
+				local upload_id = type(argument) == "string" and argument:match("^@UPLOAD@/(upload%-%d+%-%d+%-%d+)$") or nil
+				local workspace_name = type(argument) == "string" and argument:match("^@WORK@/([A-Za-z0-9][A-Za-z0-9-]+)$") or nil
+				if type(argument) == "string" and argument:find("@JOB@", 1, true) and not artifact_name then
+					return nil, "Prepared argv contains an invalid artifact placeholder"
+				end
+				if type(argument) == "string" and argument:find("@ARTIFACT@", 1, true) and not extroot_artifact_name then
+					return nil, "Prepared argv contains an invalid extroot artifact placeholder"
+				end
+				if type(argument) == "string" and argument:find("@UPLOAD@", 1, true) and not upload_id then
+					return nil, "Prepared argv contains an invalid input upload placeholder"
+				end
+				if type(argument) == "string" and argument:find("@WORK@", 1, true) and not workspace_name then return nil, "Prepared argv contains an invalid workspace placeholder" end
+				if artifact_name then
+					local registered = allowed_artifacts[artifact_name]
+					if artifact_name == "nmap" and allowed_artifacts["nmap.nmap"] == "tmp" and allowed_artifacts["nmap.xml"] == "tmp" and allowed_artifacts["nmap.gnmap"] == "tmp" then registered = "tmp" end
+					if registered ~= "tmp" then return nil, "Prepared argv references an unregistered temporary artifact" end
+					argument = job_dir .. "/" .. artifact_name
+				end
+				if extroot_artifact_name then
+					if allowed_artifacts[extroot_artifact_name] ~= "extroot" then return nil, "Prepared argv references an unregistered extroot artifact" end
+					argument = ARTIFACT_ROOT .. "/" .. job_id .. "/" .. extroot_artifact_name
+				end
+				if upload_id then
+					if not upload_map[upload_id] then return nil, "Prepared argv references an undeclared input upload" end
+					argument = upload_map[upload_id].sealed_path
+				end
+				if workspace_name then
+					if not allowed_workspaces[workspace_name] then return nil, "Prepared argv references an undeclared isolated workspace" end
+					argument = ARTIFACT_ROOT .. "/" .. job_id .. "/workspace-" .. workspace_name
+				end
+				if type(argument) ~= "string" or argument == "" or argument:find("[%z\r\n]") then
+					return nil, "Prepared argv contains an invalid element"
+				end
+				lines[#lines + 1] = argument
+			end
+			return lines
+		end
+		local argv_lines, argv_error = resolve_argv(operator_plan.argv)
+		local decode_lines, decode_error
+		if operator_plan.decode_argv then decode_lines, decode_error = resolve_argv(operator_plan.decode_argv) end
+		if not argv_lines or (operator_plan.decode_argv and not decode_lines) then
+			for _, key in ipairs(lock_keys) do release_lock(key, job_id) end
+			cleanup_prelaunch_job()
+			return nil, argv_error or decode_error
+		end
+		if not write_file(job_dir .. "/argv", table.concat(argv_lines, "\n") .. "\n") or
+		   not write_file(job_dir .. "/wall-timeout", tostring(operator_plan.wall_timeout) .. "\n") or
+		   (decode_lines and not write_file(job_dir .. "/decode-argv", table.concat(decode_lines, "\n") .. "\n")) or
+		   (operator_plan.private_input_hex and not write_file(job_dir .. "/stdin-hex", operator_plan.private_input_hex .. "\n")) then
+			for _, key in ipairs(lock_keys) do release_lock(key, job_id) end
+			cleanup_prelaunch_job()
+			return nil, "Unable to persist the prepared native execution plan"
+		end
+	end
 	fs.chmod(job_dir, "0700")
+	for _, name in ipairs({ "metadata.json", "input-uploads.json", "lock-keys", "argv", "decode-argv", "wall-timeout", "stdin-hex" }) do
+		if fs.stat(job_dir .. "/" .. name) then fs.chmod(job_dir .. "/" .. name, "0600") end
+	end
 
 	-- Both interpolated values are generated or exact server-side allowlist literals.
-	local command = string.format("/usr/libexec/ddk-job-worker %s %s </dev/null >/dev/null 2>&1 &", job_id, spec.worker)
+	local command = string.format("%s %s %s </dev/null >/dev/null 2>&1 &", worker_executable, job_id, worker)
 	local result = os.execute(command)
 	if result ~= 0 and result ~= true then
 		write_file(job_dir .. "/status", "failed\n")
 		write_file(job_dir .. "/stderr", "Worker launch failed\n")
+		for _, key in ipairs(lock_keys) do release_lock(key, job_id) end
+		remove_artifact_tree(job_id)
 		return nil, "Worker launch failed"
 	end
 	return job_state(job_id)
@@ -1392,7 +2503,7 @@ local function stop_job(job_id)
 	if not pid or pid < 2 then return nil, "Worker PID is unavailable" end
 	local cmdline = fs.readfile("/proc/" .. pid .. "/cmdline") or ""
 	cmdline = cmdline:gsub("%z", " ")
-	if not cmdline:match("/usr/libexec/ddk%-job%-worker") or not cmdline:find(job_id, 1, true) then
+	if (not cmdline:find(DEFAULT_JOB_WORKER, 1, true) and not cmdline:find(APPLE_JOB_WORKER, 1, true)) or not cmdline:find(job_id, 1, true) then
 		return nil, "PID does not belong to this DDK job"
 	end
 	write_file(JOB_ROOT .. "/" .. job_id .. "/status", "stopping\n")
@@ -1447,10 +2558,44 @@ elseif verb == "info" and #arg == 2 then
 		output, truncated = capture(spec.command, MAX_CAPTURE)
 	end
 	respond(true, { action_id = action_id, class = "INFO", label = spec.label, output = output, truncated = truncated })
+elseif verb == "action" and arg[2] == "describe" and #arg == 3 then
+	local schema, err = describe_operator_action(arg[3])
+	if not schema then respond(false, nil, err, "ACTION_SCHEMA_REJECTED") end
+	respond(true, schema)
+elseif verb == "action" and arg[2] == "prepare" and #arg == 4 then
+	local prepared, err = prepare_operator_action(arg[3], arg[4])
+	if not prepared then respond(false, nil, err, "ACTION_PREPARE_REJECTED") end
+	respond(true, prepared)
+elseif verb == "upload" and arg[2] == "list" and #arg == 2 then
+	respond(true, list_uploads())
+elseif verb == "upload" and arg[2] == "reserve" and #arg == 4 then
+	local reserved, err = reserve_upload(arg[3], arg[4])
+	if not reserved then respond(false, nil, err, "UPLOAD_RESERVE_REJECTED") end
+	respond(true, reserved)
+elseif verb == "upload" and arg[2] == "finalize" and #arg == 3 then
+	local uploaded, err = finalize_upload(arg[3])
+	if not uploaded then respond(false, nil, err, "UPLOAD_FINALIZE_REJECTED") end
+	respond(true, uploaded)
+elseif verb == "upload" and arg[2] == "delete" and #arg == 3 then
+	local deleted, err = delete_upload(arg[3])
+	if not deleted then respond(false, nil, err, "UPLOAD_DELETE_REJECTED") end
+	respond(true, deleted)
 elseif verb == "job" and arg[2] == "list" and #arg == 2 then
 	respond(true, list_jobs())
-elseif verb == "job" and arg[2] == "start" and #arg == 3 then
-	local state, err = start_job(arg[3])
+elseif verb == "job" and arg[2] == "start" and (#arg == 3 or #arg == 4) then
+	local state, err
+	if valid_prepared_id(arg[3]) then
+		local plan, claim_path
+		plan, claim_path, err = claim_prepared_action(arg[3], arg[4])
+		if plan then
+			state, err = start_job(plan.action_id, plan)
+			remove_prepared_tree(claim_path)
+		end
+	elseif #arg == 3 then
+		state, err = start_job(arg[3])
+	else
+		err = "Legacy action IDs do not accept browser parameters"
+	end
 	if not state then respond(false, nil, err, "JOB_START_REJECTED") end
 	respond(true, state)
 elseif verb == "job" and arg[2] == "status" and #arg == 3 then

@@ -11,13 +11,13 @@ fail() {
 }
 
 git diff --check
-[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '2.0.0' ]] || fail 'source version is not 2.0.0'
-rg -F "X750 / v2.0.0" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 2.0.0'
-rg -F "Field Console version 2.0.0" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 2.0.0'
+[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '2.1.0' ]] || fail 'source version is not 2.1.0'
+rg -F "X750 / v2.1.0" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 2.1.0'
+rg -F "Field Console version 2.1.0" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 2.1.0'
 bash -n deploy.sh verify.sh rollback.sh configure-swap-autostart.sh rollback-swap-autostart.sh post-reboot-verify.sh scripts/verify-browser-authenticated.sh
 sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh \
 	scripts/router-configure-swap-autostart.sh scripts/router-rollback-swap-autostart.sh \
-	scripts/router-post-reboot-verify.sh files/usr/libexec/ddk-job-worker
+	scripts/router-post-reboot-verify.sh files/usr/libexec/ddk-job-worker files/usr/libexec/ddk-apple-worker
 node --check scripts/verify-browser.mjs >/dev/null
 
 brand_root=files/www/luci-static/resources/ddk/brand
@@ -94,7 +94,10 @@ while IFS= read -r action; do
 		SECURITY)
 			rg -Fx "$action" scripts/enabled-security-actions.txt >/dev/null || fail "enabled SECURITY action was not explicitly reviewed: $action"
 			;;
-		*) fail "enabled action has a prohibited class: $action ($action_class)" ;;
+		DISRUPTIVE)
+			rg -Fx "$action" scripts/enabled-disruptive-actions.txt >/dev/null || fail "enabled DISRUPTIVE action was not explicitly reviewed: $action"
+			;;
+		*) fail "enabled action has an unknown class: $action ($action_class)" ;;
 	esac
 	disable_count="$(jq -r --arg id "$action" '[.actions[] | select(.id == $id and .enabled == true)] | length' files/usr/share/ddk-field-console/tools/*.json | awk '{sum += $1} END{print sum+0}')"
 	[[ "$disable_count" -gt 0 ]] || fail "enabled module action is not explicitly enabled: $action"
@@ -115,6 +118,13 @@ while IFS= read -r action || [[ -n "$action" ]]; do
 	[[ "$enabled_count" -eq 1 ]] || fail "reviewed ACTION is missing or duplicated: $action"
 done < scripts/enabled-action-ids.txt
 
+while IFS= read -r action || [[ -n "$action" ]]; do
+	[[ -z "$action" || "$action" == \#* ]] && continue
+	[[ "$action" =~ ^[a-z0-9][a-z0-9._-]+$ ]] || fail "invalid reviewed DISRUPTIVE action ID: $action"
+	enabled_count="$(jq -r --arg id "$action" '[.actions[] | select(.id == $id and .class == "DISRUPTIVE" and .enabled == true)] | length' files/usr/share/ddk-field-console/tools/*.json | awk '{sum += $1} END{print sum+0}')"
+	[[ "$enabled_count" -eq 1 ]] || fail "reviewed DISRUPTIVE action is missing or duplicated: $action"
+done < scripts/enabled-disruptive-actions.txt
+
 identity_module=files/usr/share/ddk-field-console/usb-identity.lua
 [[ -f "$identity_module" ]] || fail 'USB identity classifier is missing'
 for identity_guard in \
@@ -131,13 +141,25 @@ do
 	rg -F -- "$identity_guard" "$identity_module" >/dev/null || fail "USB identity guard is missing: $identity_guard"
 done
 
-for identity_manifest in android-repair apple-repair firmware-programming; do
+for identity_manifest in firmware-programming; do
 	manifest="files/usr/share/ddk-field-console/tools/$identity_manifest.json"
 	[[ "$(jq -r '.enabled' "$manifest")" == true ]] || fail "identity module is not enabled: $identity_manifest"
 	[[ "$(jq -r '.no_device_state' "$manifest")" == 'READY / NO DEVICE' ]] || fail "identity no-device state is unsafe: $identity_manifest"
 	[[ "$(jq '[.actions[] | select(.class == "INFO" and .enabled == true)] | length' "$manifest")" -eq 2 ]] || fail "identity INFO action count is incorrect: $identity_manifest"
-	[[ "$(jq '[.actions[] | select(.class == "DISRUPTIVE" and .enabled == false)] | length' "$manifest")" -eq 1 ]] || fail "disruptive identity-module placeholder was enabled: $identity_manifest"
+	[[ "$(jq '[.actions[] | select(.class == "DISRUPTIVE")] | length' "$manifest")" -eq 1 ]] || fail "identity module lost its declared device-changing action: $identity_manifest"
 done
+apple_manifest=files/usr/share/ddk-field-console/tools/apple-repair.json
+[[ "$(jq -r '.enabled' "$apple_manifest")" == true ]] || fail 'Apple module is not enabled'
+[[ "$(jq -r '.no_device_state' "$apple_manifest")" == 'READY / NO DEVICE' ]] || fail 'Apple no-device state is unsafe'
+[[ "$(jq '[.actions[] | select(.class == "INFO" and .enabled == true)] | length' "$apple_manifest")" -eq 2 ]] || fail 'Apple identity/guide action count is incorrect'
+[[ "$(jq '[.actions[] | select(.class == "ACTION" and .execution == "job" and .parameter_schema == "operator-v1" and .enabled == true)] | length' "$apple_manifest")" -eq 2 ]] || fail 'Apple normal-mode ACTION contracts are incomplete'
+[[ "$(jq '[.actions[] | select(.class == "DISRUPTIVE" and .execution == "job" and .parameter_schema == "operator-v1" and .enabled == true)] | length' "$apple_manifest")" -eq 3 ]] || fail 'Apple device-changing Operator Mode contracts are incomplete'
+android_manifest=files/usr/share/ddk-field-console/tools/android-repair.json
+[[ "$(jq -r '.enabled' "$android_manifest")" == true ]] || fail 'Android module is not enabled'
+[[ "$(jq -r '.no_device_state' "$android_manifest")" == 'READY / NO DEVICE' ]] || fail 'Android no-device state is unsafe'
+[[ "$(jq '[.actions[] | select(.class == "INFO" and .enabled == true)] | length' "$android_manifest")" -eq 2 ]] || fail 'Android identity/guide action count is incorrect'
+[[ "$(jq '[.actions[] | select(.id == "android.adb_diagnostics" and .class == "ACTION" and .execution == "job" and .parameter_schema == "operator-v1" and .enabled == true)] | length' "$android_manifest")" -eq 1 ]] || fail 'Android diagnostics Operator Mode action contract is missing'
+[[ "$(jq '[.actions[] | select(.id == "android.adb_manage" and .class == "DISRUPTIVE" and .execution == "job" and .parameter_schema == "operator-v1" and .enabled == true)] | length' "$android_manifest")" -eq 1 ]] || fail 'Android management Operator Mode action contract is missing'
 
 for identity_action in \
 	android.identify android.operator_guide \
@@ -156,14 +178,207 @@ do
 	rg -F -- "$identity_guard" files/usr/libexec/ddk-console >/dev/null || fail "identity privacy/handoff guard is missing: $identity_guard"
 done
 
-if rg -n 'capture\([^\n]*(adb|fastboot|usbmuxd|idevice|irecovery|idevicerestore|openocd|avrdude|dfu-util|dfu-programmer|flashrom|stm32flash|bossac|lpc21isp|ftdi_eeprom)|worker[[:space:]]*=[[:space:]]*"(android|apple|firmware)' files/usr/libexec/ddk-console; then
-	fail 'a mobile-device or programmer utility was wired into a browser execution path'
-fi
-if rg -n '(^|[[:space:]])(adb|fastboot|usbmuxd|idevice[a-z_]*|irecovery|idevicerestore|openocd|avrdude|dfu-util|dfu-programmer|flashrom|stm32flash|bossac|lpc21isp|ftdi_eeprom)([[:space:]]|$)' files/usr/libexec/ddk-job-worker; then
-	fail 'the DDK job worker can invoke a mobile-device or programmer utility'
-fi
-
 capture_worker=files/usr/libexec/ddk-job-worker
+operator_module=files/usr/share/ddk-field-console/operator-actions.lua
+apple_operator_module=files/usr/share/ddk-field-console/operator-apple.lua
+[[ -f "$operator_module" ]] || fail 'Operator Mode action module is missing'
+[[ -f "$apple_operator_module" ]] || fail 'Apple Operator Mode action module is missing'
+for operator_guard in \
+	'MAX_TARGETS = 64' \
+	'Target must be an IPv4/IPv6 address, CIDR, hostname, or validated IPv4 octet range' \
+	'Unknown Nmap option:' \
+	'Exclude targets must use the same IP family as the Nmap job' \
+	'Capture filter exceeds 1024 bytes or contains control characters' \
+	'Unknown tcpdump option:' \
+	'Server mode requires an exact currently assigned bind address' \
+	'Client-only iperf3 options must remain at their defaults in server mode' \
+	'Bind address is not assigned to the selected bind device' \
+	'Unknown iperf3 option:' \
+	'Unknown rtl_433 option:' \
+	'RTL-SDR device is not present in the live reviewed hardware inventory' \
+	'Unknown fswebcam option:' \
+	'Camera node is not present in the live reviewed UVC inventory' \
+	'Unknown serial option:' \
+	'Serial device is not present in the live reviewed general-purpose inventory' \
+	'Transmit payload exceeds 4096 bytes' \
+	'Unknown GPS/GNSS option:' \
+	'GNSS device is not present in the live reviewed receiver inventory' \
+	'Unknown ADB diagnostics option:' \
+	'Unknown ADB management option:' \
+	'ADB device is not present in the live reviewed USB transport inventory' \
+	'ADB backup requires all apps, shared storage, or at least one package' \
+	'cannot contain dot traversal segments' \
+	'argv = { "/usr/bin/nmap" }' \
+	'local argv = { "/usr/sbin/tcpdump", "-i", normalized.interface }' \
+	'local argv = { "/usr/bin/iperf3" }' \
+	'local argv = { "/usr/bin/rtl_433", "-c", "/dev/null", "-d", normalized.device }' \
+	'local argv = { "/usr/bin/fswebcam", "--quiet", "--device", normalized.device' \
+	'local argv = { "/usr/bin/socat", "-T", tostring(normalized.duration) }' \
+	'local argv = { "/bin/dd", "if=" .. normalized.device, "bs=256"' \
+	'local decode_argv = { "/usr/bin/gpsdecode", "-d" }' \
+	'local argv = { "/usr/bin/adb", "-P", "5038", "-s", normalized.device }'
+do
+	rg -F -- "$operator_guard" "$operator_module" >/dev/null || fail "Operator Mode validator/argv guard is missing: $operator_guard"
+done
+if rg -n 'io\.popen|os\.execute|loadstring|loadfile|dofile|/bin/sh|sh[[:space:]]+-c' "$operator_module"; then
+	fail 'Operator Mode action module can execute commands or load code'
+fi
+if rg -n 'io\.popen|os\.execute|loadstring|loadfile|dofile|/bin/sh|sh[[:space:]]+-c' "$apple_operator_module"; then
+	fail 'Apple Operator Mode action module can execute commands or load code'
+fi
+for apple_guard in \
+	'defaults(schema, options, "Apple diagnostics")' \
+	'defaults(schema, options, "Apple management")' \
+	'defaults(schema, options, "Apple capture")' \
+	'defaults(schema, options, "Apple recovery")' \
+	'defaults(schema, options, "Apple restore")' \
+	'Selected normal-mode Apple device is not in the reviewed live inventory' \
+	'Selected Apple recovery/DFU ECID is not in the reviewed live inventory' \
+	'Selected Apple restore target is not in the reviewed live inventory' \
+	'@WORK@/restore-cache' \
+	'@ARTIFACT@/apple-screenshot.tiff' \
+	'"/usr/bin/idevicerestore"' \
+	'"/usr/bin/irecovery"' \
+	'confirmation = { required = true'
+do
+	rg -F -- "$apple_guard" "$apple_operator_module" >/dev/null || fail "Apple Operator Mode validator/argv guard is missing: $apple_guard"
+done
+for structured_action in network.nmap_lan_discovery capture.lan_metadata_snapshot throughput.iperf3 radio.rtl433_snapshot camera.still_snapshot serial.session gps.snapshot android.adb_diagnostics android.adb_manage apple.mobile_diagnostics apple.mobile_capture apple.mobile_manage apple.recovery apple.restore; do
+	[[ "$(jq -r --arg id "$structured_action" '.actions[] | select(.id == $id) | .parameter_schema' files/usr/share/ddk-field-console/tools/*.json | head -n 1)" == 'operator-v1' ]] || fail "structured manifest marker is missing: $structured_action"
+	rg -F "[\"$structured_action\"]" files/usr/libexec/ddk-console >/dev/null || fail "structured backend mapping is missing: $structured_action"
+done
+apple_worker=files/usr/libexec/ddk-apple-worker
+for apple_worker_guard in \
+	'apple_mobile|apple_recovery|apple_restore' \
+	'libimobiledevice utilities drifted from the reviewed 1.3.0 contract.' \
+	'usbmuxd drifted from the reviewed 1.1.1 contract.' \
+	'irecovery drifted from the reviewed 1.0.0 contract.' \
+	'idevicerestore drifted from the reviewed 1.0.0 contract.' \
+	'A pre-existing usbmuxd process is active' \
+	'/usr/sbin/usbmuxd -f -p -l' \
+	'The exact selected Apple UDID was not present after fresh usbmuxd discovery.' \
+	'The exact selected recovery/DFU ECID was not available to irecovery.' \
+	'workspace-restore-cache' \
+	'Apple restore stopped before violating the protected 100 MiB extroot reserve.' \
+	'Apple screenshot TIFF magic is invalid.' \
+	'Apple syslog capture was empty, unsafe, or exceeded 32 MiB.' \
+	'Prepared Apple sealed input failed worker-side SHA-256 verification.' \
+	'cleanup_usbmuxd' \
+	'cleanup_workspace'
+do
+	rg -F -- "$apple_worker_guard" "$apple_worker" >/dev/null || fail "Apple worker guard is missing: $apple_worker_guard"
+done
+for backend_guard in \
+	'MAX_OPERATOR_ENVELOPE = 24576' \
+	'Unknown structured envelope field:' \
+	'fs.rename(path, claim_path)' \
+	'backend_allows_executable(backend, plan.argv[1])' \
+	'Prepared action does not match an exact Operator Mode backend' \
+	'argument:find("[%z\r\n]")' \
+	'Operator action builder declared an invalid artifact' \
+	'(storage == "tmp" and maximum > MAX_TMP_OPERATOR_ARTIFACT)' \
+	'Prepared argv contains an invalid artifact placeholder' \
+	'Prepared argv contains an invalid extroot artifact placeholder' \
+	'Prepared argv contains an invalid workspace placeholder' \
+	'Operator action builder declared an invalid isolated workspace' \
+	'if extroot_allocated then remove_artifact_tree(job_id) end' \
+	'remove_owned_tree(job_dir, job_dir)' \
+	'Operator action builder produced invalid private input' \
+	'operator_plan.private_input_hex and not write_file' \
+	'acquire_lock("resource-adb", probe_owner)' \
+	'release_lock("resource-adb", probe_owner)' \
+	'acquire_job_locks' \
+	'os.time() - (stat.mtime or os.time()) <= 5' \
+	'options = operator_plan and operator_plan.options or nil' \
+	'argv_preview = operator_plan and operator_plan.argv_preview or nil'
+do
+	rg -F -- "$backend_guard" files/usr/libexec/ddk-console >/dev/null || fail "structured backend guard is missing: $backend_guard"
+done
+for upload_guard in \
+	'local UPLOAD_PARENT = "/overlay/ddk-field-console"' \
+	'MAX_RETAINED_UPLOADS = 10' \
+	'Unknown DDK upload kind' \
+	'Upload name or extension is not allowed' \
+	'Uploaded file is absent, unsafe, or does not match the declared bounded size' \
+	'Uploaded Android backup does not have the required ADB backup header' \
+	'Unable to close the authenticated upload path after sealing' \
+	'capture("/usr/bin/sha256sum " .. sealed, 256, 1800)' \
+	'elseif verb == "upload" and arg[2] == "reserve"' \
+	'elseif verb == "upload" and arg[2] == "finalize"' \
+	'elseif verb == "upload" and arg[2] == "delete"'
+do
+	rg -F -- "$upload_guard" files/usr/libexec/ddk-console >/dev/null || fail "upload backend guard is missing: $upload_guard"
+done
+for worker_guard in \
+	'operator_nmap' \
+	'operator_tcpdump' \
+	'operator_iperf3' \
+	'operator_rtl433' \
+	'operator_camera' \
+	'operator_serial' \
+	'operator_gps' \
+	'operator_adb' \
+	'exec "$@"' \
+	'release_locks' \
+	'Tcpdump rejected the structured BPF capture filter.' \
+	'Rejected Nmap XML artifact without the native nmaprun document root.' \
+	'Nmap version drifted from the reviewed 7.91 argv contract.' \
+	'Tcpdump version drifted from the reviewed 4.9.3 argv contract.' \
+	'iperf3 version drifted from the reviewed 3.11 argv contract.' \
+	'rtl_433 package version drifted from the reviewed 20.11-2 argv contract.' \
+	'fswebcam version drifted from the reviewed 20140113 argv contract.' \
+	'socat version drifted from the reviewed 1.7.4.1 serial contract.' \
+	'The Quectel EC25 modem ports are reserved' \
+	'original tty state restored on completion, failure, or cancellation' \
+	'gpsdecode version drifted from the reviewed 3.23.1 contract.' \
+	'The Quectel EC25 modem ports are reserved and cannot be opened by GNSS Operator.' \
+	'ADB version drifted from the reviewed 1.0.32 contract.' \
+	'Prepared ADB argv does not use the isolated exact executable/port/selector prefix.' \
+	'Prepared ADB extroot artifact directory is missing or unsafe.' \
+	'Prepared ADB artifact is not bound to extroot storage.' \
+	'Prepared ADB argv failed independent operation-specific validation.' \
+	'Sealed ADB input failed worker-side SHA-256 verification.' \
+	'Sealed ADB restore input has an invalid backup header.' \
+	'case "$operation" in logcat|bugreport) native_output="$artifact_path" ;; esac' \
+	'Temporary ADB server or listener remained after cleanup.' \
+	'no listener was left running.'
+do
+	rg -F -- "$worker_guard" "$capture_worker" >/dev/null || fail "Operator Mode worker guard is missing: $worker_guard"
+done
+for browser_guard in \
+	'function structuredEnvelope(options)' \
+	"exec([ 'action', 'describe', actionId ])" \
+	"exec([ 'action', 'prepare', actionId, structuredEnvelope" \
+	"[ 'job', 'start', prepared.prepared_id ]" \
+	'Server-built native invocation' \
+	'function applyOperatorConditions(registry)' \
+	"field.type === 'integer_list'" \
+	"field.type === 'multiline'" \
+	'function downloadOperatorArtifact(job, artifact)' \
+	"storage === 'extroot' ? '/overlay/ddk-field-console/artifacts/'" \
+	"expectedSize > 16777216" \
+	"h('form', { method: 'POST', action: config.download" \
+	'frame.remove(); }, 2 * 60 * 60 * 1000)' \
+	"'android.adb_diagnostics', 'android.adb_manage'" \
+	"'[STDERR]\\n' + job.stderr" \
+	'function uploadFile(reservation, file, progress)' \
+	"exec([ 'upload', 'reserve', kindSelect.value, structuredEnvelope" \
+	"exec([ 'upload', 'finalize', reservation.id ])" \
+	"exec([ 'upload', 'delete', upload.id ])"
+do
+	rg -F -- "$browser_guard" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail "Operator Mode browser guard is missing: $browser_guard"
+done
+rg -F 'data-upload="/cgi-bin/cgi-upload"' files/usr/lib/lua/luci/view/ddk/shell.htm >/dev/null || fail 'native authenticated upload endpoint is not passed to the browser'
+rg -F '"cgi-io": [ "upload" ]' files/usr/share/rpcd/acl.d/ddk-field-console.json >/dev/null || fail 'authenticated upload transport ACL is missing'
+rg -F '"/overlay/ddk-field-console/uploads/upload-[0-9]*-[0-9]*-[0-9]*/payload.bin": [ "write" ]' files/usr/share/rpcd/acl.d/ddk-field-console.json >/dev/null || fail 'DDK upload write ACL is missing or broader than reviewed'
+rg -F '"/usr/libexec/ddk-console upload *": [ "exec" ]' files/usr/share/rpcd/acl.d/ddk-field-console.json >/dev/null || fail 'DDK upload backend ACL is missing'
+for artifact_acl in nmap.nmap nmap.xml nmap.gnmap capture.pcap iperf3.json rtl433.jsonl rtl433.csv rtl433.txt rtl433.cu8 snapshot.jpg snapshot.png serial.bin gnss.raw gnss.decoded; do
+	rg -F "/tmp/ddk/jobs/job-[0-9]*-[0-9]*/$artifact_acl" files/usr/share/rpcd/acl.d/ddk-field-console.json >/dev/null || fail "Operator artifact ACL is missing: $artifact_acl"
+done
+for artifact_acl in android-logcat.txt android-bugreport.txt android-pull.bin android-backup.ab apple-screenshot.tiff apple-syslog.txt apple-restore.log; do
+	rg -F "/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/$artifact_acl" files/usr/share/rpcd/acl.d/ddk-field-console.json >/dev/null || fail "Extroot Operator artifact ACL is missing: $artifact_acl"
+done
+
 [[ "$(rg -c '/usr/sbin/tcpdump -i br-lan' "$capture_worker")" -eq 1 ]] || fail 'reviewed tcpdump command is missing or duplicated'
 for capture_guard in \
 	'-p -n -q -e -l -tttt -s 96 -c 128' \
@@ -174,8 +389,9 @@ for capture_guard in \
 do
 	rg -F -- "$capture_guard" "$capture_worker" >/dev/null || fail "capture safety guard is missing: $capture_guard"
 done
-if rg -n -- '(^|[[:space:]])-(A|X|XX|w|W|C|G)([[:space:]]|$)|-i[[:space:]]+any' "$capture_worker"; then
-	fail 'capture worker contains a payload dump, PCAP writer, rotation, or all-interface flag'
+legacy_capture_section="$(sed -n '/elif \[ "$task" = "tcpdump_lan_metadata" \]/,/elif \[ "$task" = "rtl433_snapshot" \]/p' "$capture_worker")"
+if printf '%s\n' "$legacy_capture_section" | rg -n -- '(^|[[:space:]])-(A|X|XX|w|W|C|G)([[:space:]]|$)|-i[[:space:]]+any'; then
+	fail 'legacy metadata profile gained a payload dump, PCAP writer, rotation, or all-interface flag'
 fi
 
 radio_worker_section="$(sed -n '/elif \[ "$task" = "rtl433_snapshot" \]/,/elif \[ "$task" = "camera_snapshot" \]/p' "$capture_worker")"

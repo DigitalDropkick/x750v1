@@ -13,5 +13,5 @@
     {"id": "cellular.snapshot", "class": "INFO", "execution": "job", "enabled": true},
     {"id": "cellular.raw_command", "class": "DISRUPTIVE", "enabled": false}
   ],
-  "help_text": "The enabled snapshot uses fixed read-only UQMI queries and excludes subscriber IDs, phone number, SIM contents, APN, location, network scans, and raw AT/QMI input."
+  "help_text": "The fixed read-only EC25 snapshot remains available. Broader structured QMI/AT workflows need exact modem-command schemas, identifier privacy rules, target binding, state-change confirmation, and connectivity recovery tests."
 }

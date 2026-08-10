@@ -13,5 +13,5 @@
     {"id": "storage.health", "class": "INFO", "enabled": false},
     {"id": "storage.repair", "class": "DISRUPTIVE", "enabled": false}
   ],
-  "help_text": "The active extroot device must never be unmounted, tested destructively, or repaired online by the console."
+  "help_text": "The active extroot remains excluded. Structured health/image/recovery workflows need server-attributed non-system media, authenticated artifacts, mount-state checks, read/write confirmation, capacity bounds, and recovery tests."
 }

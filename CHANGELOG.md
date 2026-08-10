@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.1.0 — Unreleased
+
+### Operator Mode foundation
+
+- Added a versioned base64url JSON action envelope, reusable server-owned schemas, strict unknown-field/type/range/character validation, and action-specific literal argv builders in `operator-actions.lua`.
+- Added five-minute mode-restricted prepared plans, atomic single-use claims, exact action-to-worker-to-executable checks, target-bound confirmation, normalized job metadata, and server-built invocation review.
+- Replaced race-prone job counting with atomic two-slot, action-singleton, and shared-resource locks with cleanup and stale-owner recovery.
+- Generalized authenticated job artifacts to fixed action-owned names and exact rpcd ACL patterns without exposing arbitrary router paths.
+- Added reusable GUI fields, advanced options, review/confirmation, native error display, and authenticated artifact downloads.
+- Added authenticated DDK-controlled input staging with exact upload reservations, extension/size policies, atomic sealing, closed write paths, archive-magic checks, SHA-256 identity, 10-file retention, expiry, listing, and deletion.
+- Added action-declared sealed-input binding, per-upload resource locks, start-time hash/size/mode revalidation, private input metadata, and authenticated streaming downloads for artifacts larger than 16 MiB.
+
+### First native tool migration
+
+- Migrated Nmap 7.91 to validated target/exclude, discovery/scan, TCP/UDP, port, timing, detection, OS/traceroute, DNS, reviewed NSE, rate/retry, and native text/XML/grepable output controls without the v2 `/24` clamp.
+- Migrated tcpdump 4.9.3/libpcap 1.10.1 to live interface selection, one validated BPF argv element, time/count/snap/promiscuous/decode controls, and bounded authenticated PCAP output.
+- Enabled iperf3 3.11 client and temporary server workflows with structured protocol, endpoint, transfer, stream, bitrate, reverse/bidirectional, bind, TCP, interval, and JSON controls.
+- Migrated rtl_433 20.11 to live reviewed tuner selection, receive frequency/sample/gain/PPM, decoder/analyzer/metadata, duration, decoded formats, and bounded raw I/Q artifacts.
+- Migrated fswebcam 20140113 to live reviewed UVC-node selection, bounded native still controls, JPEG/PNG output, worker hardware revalidation, and authenticated image artifacts.
+- Added structured non-EC25 serial receive/transmit sessions through socat 1.7.4.1 and stty 9.0, private transmit input, independent modem-port rejection, and tty-state restoration.
+- Migrated GPS/GNSS receive to live reviewed receiver selection, bounded `/bin/dd`, gpsdecode 3.23.1 options, position summary, and raw/decoded artifacts without starting gpsd.
+- Migrated ADB 1.0.32 to correlated USB transport selection, structured diagnostics/backup/file/package/device management, fixed shell subcommands, exact target/material confirmation, sealed upload consumption, bounded artifacts, a shared discovery/job resource lock, and an isolated temporary localhost server on port 5038 with cleanup on every exit.
+- Migrated Apple tools to exact libimobiledevice 1.3.0, usbmuxd 1.1.1, irecovery 1.0.0, and idevicerestore 1.0.0 workflows: normal-mode diagnostics/management/capture, ECID-bound recovery/DFU operations, authenticated recovery/IPSW/AP-ticket inputs, target-bound confirmation, bounded artifacts, and isolated restore workspaces.
+- Added an exact Apple family worker that starts usbmuxd only on demand, refuses pre-existing helper ownership, revalidates UDID/ECID immediately before execution, tracks cancellation, protects extroot free space during restore, and removes its helper/cache/locks on every exit.
+- Preserved legacy fixed workers for compatibility while routing the v2.1 GUI through prepared Operator Mode actions.
+
+### Validation and release status
+
+- Updated local policy validation so `ACTION`, `SECURITY`, and reviewed `DISRUPTIVE` actions may be enabled when fully wired; removed tests whose purpose was to enforce the obsolete GUI-disabled/SSH-only policy.
+- Added malformed-envelope, unknown-option, prepared-request, loopback Nmap artifact, loopback tcpdump PCAP/BPF, loopback iperf3, upload traversal/size/signature/sealing/hash cleanup, ADB builder/worker/temporary-server rejection, hardware-gate, and reusable browser-control verification.
+- Added exact installer preflight for all migrated binaries plus target-Lua compilation/runtime builder validation.
+- Local validation and target-Lua syntax validation are required before release. Version 2.1 has not been deployed; version 2.0 remains the production-accepted baseline.
+
 ## 2.0.0 — 2026-08-09
 
 ### Added

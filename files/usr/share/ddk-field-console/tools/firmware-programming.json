@@ -15,5 +15,5 @@
     {"id": "firmware.operator_guide", "class": "INFO", "execution": "info", "enabled": true},
     {"id": "firmware.write", "class": "DISRUPTIVE", "enabled": false}
   ],
-  "help_text": "Identification reads sanitized sysfs USB metadata only and never invokes a programmer. Read, write, erase, debug, recovery, and power operations require separate future safeguards."
+  "help_text": "Identification remains available. Native read/backup/verify/write/erase/debug workflows require exact programmer/target schemas, voltage and hardware verification, authenticated images, hashes, artifacts, confirmation, and recovery tests."
 }

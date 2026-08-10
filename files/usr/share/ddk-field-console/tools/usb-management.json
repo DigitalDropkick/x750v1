@@ -14,5 +14,5 @@
     {"id": "usb.power", "class": "DISRUPTIVE", "enabled": false},
     {"id": "usbip.attach", "class": "DISRUPTIVE", "enabled": false}
   ],
-  "help_text": "Hub power and USB/IP attachment can disconnect extroot or the modem and remain disabled."
+  "help_text": "Inventory/power/USB-IP actions need server-attributed port targets that exclude extroot and EC25 paths, exact installed runtime schemas, state-change confirmation, rollback, and hardware tests."
 }

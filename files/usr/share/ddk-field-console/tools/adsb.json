@@ -12,5 +12,5 @@
   "actions": [
     {"id": "adsb.receive", "class": "ACTION", "enabled": false}
   ],
-  "help_text": "Installed receiver software is not started by the Field Console."
+  "help_text": "Receiver controls are not yet migrated. Operator Mode still needs exact device/frequency/gain/decoder/output schemas, native lifecycle cleanup, artifacts, and attached-hardware tests."
 }

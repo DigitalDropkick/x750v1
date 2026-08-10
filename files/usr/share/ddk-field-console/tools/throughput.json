@@ -2,15 +2,15 @@
   "id": "throughput",
   "name": "Throughput & Live Traffic",
   "category": "Network Diagnostics",
-  "description": "On-demand throughput and interactive traffic inspection.",
+  "description": "On-demand native iperf3 3.11 client tests and temporary bounded servers with structured endpoint, protocol, stream, bitrate, direction, bind, and output controls.",
   "package_names": ["iperf3", "bmon", "iftop", "vnstat2"],
   "expected_binaries": ["iperf3", "bmon", "iftop", "vnstat"],
   "required_hardware": [],
   "status_probe": "software",
   "risk_level": "ACTION",
-  "enabled": false,
+  "enabled": true,
   "actions": [
-    {"id": "throughput.client_test", "class": "ACTION", "enabled": false}
+    {"id": "throughput.iperf3", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "A future client-only iperf workflow must allowlist destination and duration; it must never start a WAN server."
+  "help_text": "The exact installed binary has silent -h/--help output; its embedded 3.11 option table was inspected. Server mode requires an exact current local bind address, is never daemonized, and ends after one client or the validated window."
 }

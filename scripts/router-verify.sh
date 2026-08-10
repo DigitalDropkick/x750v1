@@ -5,6 +5,9 @@ set -eu
 pass_count=0
 warning_count=0
 identity_fixture=""
+iperf_probe_pid=""
+upload_probe_id=""
+artifact_probe_id=""
 
 cleanup_identity_fixture() {
 	case "$identity_fixture" in
@@ -13,7 +16,30 @@ cleanup_identity_fixture() {
 	identity_fixture=""
 }
 
-trap cleanup_identity_fixture EXIT
+cleanup_runtime_probes() {
+	case "$iperf_probe_pid" in
+		''|*[!0-9]*) ;;
+		*)
+			probe_cmdline="$(tr '\000' ' ' < "/proc/$iperf_probe_pid/cmdline" 2>/dev/null || true)"
+			case "$probe_cmdline" in *'/usr/bin/iperf3 -s -1 -B 127.0.0.1 -p 55202'*) kill -TERM "$iperf_probe_pid" 2>/dev/null || true ;; esac
+			wait "$iperf_probe_pid" 2>/dev/null || true
+			;;
+	esac
+	iperf_probe_pid=""
+	case "$upload_probe_id" in
+		upload-[0-9]*-[0-9]*-[0-9]*) /usr/libexec/ddk-console upload delete "$upload_probe_id" >/dev/null 2>&1 || true ;;
+	esac
+	upload_probe_id=""
+	case "$artifact_probe_id" in
+		job-[0-9]*-[0-9]*)
+			rm -f "/overlay/ddk-field-console/artifacts/$artifact_probe_id/android-logcat.txt" 2>/dev/null || true
+			rmdir "/overlay/ddk-field-console/artifacts/$artifact_probe_id" 2>/dev/null || true
+			;;
+	esac
+	artifact_probe_id=""
+}
+
+trap 'cleanup_identity_fixture; cleanup_runtime_probes' EXIT
 trap 'exit 130' HUP INT TERM
 
 pass() {
@@ -35,12 +61,16 @@ json_ok() {
 	jsonfilter -e '@.ok' | grep -qx 'true'
 }
 
+base64url() {
+	base64 | tr '+/' '-_' | tr -d '=\r\n'
+}
+
 model="$(ubus call system board | jsonfilter -e '@.model')"
 [ "$model" = 'GL.iNet GL-X750' ] || fail "target identity changed: $model"
 pass 'GL-X750 target identity'
 
-[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '2.0.0' ] || fail 'Field Console version is not 2.0.0'
-pass 'Field Console version 2.0.0'
+[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '2.1.0' ] || fail 'Field Console version is not 2.1.0'
+pass 'Field Console version 2.1.0'
 
 mount | grep -q '^/dev/sda1 on /overlay type ext4 ' || fail 'extroot is not active on /dev/sda1'
 pass 'extroot remains active'
@@ -56,7 +86,10 @@ for file in \
 	/usr/share/rpcd/acl.d/ddk-field-console.json \
 	/usr/libexec/ddk-console \
 	/usr/libexec/ddk-job-worker \
+	/usr/libexec/ddk-apple-worker \
 	/usr/share/ddk-field-console/usb-identity.lua \
+	/usr/share/ddk-field-console/operator-actions.lua \
+	/usr/share/ddk-field-console/operator-apple.lua \
 	/usr/lib/lua/luci/view/ddk/shell.htm \
 	/www/luci-static/resources/ddk/console-app.js \
 	/www/luci-static/resources/ddk/console.css \
@@ -80,15 +113,90 @@ pass 'local Digital Dropkick brand assets are served by the existing web stack'
 
 DDK_LUA_FILE=/usr/libexec/ddk-console lua -e 'assert(loadfile(os.getenv("DDK_LUA_FILE")))' || fail 'Lua backend syntax check failed'
 DDK_IDENTITY_FILE=/usr/share/ddk-field-console/usb-identity.lua lua -e 'assert(loadfile(os.getenv("DDK_IDENTITY_FILE")))' || fail 'USB identity module syntax check failed'
+DDK_OPERATOR_FILE=/usr/share/ddk-field-console/operator-actions.lua lua -e 'assert(loadfile(os.getenv("DDK_OPERATOR_FILE")))' || fail 'Operator Mode action module syntax check failed'
+DDK_APPLE_OPERATOR_FILE=/usr/share/ddk-field-console/operator-apple.lua lua -e 'assert(loadfile(os.getenv("DDK_APPLE_OPERATOR_FILE")))' || fail 'Apple Operator Mode action module syntax check failed'
 DDK_TEMPLATE_FILE=/usr/lib/lua/luci/view/ddk/shell.htm lua -e 'local parser = require "luci.template.parser"; assert(parser.parse(os.getenv("DDK_TEMPLATE_FILE")))' || fail 'LuCI template syntax check failed'
 sh -n /usr/libexec/ddk-job-worker || fail 'job worker syntax check failed'
+sh -n /usr/libexec/ddk-apple-worker || fail 'Apple worker syntax check failed'
 find /usr/share/ddk-field-console/tools -type f -name '*.json' | while IFS= read -r file; do jsonfilter -i "$file" -e '@' >/dev/null; done
 pass 'router-side Lua, shell, and JSON syntax'
+
+LC_ALL=C /usr/bin/nmap --version 2>&1 | grep -Fq 'Nmap version 7.91 ' || fail 'Nmap version is not reviewed 7.91'
+tcpdump_version="$(LC_ALL=C /usr/sbin/tcpdump --version 2>&1 || true)"
+printf '%s\n' "$tcpdump_version" | grep -Fq 'tcpdump version 4.9.3' || fail 'tcpdump version is not reviewed 4.9.3'
+printf '%s\n' "$tcpdump_version" | grep -Fq 'libpcap version 1.10.1 ' || fail 'libpcap version is not reviewed 1.10.1'
+LC_ALL=C /usr/bin/iperf3 --version 2>&1 | grep -Fq 'iperf 3.11 ' || fail 'iperf3 version is not reviewed 3.11'
+LC_ALL=C /usr/bin/adb version 2>&1 | grep -Fqx 'Android Debug Bridge version 1.0.32' || fail 'ADB version is not reviewed 1.0.32'
+LC_ALL=C /usr/bin/ideviceinfo --version 2>&1 | grep -Fq '1.3.0' || fail 'libimobiledevice utility version is not reviewed 1.3.0'
+LC_ALL=C /usr/bin/irecovery --version 2>&1 | grep -Fq '1.0.0' || fail 'irecovery version is not reviewed 1.0.0'
+LC_ALL=C /usr/bin/idevicerestore --version 2>&1 | grep -Fq '1.0.0' || fail 'idevicerestore version is not reviewed 1.0.0'
+LC_ALL=C /usr/sbin/usbmuxd --version 2>&1 | grep -Fqx 'usbmuxd 1.1.1' || fail 'usbmuxd version is not reviewed 1.1.1'
+LC_ALL=C /usr/bin/socat -V 2>&1 | grep -Fq 'socat version 1.7.4.1 ' || fail 'socat version is not reviewed 1.7.4.1'
+LC_ALL=C /bin/stty --version 2>&1 | grep -Fq 'stty (GNU coreutils) 9.0' || fail 'stty version is not reviewed 9.0'
+pass 'exact Operator Mode native versions'
 
 /usr/libexec/ddk-console status | json_ok || fail 'status API failed'
 /usr/libexec/ddk-console capabilities | json_ok || fail 'capability API failed'
 /usr/libexec/ddk-console packages | json_ok || fail 'package API failed'
 pass 'status, capability, and package APIs'
+
+grep -Fq '"cgi-io": [ "upload" ]' /usr/share/rpcd/acl.d/ddk-field-console.json || fail 'authenticated upload transport ACL is missing'
+grep -Fq '"/overlay/ddk-field-console/uploads/upload-[0-9]*-[0-9]*-[0-9]*/payload.bin": [ "write" ]' /usr/share/rpcd/acl.d/ddk-field-console.json || fail 'DDK upload ACL is missing or broader than reviewed'
+upload_traversal_payload="$(printf '%s' '{"version":1,"options":{"name":"../escape.bin","size":4}}' | base64url)"
+upload_traversal_result="$(/usr/libexec/ddk-console upload reserve device_input "$upload_traversal_payload" 2>/dev/null || true)"
+[ "$(printf '%s' "$upload_traversal_result" | jsonfilter -e '@.ok')" = 'false' ] || fail 'upload traversal name was accepted'
+upload_oversize_payload="$(printf '%s' '{"version":1,"options":{"name":"proof.bin","size":268435457}}' | base64url)"
+upload_oversize_result="$(/usr/libexec/ddk-console upload reserve device_input "$upload_oversize_payload" 2>/dev/null || true)"
+[ "$(printf '%s' "$upload_oversize_result" | jsonfilter -e '@.ok')" = 'false' ] || fail 'oversized upload declaration was accepted'
+upload_valid_payload="$(printf '%s' '{"version":1,"options":{"name":"proof.bin","size":4}}' | base64url)"
+upload_reserved="$(/usr/libexec/ddk-console upload reserve device_input "$upload_valid_payload")"
+printf '%s' "$upload_reserved" | json_ok || fail 'bounded upload reservation failed'
+upload_probe_id="$(printf '%s' "$upload_reserved" | jsonfilter -e '@.data.id')"
+upload_probe_path="$(printf '%s' "$upload_reserved" | jsonfilter -e '@.data.upload_path')"
+case "$upload_probe_id" in upload-[0-9]*-[0-9]*-[0-9]*) ;; *) fail 'upload reservation returned an invalid ID' ;; esac
+[ "$upload_probe_path" = "/overlay/ddk-field-console/uploads/$upload_probe_id/payload.bin" ] || fail 'upload reservation returned a path outside its exact DDK directory'
+printf test > "$upload_probe_path"
+upload_sealed="$(/usr/libexec/ddk-console upload finalize "$upload_probe_id")"
+printf '%s' "$upload_sealed" | json_ok || fail 'bounded upload finalization failed'
+[ "$(printf '%s' "$upload_sealed" | jsonfilter -e '@.data.sha256')" = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08' ] || fail 'sealed upload SHA-256 is incorrect'
+[ -d "$upload_probe_path" ] || fail 'sealed upload did not close its authenticated write path'
+upload_sealed_path="/overlay/ddk-field-console/uploads/$upload_probe_id/sealed.bin"
+[ -f "$upload_sealed_path" ] || fail 'sealed upload file is missing'
+[ "$(stat -c '%a' "$upload_sealed_path")" = '600' ] || fail 'sealed upload mode is not 0600'
+[ "$(/usr/libexec/ddk-console upload list | jsonfilter -e '@.data[0].id')" = "$upload_probe_id" ] || fail 'sealed upload list omitted the probe file'
+/usr/libexec/ddk-console upload delete "$upload_probe_id" | json_ok || fail 'sealed upload deletion failed'
+[ ! -e "/overlay/ddk-field-console/uploads/$upload_probe_id" ] || fail 'deleted upload directory remains'
+upload_probe_id=""
+upload_badzip_payload="$(printf '%s' '{"version":1,"options":{"name":"bad.apk","size":3}}' | base64url)"
+upload_badzip_reserved="$(/usr/libexec/ddk-console upload reserve android_package "$upload_badzip_payload")"
+upload_probe_id="$(printf '%s' "$upload_badzip_reserved" | jsonfilter -e '@.data.id')"
+upload_badzip_path="$(printf '%s' "$upload_badzip_reserved" | jsonfilter -e '@.data.upload_path')"
+printf bad > "$upload_badzip_path"
+upload_badzip_result="$(/usr/libexec/ddk-console upload finalize "$upload_probe_id" 2>/dev/null || true)"
+[ "$(printf '%s' "$upload_badzip_result" | jsonfilter -e '@.ok')" = 'false' ] || fail 'invalid Android archive signature was accepted'
+[ ! -e "/overlay/ddk-field-console/uploads/$upload_probe_id" ] || fail 'rejected archive was not cleaned up'
+upload_probe_id=""
+pass 'DDK-controlled upload reservation, validation, sealing, hashing, listing, deletion, and rejection paths'
+
+upload_badbackup_payload="$(printf '%s' '{"version":1,"options":{"name":"bad.ab","size":3}}' | base64url)"
+upload_badbackup_reserved="$(/usr/libexec/ddk-console upload reserve android_backup "$upload_badbackup_payload")"
+upload_probe_id="$(printf '%s' "$upload_badbackup_reserved" | jsonfilter -e '@.data.id')"
+upload_badbackup_path="$(printf '%s' "$upload_badbackup_reserved" | jsonfilter -e '@.data.upload_path')"
+printf bad > "$upload_badbackup_path"
+upload_badbackup_result="$(/usr/libexec/ddk-console upload finalize "$upload_probe_id" 2>/dev/null || true)"
+[ "$(printf '%s' "$upload_badbackup_result" | jsonfilter -e '@.ok')" = 'false' ] || fail 'invalid Android backup header was accepted'
+[ ! -e "/overlay/ddk-field-console/uploads/$upload_probe_id" ] || fail 'rejected Android backup was not cleaned up'
+upload_probe_id=""
+upload_validbackup_payload="$(printf '%s' '{"version":1,"options":{"name":"proof.ab","size":15}}' | base64url)"
+upload_validbackup_reserved="$(/usr/libexec/ddk-console upload reserve android_backup "$upload_validbackup_payload")"
+upload_probe_id="$(printf '%s' "$upload_validbackup_reserved" | jsonfilter -e '@.data.id')"
+upload_validbackup_path="$(printf '%s' "$upload_validbackup_reserved" | jsonfilter -e '@.data.upload_path')"
+printf 'ANDROID BACKUP\n' > "$upload_validbackup_path"
+upload_validbackup_result="$(/usr/libexec/ddk-console upload finalize "$upload_probe_id")"
+printf '%s' "$upload_validbackup_result" | json_ok || fail 'valid Android backup header was rejected'
+/usr/libexec/ddk-console upload delete "$upload_probe_id" | json_ok || fail 'valid Android backup proof could not be deleted'
+upload_probe_id=""
+pass 'Android backup upload header rejection and acceptance paths'
 
 for action in system.refresh network.interfaces network.routes hardware.usb hardware.serial serial.inspect remote.tailscale storage.mounts system.memory packages.count; do
 	/usr/libexec/ddk-console info "$action" | json_ok || fail "INFO action failed: $action"
@@ -114,10 +222,50 @@ serial_manifest=/usr/share/ddk-field-console/tools/serial.json
 [ "$(jsonfilter -i "$serial_manifest" -e '@.actions[0].id')" = 'serial.inspect' ] || fail 'serial INFO action ID is incorrect'
 [ "$(jsonfilter -i "$serial_manifest" -e '@.actions[0].class')" = 'INFO' ] || fail 'serial inspection lost its INFO classification'
 [ "$(jsonfilter -i "$serial_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'serial inspection is not explicitly enabled'
-[ "$(jsonfilter -i "$serial_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'serial session placeholder was unexpectedly enabled'
-pass 'EC25 serial ownership and modem-reserved policy'
+[ "$(jsonfilter -i "$serial_manifest" -e '@.actions[1].class')" = 'ACTION' ] || fail 'serial session action lost its risk class'
+[ "$(jsonfilter -i "$serial_manifest" -e '@.actions[1].enabled')" = 'true' ] || fail 'serial Operator Mode action is not enabled'
+[ "$(jsonfilter -i "$serial_manifest" -e '@.actions[1].parameter_schema')" = 'operator-v1' ] || fail 'serial structured schema marker is missing'
+grep -Fq '"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/serial.bin": [ "read" ]' /usr/share/rpcd/acl.d/ddk-field-console.json || fail 'serial artifact ACL is missing or too broad'
+serial_schema="$(/usr/libexec/ddk-console action describe serial.session)"
+printf '%s' "$serial_schema" | json_ok || fail 'serial Operator Mode schema is unavailable'
+[ "$(printf '%s' "$serial_schema" | jsonfilter -e '@.data.native.version')" = '1.7.4.1' ] || fail 'serial schema lost the exact socat version contract'
+[ "$(printf '%s' "$serial_schema" | jsonfilter -e '@.data.fields[@.name="transmit_data"].type')" = 'multiline' ] || fail 'serial structured transmit control is missing'
+serial_fake_payload="$(printf '%s' '{"version":1,"options":{"device":"/dev/ttyUSB0","mode":"receive"}}' | base64url)"
+serial_fake_prepare="$(/usr/libexec/ddk-console action prepare serial.session "$serial_fake_payload" 2>/dev/null || true)"
+[ "$(printf '%s' "$serial_fake_prepare" | jsonfilter -e '@.ok')" = 'false' ] || fail 'EC25 serial node was accepted by Operator Mode prepare'
+printf '%s' "$serial_fake_prepare" | jsonfilter -e '@.message' | grep -Fq 'live reviewed general-purpose inventory' || fail 'serial live-device rejection evidence is missing'
+serial_unknown_payload="$(printf '%s' '{"version":1,"options":{"device":"/dev/ttyUSB0","shell":"id"}}' | base64url)"
+serial_unknown_prepare="$(/usr/libexec/ddk-console action prepare serial.session "$serial_unknown_payload" 2>/dev/null || true)"
+printf '%s' "$serial_unknown_prepare" | jsonfilter -e '@.message' | grep -Fq 'Unknown serial option' || fail 'serial unknown structured option was not rejected'
+serial_jobs_before="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
+serial_unprepared="$(/usr/libexec/ddk-console job start serial.session 2>/dev/null || true)"
+printf '%s' "$serial_unprepared" | jsonfilter -e '@.message' | grep -Fq 'requires a validated Operator Mode request' || fail 'serial unprepared-start rejection is missing'
+serial_jobs_after="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
+[ "$serial_jobs_before" = "$serial_jobs_after" ] || fail 'rejected serial start created a transient job'
 
-for identity_manifest in android-repair apple-repair firmware-programming; do
+serial_worker_probe_id="job-$(date +%s)-$$"
+serial_worker_probe_dir="/tmp/ddk/jobs/$serial_worker_probe_id"
+[ ! -e "$serial_worker_probe_dir" ] || fail 'generated serial worker-probe ID collided'
+mkdir "$serial_worker_probe_dir"
+chmod 700 "$serial_worker_probe_dir"
+printf '%s\n' queued > "$serial_worker_probe_dir/status"
+printf '%s\n' '{"action_id":"serial.session","operator_mode":true,"options":{"device":"/dev/ttyUSB0","mode":"receive","read_kib":1,"output_view":"hex","transmit_bytes":0}}' > "$serial_worker_probe_dir/metadata.json"
+: > "$serial_worker_probe_dir/stdout"
+: > "$serial_worker_probe_dir/stderr"
+serial_worker_result=0
+/usr/libexec/ddk-job-worker "$serial_worker_probe_id" operator_serial >/dev/null 2>&1 || serial_worker_result=$?
+serial_worker_status="$(cat "$serial_worker_probe_dir/status" 2>/dev/null || true)"
+serial_worker_error="$(cat "$serial_worker_probe_dir/stderr" 2>/dev/null || true)"
+rm -f "$serial_worker_probe_dir/pid" "$serial_worker_probe_dir/status" "$serial_worker_probe_dir/metadata.json" \
+	"$serial_worker_probe_dir/stdout" "$serial_worker_probe_dir/stderr" "$serial_worker_probe_dir/serial.bin" "$serial_worker_probe_dir/serial-input.bin" "$serial_worker_probe_dir/stdin-hex"
+rmdir "$serial_worker_probe_dir"
+[ "$serial_worker_result" -eq 65 ] || fail "independent serial EC25 gate returned $serial_worker_result instead of 65"
+[ "$serial_worker_status" = 'failed' ] || fail "independent serial EC25 gate ended in state: $serial_worker_status"
+printf '%s' "$serial_worker_error" | grep -Fq 'Quectel EC25 modem ports are reserved' || fail 'independent serial EC25 rejection evidence is missing'
+if pidof socat picocom >/dev/null 2>&1; then fail 'serial rejection started or left a serial client'; fi
+pass 'EC25 ownership, structured serial controls, private-input boundary, and independent modem-reserved worker gate'
+
+for identity_manifest in apple-repair firmware-programming; do
 	manifest="/usr/share/ddk-field-console/tools/$identity_manifest.json"
 	[ "$(jsonfilter -i "$manifest" -e '@.enabled')" = 'true' ] || fail "identity module is not enabled: $identity_manifest"
 	[ "$(jsonfilter -i "$manifest" -e '@.no_device_state')" = 'READY / NO DEVICE' ] || fail "identity no-device state is incorrect: $identity_manifest"
@@ -126,7 +274,18 @@ for identity_manifest in android-repair apple-repair firmware-programming; do
 	[ "$(jsonfilter -i "$manifest" -e '@.actions[1].class')" = 'INFO' ] || fail "operator guide lost INFO classification: $identity_manifest"
 	[ "$(jsonfilter -i "$manifest" -e '@.actions[1].enabled')" = 'true' ] || fail "operator guide is disabled: $identity_manifest"
 	[ "$(jsonfilter -i "$manifest" -e '@.actions[2].class')" = 'DISRUPTIVE' ] || fail "device-changing placeholder lost its risk class: $identity_manifest"
-	[ "$(jsonfilter -i "$manifest" -e '@.actions[2].enabled')" = 'false' ] || fail "device-changing placeholder was unexpectedly enabled: $identity_manifest"
+done
+android_manifest=/usr/share/ddk-field-console/tools/android-repair.json
+[ "$(jsonfilter -i "$android_manifest" -e '@.enabled')" = 'true' ] || fail 'Android module is not enabled'
+[ "$(jsonfilter -i "$android_manifest" -e '@.no_device_state')" = 'READY / NO DEVICE' ] || fail 'Android no-device state is incorrect'
+[ "$(jsonfilter -i "$android_manifest" -e '@.actions[2].id')" = 'android.adb_diagnostics' ] || fail 'Android diagnostics action is missing'
+[ "$(jsonfilter -i "$android_manifest" -e '@.actions[2].class')" = 'ACTION' ] || fail 'Android diagnostics action lost its risk class'
+[ "$(jsonfilter -i "$android_manifest" -e '@.actions[2].parameter_schema')" = 'operator-v1' ] || fail 'Android diagnostics structured schema marker is missing'
+[ "$(jsonfilter -i "$android_manifest" -e '@.actions[3].id')" = 'android.adb_manage' ] || fail 'Android management action is missing'
+[ "$(jsonfilter -i "$android_manifest" -e '@.actions[3].class')" = 'DISRUPTIVE' ] || fail 'Android management action lost its risk class'
+[ "$(jsonfilter -i "$android_manifest" -e '@.actions[3].parameter_schema')" = 'operator-v1' ] || fail 'Android management structured schema marker is missing'
+for adb_artifact in android-logcat.txt android-bugreport.txt android-pull.bin android-backup.ab; do
+	grep -Fq "/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/$adb_artifact" /usr/share/rpcd/acl.d/ddk-field-console.json || fail "Android extroot artifact ACL is missing: $adb_artifact"
 done
 
 identity_fixture="$(mktemp -d /tmp/ddk-usb-identity-test.XXXXXX)"
@@ -215,6 +374,162 @@ if /usr/libexec/ddk-console job stop 1 2>/dev/null | json_ok; then fail 'generic
 if /usr/libexec/ddk-console report view ../../etc/shadow 2>/dev/null | json_ok; then fail 'report path traversal was accepted'; fi
 pass 'action injection, generic PID, and traversal rejection'
 
+for operator_action in network.nmap_lan_discovery capture.lan_metadata_snapshot throughput.iperf3 android.adb_diagnostics android.adb_manage apple.mobile_diagnostics apple.mobile_capture apple.mobile_manage apple.recovery apple.restore; do
+	operator_schema="$(/usr/libexec/ddk-console action describe "$operator_action")"
+	printf '%s' "$operator_schema" | json_ok || fail "Operator Mode schema failed: $operator_action"
+	[ "$(printf '%s' "$operator_schema" | jsonfilter -e '@.data.action_id')" = "$operator_action" ] || fail "Operator Mode schema action mismatch: $operator_action"
+	[ -n "$(printf '%s' "$operator_schema" | jsonfilter -e '@.data.native.executable')" ] || fail "Operator Mode schema executable is missing: $operator_action"
+done
+[ "$(printf '%s' "$(/usr/libexec/ddk-console action describe android.adb_diagnostics)" | jsonfilter -e '@.data.native.version')" = '1.0.32' ] || fail 'Android diagnostics schema lost the exact ADB version contract'
+[ "$(printf '%s' "$(/usr/libexec/ddk-console action describe android.adb_manage)" | jsonfilter -e '@.data.native.isolated_server_port')" = '5038' ] || fail 'Android management schema lost the isolated server port contract'
+[ "$(printf '%s' "$(/usr/libexec/ddk-console action describe apple.mobile_diagnostics)" | jsonfilter -e '@.data.native.version')" = 'libimobiledevice 1.3.0' ] || fail 'Apple diagnostics schema lost the exact libimobiledevice version contract'
+[ "$(printf '%s' "$(/usr/libexec/ddk-console action describe apple.recovery)" | jsonfilter -e '@.data.native.version')" = '1.0.0' ] || fail 'Apple recovery schema lost the exact irecovery version contract'
+[ "$(printf '%s' "$(/usr/libexec/ddk-console action describe apple.restore)" | jsonfilter -e '@.data.native.version')" = '1.0.0' ] || fail 'Apple restore schema lost the exact idevicerestore version contract'
+if netstat -lntp 2>/dev/null | grep -Eq '(^|[.:])5038[[:space:]]'; then fail 'Android schema discovery left or encountered a listener on DDK port 5038'; fi
+adb_unknown_payload="$(printf '%s' '{"version":1,"options":{"device":"","shell":"id"}}' | base64url)"
+adb_unknown_result="$(/usr/libexec/ddk-console action prepare android.adb_diagnostics "$adb_unknown_payload" 2>/dev/null || true)"
+printf '%s' "$adb_unknown_result" | jsonfilter -e '@.message' | grep -Fq 'Unknown ADB diagnostics option' || fail 'unknown ADB structured option was not rejected'
+if /usr/libexec/ddk-console job start android.adb_diagnostics 2>/dev/null | json_ok; then fail 'ADB diagnostics started without a prepared request'; fi
+if /usr/libexec/ddk-console job start android.adb_manage 2>/dev/null | json_ok; then fail 'ADB management started without a prepared request'; fi
+for apple_action in apple.mobile_diagnostics apple.mobile_capture apple.mobile_manage apple.recovery apple.restore; do
+	if /usr/libexec/ddk-console job start "$apple_action" 2>/dev/null | json_ok; then fail "Apple Operator Mode action started without a prepared request: $apple_action"; fi
+done
+if /usr/libexec/ddk-console action prepare network.nmap_lan_discovery not-base64 2>/dev/null | json_ok; then
+	fail 'malformed structured action envelope was accepted'
+fi
+unknown_operator_payload="$(printf '%s' '{"version":1,"options":{"targets":["127.0.0.1"],"shell":"reboot"}}' | base64url)"
+if /usr/libexec/ddk-console action prepare network.nmap_lan_discovery "$unknown_operator_payload" 2>/dev/null | json_ok; then
+	fail 'unknown structured Nmap option was accepted'
+fi
+nmap_family_payload="$(printf '%s' '{"version":1,"options":{"targets":["127.0.0.1"],"exclude_targets":["::1"]}}' | base64url)"
+if /usr/libexec/ddk-console action prepare network.nmap_lan_discovery "$nmap_family_payload" 2>/dev/null | json_ok; then
+	fail 'cross-family Nmap exclude target was accepted'
+fi
+iperf_server_client_option_payload="$(printf '%s' '{"version":1,"options":{"mode":"server","bind_address":"127.0.0.1","reverse":true}}' | base64url)"
+if /usr/libexec/ddk-console action prepare throughput.iperf3 "$iperf_server_client_option_payload" 2>/dev/null | json_ok; then
+	fail 'a client-only iperf3 option was silently accepted in server mode'
+fi
+iperf_bind_mismatch_payload="$(printf '%s' '{"version":1,"options":{"mode":"client","host":"127.0.0.1","bind_address":"127.0.0.1","bind_device":"br-lan"}}' | base64url)"
+if /usr/libexec/ddk-console action prepare throughput.iperf3 "$iperf_bind_mismatch_payload" 2>/dev/null | json_ok; then
+	fail 'an iperf3 bind address/device mismatch was accepted'
+fi
+iperf_zero_interval_payload="$(printf '%s' '{"version":1,"options":{"mode":"client","host":"127.0.0.1","duration":1,"wall_timeout":10,"interval":0,"json_output":false}}' | base64url)"
+iperf_zero_interval_prepared="$(/usr/libexec/ddk-console action prepare throughput.iperf3 "$iperf_zero_interval_payload")"
+printf '%s' "$iperf_zero_interval_prepared" | json_ok || fail 'iperf3 zero-interval request did not prepare'
+printf '%s' "$iperf_zero_interval_prepared" | jsonfilter -e '@.data.argv_preview' | grep -Fq -- '--interval 0' || fail 'iperf3 zero interval was not preserved in native argv'
+iperf_confirmation_payload="$(printf '%s' '{"version":1,"options":{"mode":"server","bind_address":"127.0.0.1","port":55203,"duration":5,"json_output":false}}' | base64url)"
+iperf_confirmation_prepared="$(/usr/libexec/ddk-console action prepare throughput.iperf3 "$iperf_confirmation_payload")"
+printf '%s' "$iperf_confirmation_prepared" | json_ok || fail 'iperf3 confirmation-consumption request did not prepare'
+iperf_confirmation_id="$(printf '%s' "$iperf_confirmation_prepared" | jsonfilter -e '@.data.prepared_id')"
+if /usr/libexec/ddk-console job start "$iperf_confirmation_id" "$(printf '%s' WRONG | base64url)" 2>/dev/null | json_ok; then
+	fail 'wrong target-bound confirmation was accepted'
+fi
+if /usr/libexec/ddk-console job start "$iperf_confirmation_id" "$(printf '%s' 'START IPERF SERVER ON 127.0.0.1:55203' | base64url)" 2>/dev/null | json_ok; then
+	fail 'a prepared request survived a failed confirmation attempt'
+fi
+if /usr/libexec/ddk-console job start throughput.iperf3 2>/dev/null | json_ok; then
+	fail 'operator-only iperf3 action started without a prepared request'
+fi
+pass 'Operator Mode schemas, envelope/option/cross-field rejection, literal zero value, one-time confirmation, and prepare requirement'
+
+apple_count="$(/usr/libexec/ddk-console status | jsonfilter -e '@.data.hardware.identity.apple_mobile.count')"
+if [ "${apple_count:-0}" -eq 0 ]; then
+	apple_probe_id="job-$(date +%s)-$$"
+	apple_probe_dir="/tmp/ddk/jobs/$apple_probe_id"
+	apple_lock_dir="/tmp/ddk/locks/resource-apple_mobile"
+	[ -z "$(pidof usbmuxd 2>/dev/null || true)" ] || fail 'a usbmuxd process was active before the Apple cleanup proof'
+	if [ -e "$apple_probe_dir" ] || [ -e "$apple_lock_dir" ]; then fail 'Apple cleanup proof path collided'; fi
+	mkdir -p "$apple_probe_dir" "$apple_lock_dir"
+	chmod 700 "$apple_probe_dir" "$apple_lock_dir"
+	printf '%s\n' "$apple_probe_id" > "$apple_lock_dir/owner"
+	printf '%s\n' queued > "$apple_probe_dir/status"
+	printf '%s\n' resource-apple_mobile > "$apple_probe_dir/lock-keys"
+	printf '%s\n' 10 > "$apple_probe_dir/wall-timeout"
+	printf '%s\n' /usr/bin/ideviceinfo -u 00008110-0011223344556677 > "$apple_probe_dir/argv"
+	printf '%s\n' "{\"id\":\"$apple_probe_id\",\"action_id\":\"apple.mobile_diagnostics\",\"options\":{\"device\":\"00008110-0011223344556677\",\"operation\":\"info\"}}" > "$apple_probe_dir/metadata.json"
+	chmod 600 "$apple_probe_dir"/*
+	apple_probe_result=0
+	/usr/libexec/ddk-apple-worker "$apple_probe_id" apple_mobile >/dev/null 2>&1 || apple_probe_result=$?
+	apple_probe_status="$(cat "$apple_probe_dir/status" 2>/dev/null || true)"
+	rm -f "$apple_probe_dir/argv" "$apple_probe_dir/lock-keys" "$apple_probe_dir/metadata.json" "$apple_probe_dir/pid" \
+		"$apple_probe_dir/status" "$apple_probe_dir/stderr" "$apple_probe_dir/stdout" "$apple_probe_dir/usbmuxd.log" "$apple_probe_dir/wall-timeout"
+	rmdir "$apple_probe_dir"
+	[ "$apple_probe_result" -eq 65 ] || fail "Apple no-device cleanup proof returned $apple_probe_result instead of 65"
+	[ "$apple_probe_status" = failed ] || fail "Apple no-device cleanup proof ended in state: $apple_probe_status"
+	[ -z "$(pidof usbmuxd 2>/dev/null || true)" ] || fail 'temporary Apple helper remained after no-device rejection'
+	[ ! -e "$apple_lock_dir" ] || fail 'Apple resource lock remained after no-device rejection'
+	if netstat -lntp 2>/dev/null | grep -Eq '(^|[.:])27015[[:space:]]'; then fail 'Apple no-device rejection left a usbmuxd listener'; fi
+	pass 'Apple no-device target rejection, temporary usbmuxd lifecycle, and resource cleanup'
+else
+	warn 'Apple no-device cleanup proof skipped because Apple hardware is attached; use the attached-device acceptance matrix'
+fi
+
+adb_worker_probe_id="job-$(date +%s)-$$"
+adb_worker_probe_dir="/tmp/ddk/jobs/$adb_worker_probe_id"
+adb_worker_artifact_dir="/overlay/ddk-field-console/artifacts/$adb_worker_probe_id"
+[ ! -e "$adb_worker_probe_dir" ] || fail 'generated ADB worker-probe ID collided'
+mkdir -p /overlay/ddk-field-console/artifacts
+chmod 700 /overlay/ddk-field-console /overlay/ddk-field-console/artifacts
+mkdir "$adb_worker_probe_dir" "$adb_worker_artifact_dir"
+chmod 700 "$adb_worker_probe_dir" "$adb_worker_artifact_dir"
+printf '%s\n' queued > "$adb_worker_probe_dir/status"
+printf '%s\n' '{"action_id":"android.adb_diagnostics","operator_mode":true,"options":{"device":"DDK-NO-DEVICE","operation":"logcat"},"artifacts":[{"name":"android-logcat.txt","storage":"extroot","max_size":8388608}]}' > "$adb_worker_probe_dir/metadata.json"
+printf '%s\n' /usr/bin/adb -P 5038 -s DDK-NO-DEVICE logcat -d -v threadtime -t 1 > "$adb_worker_probe_dir/argv"
+printf '%s\n' 10 > "$adb_worker_probe_dir/wall-timeout"
+: > "$adb_worker_probe_dir/stdout"
+: > "$adb_worker_probe_dir/stderr"
+adb_worker_result=0
+/usr/libexec/ddk-job-worker "$adb_worker_probe_id" operator_adb >/dev/null 2>&1 || adb_worker_result=$?
+adb_worker_status="$(cat "$adb_worker_probe_dir/status" 2>/dev/null || true)"
+adb_worker_error="$(cat "$adb_worker_probe_dir/stderr" 2>/dev/null || true)"
+rm -f "$adb_worker_probe_dir/pid" "$adb_worker_probe_dir/status" "$adb_worker_probe_dir/metadata.json" \
+	"$adb_worker_probe_dir/stdout" "$adb_worker_probe_dir/stderr" "$adb_worker_probe_dir/argv" "$adb_worker_probe_dir/wall-timeout" \
+	"$adb_worker_probe_dir/adb.output" "$adb_worker_probe_dir/adb.stderr" "$adb_worker_probe_dir/adb-devices.txt" "$adb_worker_probe_dir/adb-devices.stderr"
+rmdir "$adb_worker_probe_dir"
+[ "$adb_worker_result" -eq 65 ] || fail "independent ADB no-device gate returned $adb_worker_result instead of 65"
+[ "$adb_worker_status" = 'failed' ] || fail "independent ADB no-device gate ended in state: $adb_worker_status"
+printf '%s' "$adb_worker_error" | grep -Fq 'Selected ADB serial is no longer present in the authorized device state' || fail 'independent ADB target rejection evidence is missing'
+[ ! -e "$adb_worker_artifact_dir" ] || fail 'failed ADB job retained its extroot artifact directory'
+if netstat -lntp 2>/dev/null | grep -Eq '(^|[.:])5038[[:space:]]'; then fail 'ADB worker rejection left a listener on DDK port 5038'; fi
+
+adb_worker_probe_id="job-$(( $(date +%s) + 1 ))-$$"
+adb_worker_probe_dir="/tmp/ddk/jobs/$adb_worker_probe_id"
+[ ! -e "$adb_worker_probe_dir" ] || fail 'generated ADB argv-rejection probe ID collided'
+mkdir "$adb_worker_probe_dir"
+chmod 700 "$adb_worker_probe_dir"
+printf '%s\n' queued > "$adb_worker_probe_dir/status"
+printf '%s\n' '{"action_id":"android.adb_diagnostics","operator_mode":true,"options":{"device":"DDK-NO-DEVICE","operation":"getprop"}}' > "$adb_worker_probe_dir/metadata.json"
+printf '%s\n' /usr/bin/adb -P 5038 -s DDK-NO-DEVICE shell sh -c id > "$adb_worker_probe_dir/argv"
+printf '%s\n' 10 > "$adb_worker_probe_dir/wall-timeout"
+: > "$adb_worker_probe_dir/stdout"
+: > "$adb_worker_probe_dir/stderr"
+adb_worker_result=0
+/usr/libexec/ddk-job-worker "$adb_worker_probe_id" operator_adb >/dev/null 2>&1 || adb_worker_result=$?
+adb_worker_status="$(cat "$adb_worker_probe_dir/status" 2>/dev/null || true)"
+adb_worker_error="$(cat "$adb_worker_probe_dir/stderr" 2>/dev/null || true)"
+rm -f "$adb_worker_probe_dir/pid" "$adb_worker_probe_dir/status" "$adb_worker_probe_dir/metadata.json" \
+	"$adb_worker_probe_dir/stdout" "$adb_worker_probe_dir/stderr" "$adb_worker_probe_dir/argv" "$adb_worker_probe_dir/wall-timeout"
+rmdir "$adb_worker_probe_dir"
+[ "$adb_worker_result" -eq 65 ] || fail "independent ADB argv rejection returned $adb_worker_result instead of 65"
+[ "$adb_worker_status" = 'failed' ] || fail "independent ADB argv rejection ended in state: $adb_worker_status"
+printf '%s' "$adb_worker_error" | grep -Fq 'Prepared ADB argv failed independent operation-specific validation' || fail 'independent ADB argv rejection evidence is missing'
+if netstat -lntp 2>/dev/null | grep -Eq '(^|[.:])5038[[:space:]]'; then fail 'ADB argv rejection started or left a listener on DDK port 5038'; fi
+pass 'ADB 1.0.32 schemas, no-unprepared-start boundary, independent argv/target gates, extroot failure cleanup, and temporary-server cleanup'
+
+artifact_probe_id="job-$(date +%s)-$$"
+artifact_probe_dir="/overlay/ddk-field-console/artifacts/$artifact_probe_id"
+[ ! -e "$artifact_probe_dir" ] || fail 'generated extroot artifact cleanup-probe ID collided'
+mkdir -p /overlay/ddk-field-console/artifacts
+chmod 700 /overlay/ddk-field-console /overlay/ddk-field-console/artifacts
+mkdir "$artifact_probe_dir"
+chmod 700 "$artifact_probe_dir"
+printf test > "$artifact_probe_dir/android-logcat.txt"
+chmod 600 "$artifact_probe_dir/android-logcat.txt"
+/usr/libexec/ddk-console job list | json_ok || fail 'job listing failed during orphan-artifact cleanup proof'
+[ ! -e "$artifact_probe_dir" ] || fail 'orphaned extroot artifact directory was not removed'
+artifact_probe_id=""
+pass 'large-artifact extroot isolation, exact ACLs, and orphan cleanup'
+
 start_payload="$(/usr/libexec/ddk-console job start diagnostic.demo)"
 printf '%s' "$start_payload" | json_ok || fail 'asynchronous proof did not start'
 job_id="$(printf '%s' "$start_payload" | jsonfilter -e '@.data.id')"
@@ -276,6 +591,34 @@ cellular_after="$(ubus call network.interface.wwan status | jsonfilter -e '@.up'
 [ "$cellular_before" = "$cellular_after" ] || fail 'WWAN state changed during the cellular snapshot'
 if pidof uqmi qmicli qmi-proxy ModemManager >/dev/null 2>&1; then fail 'a cellular client or manager remained running'; fi
 pass 'bounded privacy-conscious cellular snapshot'
+
+operator_nmap_payload="$(printf '%s' '{"version":1,"options":{"targets":["127.0.0.1"],"interface":"lo","scan_type":"discovery","output_format":"xml","wall_timeout":30}}' | base64url)"
+operator_nmap_prepared="$(/usr/libexec/ddk-console action prepare network.nmap_lan_discovery "$operator_nmap_payload")"
+printf '%s' "$operator_nmap_prepared" | json_ok || fail 'structured Nmap request did not prepare'
+operator_nmap_prepared_id="$(printf '%s' "$operator_nmap_prepared" | jsonfilter -e '@.data.prepared_id')"
+printf '%s' "$operator_nmap_prepared" | jsonfilter -e '@.data.argv_preview' | grep -Fq '/usr/bin/nmap' || fail 'structured Nmap preview is missing the exact executable'
+[ "$(printf '%s' "$operator_nmap_prepared" | jsonfilter -e '@.data.normalized_options.targets[0]')" = '127.0.0.1' ] || fail 'structured Nmap normalized target is incorrect'
+[ "$(printf '%s' "$operator_nmap_prepared" | jsonfilter -e '@.data.confirmation.required')" = 'false' ] || fail 'ordinary structured Nmap discovery requires excessive confirmation'
+operator_nmap_start="$(/usr/libexec/ddk-console job start "$operator_nmap_prepared_id")"
+printf '%s' "$operator_nmap_start" | json_ok || fail 'prepared Nmap job did not start'
+operator_nmap_id="$(printf '%s' "$operator_nmap_start" | jsonfilter -e '@.data.id')"
+if /usr/libexec/ddk-console job start "$operator_nmap_prepared_id" 2>/dev/null | json_ok; then fail 'prepared Nmap request was reusable'; fi
+attempt=0
+operator_nmap_status=''
+while [ "$attempt" -lt 40 ]; do
+	operator_nmap_state="$(/usr/libexec/ddk-console job status "$operator_nmap_id")"
+	operator_nmap_status="$(printf '%s' "$operator_nmap_state" | jsonfilter -e '@.data.status')"
+	case "$operator_nmap_status" in complete|failed|stopped) break ;; esac
+	attempt=$((attempt + 1))
+	sleep 1
+done
+[ "$operator_nmap_status" = 'complete' ] || fail "structured Nmap proof ended in state: $operator_nmap_status"
+[ "$(printf '%s' "$operator_nmap_state" | jsonfilter -e '@.data.metadata.operator_mode')" = 'true' ] || fail 'structured Nmap metadata lost Operator Mode state'
+[ "$(printf '%s' "$operator_nmap_state" | jsonfilter -e '@.data.metadata.options.targets[0]')" = '127.0.0.1' ] || fail 'structured Nmap metadata lost normalized options'
+printf '%s' "$operator_nmap_state" | jsonfilter -e '@.data.stdout' | grep -Fq 'NMAP OPERATOR SCAN' || fail 'structured Nmap native output header is missing'
+[ "$(printf '%s' "$operator_nmap_state" | jsonfilter -e '@.data.artifacts[0].name')" = 'nmap.xml' ] || fail 'structured Nmap XML artifact metadata is missing'
+[ -s "/tmp/ddk/jobs/$operator_nmap_id/nmap.xml" ] || fail 'structured Nmap XML artifact file is missing'
+pass 'structured Nmap prepare/start, one-time claim, native execution, metadata, and XML artifact'
 
 nmap_manifest=/usr/share/ddk-field-console/tools/network-discovery.json
 [ "$(jsonfilter -i "$nmap_manifest" -e '@.enabled')" = 'true' ] || fail 'Nmap discovery module is not enabled'
@@ -425,11 +768,123 @@ if pidof tcpdump >/dev/null 2>&1; then fail 'tcpdump remained active after bound
 [ "$(cat /sys/class/net/br-lan/flags)" = "$capture_flags_before" ] || fail 'br-lan flags changed after bounded capture completion'
 pass 'bounded transient LAN metadata snapshot'
 
+operator_capture_payload="$(printf '%s' '{"version":1,"options":{"interface":"lo","filter":"icmp","duration":10,"packet_count":2,"snap_length":262144,"output_format":"pcap"}}' | base64url)"
+operator_capture_prepared="$(/usr/libexec/ddk-console action prepare capture.lan_metadata_snapshot "$operator_capture_payload")"
+printf '%s' "$operator_capture_prepared" | json_ok || fail 'structured tcpdump request did not prepare'
+[ "$(printf '%s' "$operator_capture_prepared" | jsonfilter -e '@.data.confirmation.required')" = 'true' ] || fail 'PCAP capture did not require a privacy confirmation'
+[ "$(printf '%s' "$operator_capture_prepared" | jsonfilter -e '@.data.confirmation.phrase')" = 'CAPTURE ON lo' ] || fail 'PCAP target-bound confirmation phrase is incorrect'
+operator_capture_prepared_id="$(printf '%s' "$operator_capture_prepared" | jsonfilter -e '@.data.prepared_id')"
+operator_capture_confirmation="$(printf '%s' 'CAPTURE ON lo' | base64url)"
+operator_capture_start="$(/usr/libexec/ddk-console job start "$operator_capture_prepared_id" "$operator_capture_confirmation")"
+printf '%s' "$operator_capture_start" | json_ok || fail 'prepared tcpdump job did not start'
+operator_capture_id="$(printf '%s' "$operator_capture_start" | jsonfilter -e '@.data.id')"
+sleep 1
+ping -c 1 -W 2 127.0.0.1 >/dev/null 2>&1 || true
+attempt=0
+operator_capture_status=''
+while [ "$attempt" -lt 15 ]; do
+	operator_capture_state="$(/usr/libexec/ddk-console job status "$operator_capture_id")"
+	operator_capture_status="$(printf '%s' "$operator_capture_state" | jsonfilter -e '@.data.status')"
+	case "$operator_capture_status" in complete|failed|stopped) break ;; esac
+	attempt=$((attempt + 1))
+	sleep 1
+done
+[ "$operator_capture_status" = 'complete' ] || fail "structured tcpdump proof ended in state: $operator_capture_status"
+[ "$(printf '%s' "$operator_capture_state" | jsonfilter -e '@.data.metadata.options.interface')" = 'lo' ] || fail 'structured tcpdump metadata lost the validated interface'
+[ "$(printf '%s' "$operator_capture_state" | jsonfilter -e '@.data.artifacts[0].name')" = 'capture.pcap' ] || fail 'structured tcpdump PCAP metadata is missing'
+[ -s "/tmp/ddk/jobs/$operator_capture_id/capture.pcap" ] || fail 'structured tcpdump PCAP file is missing'
+operator_pcap_magic="$(hexdump -n 4 -e '4/1 "%02x"' "/tmp/ddk/jobs/$operator_capture_id/capture.pcap")"
+case "$operator_pcap_magic" in d4c3b2a1|a1b2c3d4|4d3cb2a1|a1b23c4d) ;; *) fail 'structured tcpdump PCAP magic is invalid' ;; esac
+
+bad_filter_payload="$(printf '%s' '{"version":1,"options":{"interface":"lo","filter":"(((\"","duration":2,"packet_count":1,"output_format":"decoded"}}' | base64url)"
+bad_filter_prepared="$(/usr/libexec/ddk-console action prepare capture.lan_metadata_snapshot "$bad_filter_payload")"
+printf '%s' "$bad_filter_prepared" | json_ok || fail 'syntactically invalid BPF request did not reach the native compile gate'
+bad_filter_id="$(printf '%s' "$bad_filter_prepared" | jsonfilter -e '@.data.prepared_id')"
+bad_filter_start="$(/usr/libexec/ddk-console job start "$bad_filter_id")"
+printf '%s' "$bad_filter_start" | json_ok || fail 'invalid-BPF worker proof did not start'
+bad_filter_job="$(printf '%s' "$bad_filter_start" | jsonfilter -e '@.data.id')"
+attempt=0
+while [ "$attempt" -lt 8 ]; do
+	bad_filter_state="$(/usr/libexec/ddk-console job status "$bad_filter_job")"
+	bad_filter_status="$(printf '%s' "$bad_filter_state" | jsonfilter -e '@.data.status')"
+	case "$bad_filter_status" in complete|failed|stopped) break ;; esac
+	attempt=$((attempt + 1))
+	sleep 1
+done
+[ "$bad_filter_status" = 'failed' ] || fail "invalid BPF proof ended in state: $bad_filter_status"
+printf '%s' "$bad_filter_state" | jsonfilter -e '@.data.stderr' | grep -Fq 'Tcpdump rejected the structured BPF capture filter.' || fail 'native BPF rejection evidence is missing'
+if pidof tcpdump >/dev/null 2>&1; then fail 'tcpdump remained active after structured capture proofs'; fi
+pass 'structured tcpdump confirmation, BPF compilation, PCAP artifact, rejection, and cleanup'
+
+iperf_manifest=/usr/share/ddk-field-console/tools/throughput.json
+[ "$(jsonfilter -i "$iperf_manifest" -e '@.enabled')" = 'true' ] || fail 'iperf3 Operator Mode module is not enabled'
+[ "$(jsonfilter -i "$iperf_manifest" -e '@.actions[0].id')" = 'throughput.iperf3' ] || fail 'iperf3 action ID is incorrect'
+[ "$(jsonfilter -i "$iperf_manifest" -e '@.actions[0].parameter_schema')" = 'operator-v1' ] || fail 'iperf3 structured schema marker is missing'
+[ -x /usr/bin/iperf3 ] || fail 'the exact iperf3 executable is unavailable'
+if netstat -lntup 2>/dev/null | grep -Eq '127[.]0[.]0[.]1:(55201|55202)[[:space:]]'; then fail 'an iperf3 proof port is already in use'; fi
+
+iperf_server_payload="$(printf '%s' '{"version":1,"options":{"mode":"server","bind_address":"127.0.0.1","port":55201,"duration":15,"one_off":true,"json_output":true}}' | base64url)"
+iperf_server_prepared="$(/usr/libexec/ddk-console action prepare throughput.iperf3 "$iperf_server_payload")"
+printf '%s' "$iperf_server_prepared" | json_ok || fail 'structured iperf3 server request did not prepare'
+[ "$(printf '%s' "$iperf_server_prepared" | jsonfilter -e '@.data.confirmation.phrase')" = 'START IPERF SERVER ON 127.0.0.1:55201' ] || fail 'iperf3 server confirmation is not endpoint-bound'
+iperf_server_prepared_id="$(printf '%s' "$iperf_server_prepared" | jsonfilter -e '@.data.prepared_id')"
+iperf_server_confirmation="$(printf '%s' 'START IPERF SERVER ON 127.0.0.1:55201' | base64url)"
+iperf_server_start="$(/usr/libexec/ddk-console job start "$iperf_server_prepared_id" "$iperf_server_confirmation")"
+printf '%s' "$iperf_server_start" | json_ok || fail 'temporary iperf3 server did not start'
+iperf_server_job="$(printf '%s' "$iperf_server_start" | jsonfilter -e '@.data.id')"
+attempt=0
+while [ "$attempt" -lt 8 ]; do
+	if netstat -lntup 2>/dev/null | grep -Eq '127[.]0[.]0[.]1:55201[[:space:]]'; then break; fi
+	attempt=$((attempt + 1))
+	sleep 1
+done
+[ "$attempt" -lt 8 ] || fail 'temporary iperf3 server listener did not appear on its exact loopback endpoint'
+/usr/bin/iperf3 -c 127.0.0.1 -p 55201 -t 1 -b 10M >/dev/null 2>&1 || fail 'loopback client could not use the temporary iperf3 server'
+attempt=0
+while [ "$attempt" -lt 12 ]; do
+	iperf_server_state="$(/usr/libexec/ddk-console job status "$iperf_server_job")"
+	iperf_server_status="$(printf '%s' "$iperf_server_state" | jsonfilter -e '@.data.status')"
+	case "$iperf_server_status" in complete|failed|stopped) break ;; esac
+	attempt=$((attempt + 1))
+	sleep 1
+done
+[ "$iperf_server_status" = 'complete' ] || fail "temporary iperf3 server ended in state: $iperf_server_status"
+[ "$(printf '%s' "$iperf_server_state" | jsonfilter -e '@.data.artifacts[0].name')" = 'iperf3.json' ] || fail 'temporary iperf3 server JSON artifact is missing'
+if netstat -lntup 2>/dev/null | grep -Eq '127[.]0[.]0[.]1:55201[[:space:]]'; then fail 'temporary iperf3 server listener remained after one client'; fi
+
+/usr/bin/iperf3 -s -1 -B 127.0.0.1 -p 55202 >/dev/null 2>&1 &
+iperf_probe_pid=$!
+sleep 1
+kill -0 "$iperf_probe_pid" 2>/dev/null || fail 'loopback iperf3 client-proof server did not start'
+iperf_client_payload="$(printf '%s' '{"version":1,"options":{"mode":"client","host":"127.0.0.1","port":55202,"protocol":"tcp","duration":1,"wall_timeout":20,"parallel":2,"bitrate":10000000,"reverse":true,"json_output":true}}' | base64url)"
+iperf_client_prepared="$(/usr/libexec/ddk-console action prepare throughput.iperf3 "$iperf_client_payload")"
+printf '%s' "$iperf_client_prepared" | json_ok || fail 'structured iperf3 client request did not prepare'
+[ "$(printf '%s' "$iperf_client_prepared" | jsonfilter -e '@.data.confirmation.required')" = 'false' ] || fail 'ordinary iperf3 client test requires excessive confirmation'
+iperf_client_prepared_id="$(printf '%s' "$iperf_client_prepared" | jsonfilter -e '@.data.prepared_id')"
+iperf_client_start="$(/usr/libexec/ddk-console job start "$iperf_client_prepared_id")"
+printf '%s' "$iperf_client_start" | json_ok || fail 'structured iperf3 client did not start'
+iperf_client_job="$(printf '%s' "$iperf_client_start" | jsonfilter -e '@.data.id')"
+attempt=0
+while [ "$attempt" -lt 25 ]; do
+	iperf_client_state="$(/usr/libexec/ddk-console job status "$iperf_client_job")"
+	iperf_client_status="$(printf '%s' "$iperf_client_state" | jsonfilter -e '@.data.status')"
+	case "$iperf_client_status" in complete|failed|stopped) break ;; esac
+	attempt=$((attempt + 1))
+	sleep 1
+done
+[ "$iperf_client_status" = 'complete' ] || fail "structured iperf3 client ended in state: $iperf_client_status"
+[ "$(printf '%s' "$iperf_client_state" | jsonfilter -e '@.data.metadata.options.parallel')" = '2' ] || fail 'iperf3 client metadata lost the validated stream count'
+[ "$(printf '%s' "$iperf_client_state" | jsonfilter -e '@.data.artifacts[0].name')" = 'iperf3.json' ] || fail 'iperf3 client JSON artifact is missing'
+cleanup_runtime_probes
+if pidof iperf3 >/dev/null 2>&1; then fail 'an iperf3 process remained after Operator Mode proofs'; fi
+pass 'structured iperf3 client/server targeting, confirmation, native execution, artifacts, and on-demand cleanup'
+
 radio_manifest=/usr/share/ddk-field-console/tools/sdr-radio.json
 [ "$(jsonfilter -i "$radio_manifest" -e '@.enabled')" = 'true' ] || fail 'SDR/radio module is not enabled'
 [ "$(jsonfilter -i "$radio_manifest" -e '@.actions[0].id')" = 'radio.rtl433_snapshot' ] || fail 'RTL-433 action ID is incorrect'
 [ "$(jsonfilter -i "$radio_manifest" -e '@.actions[0].class')" = 'ACTION' ] || fail 'RTL-433 action lost its ACTION classification'
 [ "$(jsonfilter -i "$radio_manifest" -e '@.actions[0].execution')" = 'job' ] || fail 'RTL-433 action execution mode is incorrect'
+[ "$(jsonfilter -i "$radio_manifest" -e '@.actions[0].parameter_schema')" = 'operator-v1' ] || fail 'RTL-433 structured schema marker is missing'
 [ "$(jsonfilter -i "$radio_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'RTL-433 action is not explicitly enabled'
 [ "$(jsonfilter -i "$radio_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'AIS receive was unexpectedly enabled'
 [ -x /usr/bin/rtl_433 ] || fail 'the reviewed rtl_433 executable is unavailable'
@@ -441,12 +896,22 @@ if pidof rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais read
 if netstat -lntup 2>/dev/null | grep -Eq '(^|[.:])1234[[:space:]]'; then fail 'the rtl_tcp default listener port is active'; fi
 pass 'reviewed RTL-433 manifest, executable, empty-config boundary, and listener state'
 
+radio_schema="$(/usr/libexec/ddk-console action describe radio.rtl433_snapshot)"
+printf '%s' "$radio_schema" | json_ok || fail 'RTL-433 Operator Mode schema is unavailable'
+[ "$(printf '%s' "$radio_schema" | jsonfilter -e '@.data.native.package_version')" = '20.11-2' ] || fail 'RTL-433 schema lost the exact package version contract'
+[ "$(printf '%s' "$radio_schema" | jsonfilter -e '@.data.fields[@.name="frequencies"].type')" = 'integer_list' ] || fail 'RTL-433 structured frequency control is missing'
+[ "$(printf '%s' "$radio_schema" | jsonfilter -e '@.data.fields[@.name="raw_iq"].type')" = 'boolean' ] || fail 'RTL-433 bounded raw-IQ control is missing'
+
 if /usr/libexec/ddk-console job start 'radio.rtl433_snapshot;touch' 2>/dev/null | json_ok; then
 	fail 'malformed RTL-433 action ID was accepted'
 fi
-if /usr/libexec/ddk-console job start radio.rtl433_snapshot 433920000 2>/dev/null | json_ok; then
-	fail 'a browser-supplied RTL-433 frequency was accepted'
-fi
+radio_fake_payload="$(printf '%s' '{"version":1,"options":{"device":":DDKTEST","frequencies":[433920000],"duration":5}}' | base64url)"
+radio_fake_prepare="$(/usr/libexec/ddk-console action prepare radio.rtl433_snapshot "$radio_fake_payload" 2>/dev/null || true)"
+[ "$(printf '%s' "$radio_fake_prepare" | jsonfilter -e '@.ok')" = 'false' ] || fail 'unlisted RTL-SDR selector was accepted'
+printf '%s' "$radio_fake_prepare" | jsonfilter -e '@.message' | grep -Fq 'live reviewed hardware inventory' || fail 'RTL-433 live-device rejection evidence is missing'
+radio_unknown_payload="$(printf '%s' '{"version":1,"options":{"device":":DDKTEST","arbitrary_command":"id"}}' | base64url)"
+radio_unknown_prepare="$(/usr/libexec/ddk-console action prepare radio.rtl433_snapshot "$radio_unknown_payload" 2>/dev/null || true)"
+printf '%s' "$radio_unknown_prepare" | jsonfilter -e '@.message' | grep -Fq 'Unknown rtl_433 option' || fail 'RTL-433 unknown structured option was not rejected'
 
 radio_capabilities="$(/usr/libexec/ddk-console capabilities)"
 radio_ready="$(printf '%s' "$radio_capabilities" | jsonfilter -e '@.data[@.id="sdr-radio"].hardware.present')"
@@ -460,7 +925,7 @@ else
 	radio_jobs_before="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
 	radio_rejection="$(/usr/libexec/ddk-console job start radio.rtl433_snapshot 2>/dev/null || true)"
 	[ "$(printf '%s' "$radio_rejection" | jsonfilter -e '@.ok')" = 'false' ] || fail 'hardware-gated RTL-433 start was not rejected'
-	printf '%s' "$radio_rejection" | jsonfilter -e '@.message' | grep -Fq 'Reviewed RTL-SDR hardware is not ready' || fail 'RTL-433 hardware rejection message is missing'
+	printf '%s' "$radio_rejection" | jsonfilter -e '@.message' | grep -Fq 'requires a validated Operator Mode request' || fail 'RTL-433 unprepared-start rejection message is missing'
 	radio_jobs_after="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
 	[ "$radio_jobs_before" = "$radio_jobs_after" ] || fail 'rejected RTL-433 start created a transient job'
 	if pidof rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 >/dev/null 2>&1; then fail 'hardware rejection started a radio process'; fi
@@ -471,11 +936,11 @@ else
 	mkdir "$radio_worker_probe_dir"
 	chmod 700 "$radio_worker_probe_dir"
 	printf '%s\n' queued > "$radio_worker_probe_dir/status"
-	printf '%s\n' '{}' > "$radio_worker_probe_dir/metadata.json"
+	printf '%s\n' '{"action_id":"radio.rtl433_snapshot","operator_mode":true,"options":{"device":":DDKTEST","output_format":"json","raw_iq":false}}' > "$radio_worker_probe_dir/metadata.json"
 	: > "$radio_worker_probe_dir/stdout"
 	: > "$radio_worker_probe_dir/stderr"
 	radio_worker_result=0
-	/usr/libexec/ddk-job-worker "$radio_worker_probe_id" rtl433_snapshot >/dev/null 2>&1 || radio_worker_result=$?
+	/usr/libexec/ddk-job-worker "$radio_worker_probe_id" operator_rtl433 >/dev/null 2>&1 || radio_worker_result=$?
 	radio_worker_status="$(cat "$radio_worker_probe_dir/status" 2>/dev/null || true)"
 	radio_worker_error="$(cat "$radio_worker_probe_dir/stderr" 2>/dev/null || true)"
 	rm -f "$radio_worker_probe_dir/pid" "$radio_worker_probe_dir/status" "$radio_worker_probe_dir/metadata.json" \
@@ -483,7 +948,7 @@ else
 	rmdir "$radio_worker_probe_dir"
 	[ "$radio_worker_result" -eq 65 ] || fail "independent RTL-433 worker gate returned $radio_worker_result instead of 65"
 	[ "$radio_worker_status" = 'failed' ] || fail "independent RTL-433 worker gate ended in state: $radio_worker_status"
-	printf '%s' "$radio_worker_error" | grep -Fq 'Exactly one reviewed RTL-SDR USB device' || fail 'independent RTL-433 worker rejection evidence is missing'
+	printf '%s' "$radio_worker_error" | grep -Fq 'selected reviewed RTL-SDR serial is no longer uniquely present' || fail 'independent RTL-433 worker rejection evidence is missing'
 	if pidof rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 >/dev/null 2>&1; then fail 'independent hardware rejection started a radio process'; fi
 	pass 'RTL-433 backend/worker hardware gates and no-device refusal path'
 fi
@@ -493,6 +958,7 @@ camera_manifest=/usr/share/ddk-field-console/tools/camera.json
 [ "$(jsonfilter -i "$camera_manifest" -e '@.actions[0].id')" = 'camera.still_snapshot' ] || fail 'camera still action ID is incorrect'
 [ "$(jsonfilter -i "$camera_manifest" -e '@.actions[0].class')" = 'ACTION' ] || fail 'camera still action lost its ACTION classification'
 [ "$(jsonfilter -i "$camera_manifest" -e '@.actions[0].execution')" = 'job' ] || fail 'camera still action execution mode is incorrect'
+[ "$(jsonfilter -i "$camera_manifest" -e '@.actions[0].parameter_schema')" = 'operator-v1' ] || fail 'camera structured schema marker is missing'
 [ "$(jsonfilter -i "$camera_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'camera still action is not explicitly enabled'
 [ "$(jsonfilter -i "$camera_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'camera streaming was unexpectedly enabled'
 [ -x /usr/bin/fswebcam ] || fail 'the reviewed fswebcam executable is unavailable'
@@ -503,14 +969,25 @@ if /etc/init.d/mjpg-streamer enabled >/dev/null 2>&1 || /etc/init.d/motion enabl
 if pidof fswebcam mjpg_streamer motion v4l2rtspserver >/dev/null 2>&1; then fail 'a camera client or service was active before hardware-gate verification'; fi
 grep -Fq '"cgi-io": [ "exec", "download" ]' /usr/share/rpcd/acl.d/ddk-field-console.json || fail 'authenticated artifact download permission is missing'
 grep -Fq '"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/snapshot.jpg": [ "read" ]' /usr/share/rpcd/acl.d/ddk-field-console.json || fail 'camera artifact path ACL is missing or too broad'
+grep -Fq '"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/snapshot.png": [ "read" ]' /usr/share/rpcd/acl.d/ddk-field-console.json || fail 'camera PNG artifact path ACL is missing or too broad'
 pass 'reviewed camera manifest, installed tools, disabled services, and artifact ACL'
+
+camera_schema="$(/usr/libexec/ddk-console action describe camera.still_snapshot)"
+printf '%s' "$camera_schema" | json_ok || fail 'camera Operator Mode schema is unavailable'
+[ "$(printf '%s' "$camera_schema" | jsonfilter -e '@.data.native.version')" = '20140113' ] || fail 'camera schema lost the exact fswebcam version contract'
+[ "$(printf '%s' "$camera_schema" | jsonfilter -e '@.data.fields[@.name="resolution"].type')" = 'text' ] || fail 'camera resolution control is missing'
+[ "$(printf '%s' "$camera_schema" | jsonfilter -e '@.data.fields[@.name="format"].type')" = 'enum' ] || fail 'camera artifact format control is missing'
 
 if /usr/libexec/ddk-console job start 'camera.still_snapshot;touch' 2>/dev/null | json_ok; then
 	fail 'malformed camera action ID was accepted'
 fi
-if /usr/libexec/ddk-console job start camera.still_snapshot /dev/video0 2>/dev/null | json_ok; then
-	fail 'a browser-supplied camera device was accepted'
-fi
+camera_fake_payload="$(printf '%s' '{"version":1,"options":{"device":"/dev/video987654","format":"jpeg","resolution":"640x480"}}' | base64url)"
+camera_fake_prepare="$(/usr/libexec/ddk-console action prepare camera.still_snapshot "$camera_fake_payload" 2>/dev/null || true)"
+[ "$(printf '%s' "$camera_fake_prepare" | jsonfilter -e '@.ok')" = 'false' ] || fail 'unlisted camera node was accepted'
+printf '%s' "$camera_fake_prepare" | jsonfilter -e '@.message' | grep -Fq 'live reviewed UVC inventory' || fail 'camera live-device rejection evidence is missing'
+camera_unknown_payload="$(printf '%s' '{"version":1,"options":{"device":"/dev/video987654","exec":"id"}}' | base64url)"
+camera_unknown_prepare="$(/usr/libexec/ddk-console action prepare camera.still_snapshot "$camera_unknown_payload" 2>/dev/null || true)"
+printf '%s' "$camera_unknown_prepare" | jsonfilter -e '@.message' | grep -Fq 'Unknown fswebcam option' || fail 'camera unknown structured option was not rejected'
 
 camera_capabilities="$(/usr/libexec/ddk-console capabilities)"
 camera_ready="$(printf '%s' "$camera_capabilities" | jsonfilter -e '@.data[@.id="camera"].hardware.present')"
@@ -524,7 +1001,7 @@ else
 	camera_jobs_before="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
 	camera_rejection="$(/usr/libexec/ddk-console job start camera.still_snapshot 2>/dev/null || true)"
 	[ "$(printf '%s' "$camera_rejection" | jsonfilter -e '@.ok')" = 'false' ] || fail 'hardware-gated camera start was not rejected'
-	printf '%s' "$camera_rejection" | jsonfilter -e '@.message' | grep -Fq 'Reviewed UVC camera hardware is not ready' || fail 'camera hardware rejection message is missing'
+	printf '%s' "$camera_rejection" | jsonfilter -e '@.message' | grep -Fq 'requires a validated Operator Mode request' || fail 'camera unprepared-start rejection message is missing'
 	camera_jobs_after="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
 	[ "$camera_jobs_before" = "$camera_jobs_after" ] || fail 'rejected camera start created a transient job'
 	if pidof fswebcam mjpg_streamer motion v4l2rtspserver >/dev/null 2>&1; then fail 'camera hardware rejection started a process'; fi
@@ -535,11 +1012,11 @@ else
 	mkdir "$camera_worker_probe_dir"
 	chmod 700 "$camera_worker_probe_dir"
 	printf '%s\n' queued > "$camera_worker_probe_dir/status"
-	printf '%s\n' '{}' > "$camera_worker_probe_dir/metadata.json"
+	printf '%s\n' '{"action_id":"camera.still_snapshot","operator_mode":true,"options":{"device":"/dev/video987654","format":"jpeg"}}' > "$camera_worker_probe_dir/metadata.json"
 	: > "$camera_worker_probe_dir/stdout"
 	: > "$camera_worker_probe_dir/stderr"
 	camera_worker_result=0
-	/usr/libexec/ddk-job-worker "$camera_worker_probe_id" camera_snapshot >/dev/null 2>&1 || camera_worker_result=$?
+	/usr/libexec/ddk-job-worker "$camera_worker_probe_id" operator_camera >/dev/null 2>&1 || camera_worker_result=$?
 	camera_worker_status="$(cat "$camera_worker_probe_dir/status" 2>/dev/null || true)"
 	camera_worker_error="$(cat "$camera_worker_probe_dir/stderr" 2>/dev/null || true)"
 	rm -f "$camera_worker_probe_dir/pid" "$camera_worker_probe_dir/status" "$camera_worker_probe_dir/metadata.json" \
@@ -548,7 +1025,7 @@ else
 	rmdir "$camera_worker_probe_dir"
 	[ "$camera_worker_result" -eq 65 ] || fail "independent camera worker gate returned $camera_worker_result instead of 65"
 	[ "$camera_worker_status" = 'failed' ] || fail "independent camera worker gate ended in state: $camera_worker_status"
-	printf '%s' "$camera_worker_error" | grep -Fq 'Exactly one reviewed USB UVC camera is required.' || fail 'independent camera worker rejection evidence is missing'
+	printf '%s' "$camera_worker_error" | grep -Fq 'Selected camera node is no longer a direct character device.' || fail 'independent camera worker rejection evidence is missing'
 	if pidof fswebcam mjpg_streamer motion v4l2rtspserver >/dev/null 2>&1; then fail 'independent camera rejection started a process'; fi
 	if find /tmp/ddk/jobs -maxdepth 2 -type f -name 'snapshot.jpg*' | grep -q .; then fail 'camera no-device verification left an image artifact'; fi
 	pass 'camera backend/worker hardware gates and no-device refusal path'
@@ -559,20 +1036,34 @@ gps_manifest=/usr/share/ddk-field-console/tools/gps-gnss.json
 [ "$(jsonfilter -i "$gps_manifest" -e '@.actions[0].id')" = 'gps.snapshot' ] || fail 'GPS/GNSS snapshot action ID is incorrect'
 [ "$(jsonfilter -i "$gps_manifest" -e '@.actions[0].class')" = 'ACTION' ] || fail 'GPS/GNSS snapshot lost its ACTION classification'
 [ "$(jsonfilter -i "$gps_manifest" -e '@.actions[0].execution')" = 'job' ] || fail 'GPS/GNSS snapshot execution mode is incorrect'
+[ "$(jsonfilter -i "$gps_manifest" -e '@.actions[0].parameter_schema')" = 'operator-v1' ] || fail 'GPS/GNSS structured schema marker is missing'
 [ "$(jsonfilter -i "$gps_manifest" -e '@.actions[0].enabled')" = 'true' ] || fail 'GPS/GNSS snapshot is not explicitly enabled'
 [ "$(jsonfilter -i "$gps_manifest" -e '@.actions[1].enabled')" = 'false' ] || fail 'GPS/GNSS NTRIP was unexpectedly enabled'
 [ -x /usr/bin/gpsdecode ] || fail 'the reviewed gpsdecode executable is unavailable'
+LC_ALL=C /usr/bin/gpsdecode -V 2>&1 | grep -Fqx 'gpsdecode revision 3.23.1' || fail 'gpsdecode version is not reviewed 3.23.1'
 [ "$(uci -q get gpsd.core.enabled)" = '0' ] || fail 'the existing gpsd configuration is not disabled'
 if pidof gpsd >/dev/null 2>&1; then fail 'gpsd was active before GPS/GNSS hardware-gate verification'; fi
 if netstat -lntup 2>/dev/null | grep -Eq '(^|[.:])2947[[:space:]]'; then fail 'the gpsd listener port was active before verification'; fi
+grep -Fq '"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/gnss.raw": [ "read" ]' /usr/share/rpcd/acl.d/ddk-field-console.json || fail 'GNSS raw artifact ACL is missing or too broad'
+grep -Fq '"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/gnss.decoded": [ "read" ]' /usr/share/rpcd/acl.d/ddk-field-console.json || fail 'GNSS decoded artifact ACL is missing or too broad'
 pass 'reviewed GPS/GNSS manifest, decoder, and inactive gpsd boundary'
+
+gps_schema="$(/usr/libexec/ddk-console action describe gps.snapshot)"
+printf '%s' "$gps_schema" | json_ok || fail 'GPS/GNSS Operator Mode schema is unavailable'
+[ "$(printf '%s' "$gps_schema" | jsonfilter -e '@.data.native.decoder_version')" = '3.23.1' ] || fail 'GPS/GNSS schema lost the exact gpsdecode version contract'
+[ "$(printf '%s' "$gps_schema" | jsonfilter -e '@.data.fields[@.name="decode_mode"].type')" = 'enum' ] || fail 'GPS/GNSS decode-mode control is missing'
+[ "$(printf '%s' "$gps_schema" | jsonfilter -e '@.data.fields[@.name="raw_artifact"].type')" = 'boolean' ] || fail 'GPS/GNSS raw-artifact control is missing'
 
 if /usr/libexec/ddk-console job start 'gps.snapshot;touch' 2>/dev/null | json_ok; then
 	fail 'malformed GPS/GNSS action ID was accepted'
 fi
-if /usr/libexec/ddk-console job start gps.snapshot /dev/ttyACM0 2>/dev/null | json_ok; then
-	fail 'a browser-supplied GPS/GNSS device was accepted'
-fi
+gps_fake_payload="$(printf '%s' '{"version":1,"options":{"device":"/dev/ttyUSB0","duration":5}}' | base64url)"
+gps_fake_prepare="$(/usr/libexec/ddk-console action prepare gps.snapshot "$gps_fake_payload" 2>/dev/null || true)"
+[ "$(printf '%s' "$gps_fake_prepare" | jsonfilter -e '@.ok')" = 'false' ] || fail 'EC25 node was accepted as a GNSS receiver'
+printf '%s' "$gps_fake_prepare" | jsonfilter -e '@.message' | grep -Fq 'live reviewed receiver inventory' || fail 'GPS/GNSS live-device rejection evidence is missing'
+gps_unknown_payload="$(printf '%s' '{"version":1,"options":{"device":"/dev/ttyUSB0","command":"id"}}' | base64url)"
+gps_unknown_prepare="$(/usr/libexec/ddk-console action prepare gps.snapshot "$gps_unknown_payload" 2>/dev/null || true)"
+printf '%s' "$gps_unknown_prepare" | jsonfilter -e '@.message' | grep -Fq 'Unknown GPS/GNSS option' || fail 'GPS/GNSS unknown structured option was not rejected'
 
 gps_status="$(/usr/libexec/ddk-console status)"
 gps_capabilities="$(/usr/libexec/ddk-console capabilities)"
@@ -585,7 +1076,7 @@ if [ "$gps_ready" = 'true' ]; then
 	[ "$gps_hardware_present" = 'true' ] || fail 'ready GPS/GNSS receiver is not marked present'
 	[ "$gps_state" = 'READY' ] || fail "ready GPS/GNSS receiver has inconsistent capability state: $gps_state"
 	[ "$gps_action_ready" = 'true' ] || fail 'ready GPS/GNSS receiver did not enable the reviewed action'
-	warn 'reviewed USB GNSS hardware is attached; live position capture requires explicit privacy confirmation in the UI'
+	warn 'reviewed USB GNSS hardware is attached; use the structured receiver, decode, and artifact controls for live capture'
 else
 	[ "$gps_hardware_present" = 'false' ] || [ "$gps_state" = 'NOT CONFIGURED' ] || fail "present but unready GPS/GNSS receiver has incorrect state: $gps_state"
 	if [ "$gps_hardware_present" = 'false' ]; then [ "$gps_state" = 'HARDWARE REQUIRED' ] || fail "absent GPS/GNSS receiver has incorrect state: $gps_state"; fi
@@ -593,7 +1084,7 @@ else
 	gps_jobs_before="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
 	gps_rejection="$(/usr/libexec/ddk-console job start gps.snapshot 2>/dev/null || true)"
 	[ "$(printf '%s' "$gps_rejection" | jsonfilter -e '@.ok')" = 'false' ] || fail 'hardware-gated GPS/GNSS start was not rejected'
-	printf '%s' "$gps_rejection" | jsonfilter -e '@.message' | grep -Fq 'Reviewed USB GNSS hardware is not ready' || fail 'GPS/GNSS hardware rejection message is missing'
+	printf '%s' "$gps_rejection" | jsonfilter -e '@.message' | grep -Fq 'requires a validated Operator Mode request' || fail 'GPS/GNSS unprepared-start rejection message is missing'
 	gps_jobs_after="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
 	[ "$gps_jobs_before" = "$gps_jobs_after" ] || fail 'rejected GPS/GNSS start created a transient job'
 
@@ -603,20 +1094,24 @@ else
 	mkdir "$gps_worker_probe_dir"
 	chmod 700 "$gps_worker_probe_dir"
 	printf '%s\n' queued > "$gps_worker_probe_dir/status"
-	printf '%s\n' '{}' > "$gps_worker_probe_dir/metadata.json"
+	printf '%s\n' '{"action_id":"gps.snapshot","operator_mode":true,"options":{"device":"/dev/ttyUSB0","duration":1,"capture_kib":1,"position_summary":true,"decoded_artifact":true,"raw_artifact":false}}' > "$gps_worker_probe_dir/metadata.json"
+	printf '%s\n' /bin/dd if=/dev/ttyUSB0 bs=256 count=4 > "$gps_worker_probe_dir/argv"
+	printf '%s\n' /usr/bin/gpsdecode -d -v > "$gps_worker_probe_dir/decode-argv"
+	printf '%s\n' 11 > "$gps_worker_probe_dir/wall-timeout"
 	: > "$gps_worker_probe_dir/stdout"
 	: > "$gps_worker_probe_dir/stderr"
 	gps_worker_result=0
-	/usr/libexec/ddk-job-worker "$gps_worker_probe_id" gps_snapshot >/dev/null 2>&1 || gps_worker_result=$?
+	/usr/libexec/ddk-job-worker "$gps_worker_probe_id" operator_gps >/dev/null 2>&1 || gps_worker_result=$?
 	gps_worker_status="$(cat "$gps_worker_probe_dir/status" 2>/dev/null || true)"
 	gps_worker_error="$(cat "$gps_worker_probe_dir/stderr" 2>/dev/null || true)"
 	rm -f "$gps_worker_probe_dir/pid" "$gps_worker_probe_dir/status" "$gps_worker_probe_dir/metadata.json" \
 		"$gps_worker_probe_dir/stdout" "$gps_worker_probe_dir/stderr" "$gps_worker_probe_dir/gnss.raw" \
-		"$gps_worker_probe_dir/gnss.decoded" "$gps_worker_probe_dir/gnss.stderr"
+		"$gps_worker_probe_dir/gnss.decoded" "$gps_worker_probe_dir/gnss.stderr" "$gps_worker_probe_dir/argv" \
+		"$gps_worker_probe_dir/decode-argv" "$gps_worker_probe_dir/wall-timeout"
 	rmdir "$gps_worker_probe_dir"
 	[ "$gps_worker_result" -eq 65 ] || fail "independent GPS/GNSS worker gate returned $gps_worker_result instead of 65"
 	[ "$gps_worker_status" = 'failed' ] || fail "independent GPS/GNSS worker gate ended in state: $gps_worker_status"
-	printf '%s' "$gps_worker_error" | grep -Fq 'Exactly one reviewed USB GNSS receiver is required.' || fail 'independent GPS/GNSS worker rejection evidence is missing'
+	printf '%s' "$gps_worker_error" | grep -Fq 'Quectel EC25 modem ports are reserved' || fail 'independent GPS/GNSS EC25 rejection evidence is missing'
 	if pidof gpsd gpsdecode >/dev/null 2>&1; then fail 'GPS/GNSS hardware rejection started or left a process'; fi
 	if find /tmp/ddk/jobs -maxdepth 2 -type f \( -name 'gnss.raw' -o -name 'gnss.decoded' \) | grep -q .; then fail 'GPS/GNSS no-device verification left raw location data'; fi
 	pass 'GPS/GNSS backend/worker gates, privacy cleanup, and no-device refusal path'
@@ -755,7 +1250,7 @@ if netstat -lntup 2>/dev/null | grep -q 'ddk'; then fail 'a DDK listener exists'
 # BusyBox on this target has no standalone pgrep.
 # shellcheck disable=SC2009
 if ps w | grep '[d]dk-job-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
-if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver gpsd gpsdecode candump cansend cangen canplayer adb usbmuxd idevice_id ideviceinfo idevicepair irecovery idevicerestore openocd avrdude dfu-util dfu-programmer flashrom stm32flash bossac lpc21isp ftdi_eeprom >/dev/null 2>&1; then fail 'a bounded-operation or device-management client is unexpectedly active'; fi
+if pidof nmap tcpdump iperf3 uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver socat picocom gpsd gpsdecode candump cansend cangen canplayer adb usbmuxd idevice_id ideviceinfo idevicepair irecovery idevicerestore openocd avrdude dfu-util dfu-programmer flashrom stm32flash bossac lpc21isp ftdi_eeprom >/dev/null 2>&1; then fail 'a bounded-operation or device-management client is unexpectedly active'; fi
 pass 'no DDK listener or idle operation worker exists'
 
 available_kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"

@@ -10,8 +10,8 @@
   "risk_level": "ACTION",
   "enabled": true,
   "actions": [
-    {"id": "camera.still_snapshot", "class": "ACTION", "execution": "job", "enabled": true},
+    {"id": "camera.still_snapshot", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
     {"id": "camera.stream", "class": "DISRUPTIVE", "execution": "job", "enabled": false}
   ],
-  "help_text": "Still capture requires exactly one sysfs-attributed USB UVC camera and one primary capture node. Streaming, Motion, RTSP, audio, and uploads stay disabled."
+  "help_text": "Still capture exposes hardware-gated UVC node, image format, resolution, palette/input, frame timing, transform, and banner controls with authenticated artifacts. Streaming still needs an on-demand lifecycle, local bind policy, authentication, cancellation, and cleanup."
 }

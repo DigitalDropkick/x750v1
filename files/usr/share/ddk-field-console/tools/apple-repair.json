@@ -2,7 +2,7 @@
   "id": "apple-repair",
   "name": "Apple / iOS Repair",
   "category": "Device Repair",
-  "description": "Private, transient Apple mobile USB identity with recovery and restore utilities held disabled.",
+  "description": "Structured normal-mode diagnostics, device management, screenshot/syslog capture, recovery/DFU control, and IPSW restore using the exact installed Apple utilities.",
   "package_names": ["libimobiledevice-utils", "idevicerestore", "irecovery"],
   "expected_binaries": ["ideviceinfo", "idevicerestore", "irecovery"],
   "required_hardware": ["apple_mobile"],
@@ -12,8 +12,12 @@
   "no_device_state": "READY / NO DEVICE",
   "actions": [
     {"id": "apple.identify", "class": "INFO", "execution": "info", "enabled": true},
-    {"id": "apple.operator_guide", "class": "INFO", "execution": "info", "enabled": true},
-    {"id": "apple.restore", "class": "DISRUPTIVE", "enabled": false}
+    {"id": "apple.mobile_diagnostics", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "normal", "enabled": true},
+    {"id": "apple.mobile_capture", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "normal", "enabled": true},
+    {"id": "apple.mobile_manage", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "normal", "enabled": true},
+    {"id": "apple.recovery", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "recovery", "enabled": true},
+    {"id": "apple.restore", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "any", "enabled": true},
+    {"id": "apple.operator_guide", "class": "INFO", "execution": "info", "enabled": true}
   ],
-  "help_text": "Identification reads sanitized sysfs USB metadata only. It never invokes usbmuxd, idevice tools, recovery, or restore; all device-changing operations remain disabled."
+  "help_text": "Normal-mode actions require an exact live UDID and a DDK-owned temporary usbmuxd lifecycle. Recovery/DFU requires a sysfs-derived ECID. Device-changing and restore operations show target-bound confirmation; artifacts and firmware inputs stay inside DDK-controlled storage."
 }

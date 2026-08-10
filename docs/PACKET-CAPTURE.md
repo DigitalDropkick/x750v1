@@ -1,72 +1,77 @@
-# Bounded LAN Metadata Capture
+# Operator Packet Capture
 
-## Product boundary
+## Status and native target
 
-Version 1.5 enables one packet-observation profile: `capture.lan_metadata_snapshot`. It is an authenticated SECURITY job for short LAN discovery and reachability triage, not a general packet-capture frontend.
+Version 2.1 migrates `capture.lan_metadata_snapshot` from the v2 fixed metadata profile to the reusable Operator Mode transport. The exact target is `/usr/sbin/tcpdump` 4.9.3 with libpcap 1.10.1. This source has not been deployed; production remains on the accepted v2.0 fixed profile until separately approved.
 
-The browser sends only the exact action ID. It cannot provide an interface, filter, executable, flag, duration, packet count, snap length, output format, filename, or PID.
+The old action ID is retained for compatibility. The v2.1 browser obtains its schema from the backend, prepares a validated plan, reviews the server-built invocation, confirms sensitive modes, and starts the one-time prepared request.
 
-## Fixed profile
+## Controls
 
-After independently confirming that the native LAN is up and its L3 device is exactly `br-lan`, the worker invokes:
+The operator can select:
 
-```text
-/usr/sbin/tcpdump -i br-lan -p -n -q -e -l -tttt -s 96 -c 128 \
-  'arp or icmp or (ip and udp and (port 67 or port 68))'
-```
+- a live interface reported by the router, including `any` when present;
+- one bounded printable BPF capture filter;
+- duration and/or packet ceiling;
+- snap length;
+- decoded text, PCAP, or decoded text plus PCAP;
+- promiscuous behavior;
+- capture direction supported by the installed binary;
+- numeric/name resolution behavior;
+- timestamp, link-header, verbosity, payload-display, immediate-mode, and buffer controls.
 
-The worker adds an independent 20-second wall window. Reaching either 128 packets or 20 seconds completes the job normally.
+Interface values come from the backend's live-choice list. The filter is carried as one JSON value and becomes exactly one argv element; it is never parsed as a command or appended to shell syntax. Artifact names and paths are server-owned constants.
 
-| Control | Fixed behavior |
-| --- | --- |
-| Interface | Native LAN must resolve to exactly `br-lan` |
-| Promiscuous mode | Disabled with `-p` |
-| Name resolution | Disabled with `-n` |
-| Traffic | ARP, ICMP, and IPv4 DHCP only |
-| Snap length | 96 bytes |
-| Packet ceiling | 128 |
-| Wall window | 20 seconds |
-| Output | Decoded text, capped at 64 KiB |
-| Concurrency | One capture; two total DDK jobs |
-| Storage | Mode-restricted `/tmp/ddk/jobs/<job-id>/` |
-| Retention | Four-hour age cleanup and 20-job ceiling |
+## Validation and execution
 
-## Privacy
+The backend rejects unknown options, wrong types, unavailable interfaces, control characters, filters over 1024 bytes, unsupported enum values, and values outside the action-specific duration/count/snap/buffer ranges. It maps accepted values to a literal argv array beginning with `/usr/sbin/tcpdump`.
 
-The decoded result may include timestamps, MAC addresses, IP addresses, ARP relationships, ICMP types, and brief DHCP metadata. This is disclosed in the confirmation prompt. Output is visible only through the authenticated LuCI boundary and is transient across reboot.
+Before capture, the worker:
 
-The profile does not expose:
+1. verifies the exact action, Operator Mode metadata, executable, interface, and job-local output path;
+2. invokes the exact installed tcpdump in BPF-compile mode against the selected interface;
+3. records the selected physical interface flags when meaningful;
+4. starts the bounded native child and tracks it for cancellation.
 
-- TCP sessions or application traffic;
-- DNS queries or reverse lookups;
-- packet payload hex/ASCII dumps;
-- a downloadable PCAP;
-- WAN, cellular, Tailscale, monitor-mode, or all-interface capture;
-- packet injection or replay.
+On completion it compares interface flags, enforces output/file ceilings, verifies that a PCAP is a regular non-symlink file with recognized PCAP magic, and optionally performs a separately bounded decode of the completed PCAP. Failed, invalid, or oversized artifacts are removed or rejected.
 
-Do not treat this profile as consent to capture third-party or customer networks. Future profiles require their own privacy and authorization review.
+## Privacy and confirmation
 
-## Process and resource controls
+Packet capture may reveal local/customer addresses, device identities, queries, credentials, application data, or third-party traffic. The review shows the exact interface, filter, duration/count, snap length, and output mode. Plans using promiscuous mode, payload display, or PCAP generation require the exact target-bound confirmation phrase returned by the backend.
 
-The existing DDK worker owns the direct `tcpdump` child. An authenticated stop request supplies a generated DDK job ID, never a PID; the backend verifies worker ownership before signaling it. The worker then terminates only its tracked child.
+Ordinary bounded decoded capture without those sensitive modes does not add a second typed confirmation. The operator is still responsible for owned/authorized scope.
 
-The worker records `br-lan` flags before and after a completed capture and fails the job if they differ. Local validation rejects payload-dump, PCAP-writer, rotation, and all-interface flags from the reviewed worker command. Production verification proves fixed-filter compilation, singleton enforcement, cancellation, unchanged interface flags, output bounds, absence of PCAP artifacts, and absence of a remaining `tcpdump` process.
+## Resource and artifact boundary
 
-The feature adds no daemon, listener, timer, service, firewall rule, interface change, or persistent log. Idle CPU and memory overhead remain zero.
+- At most one packet-capture action and two total DDK jobs may run.
+- The worker applies an independent wall limit and direct-child cancellation.
+- PCAP output is capped at 8 MiB.
+- Browser-visible stdout/stderr retain the common 128 KiB/32 KiB limits.
+- Output remains in the generated mode-0700 `/tmp/ddk/jobs/<job-id>/` directory.
+- `capture.pcap` is the only PCAP basename and is mode 0600.
+- The backend advertises it only for a completed matching action after type/size checks.
+- Native `cgi-download` permits only `/tmp/ddk/jobs/job-[0-9]*-[0-9]*/capture.pcap` through the authenticated DDK ACL.
+- Four-hour age cleanup and the 20-job retention ceiling still apply.
 
-## Deliberately deferred
+There is no arbitrary output path, persistent ring buffer, network export, upload, packet replay, injection, monitor-mode transition, interface configuration, firewall change, or background capture service.
 
-- Operator-selectable interfaces or filters.
-- DNS, TCP, or application-aware profiles.
-- PCAP generation or download.
-- Longer capture windows or persistent ring buffers.
-- WAN, cellular, Tailscale, wireless-monitor, or `any` interface capture.
-- Packet replay or injection.
+## Legacy compatibility
 
-Each deferred capability requires a new exact allowlist, privacy decision, resource bounds, and test plan.
+The original v2 worker remains in source for rollback/regression compatibility. Its fixed command is non-promiscuous `br-lan` ARP/ICMP/IPv4-DHCP metadata, 20 seconds or 128 packets, decoded text only. The v2.1 UI no longer uses that fixed transport as the primary capture workflow.
 
-## Live acceptance
+## Acceptance plan
 
-Version 1.5 was deployed on 2026-08-09 with pre-change backup `/root/ddk-backups/20260809T224048Z-field-console-v1`. The production suite passed 27 checks with no warnings. It proved malformed and extra arguments were rejected, only one capture could run, authenticated cancellation stopped the owned child, a full fixed-window capture completed, interface flags stayed unchanged, output stayed bounded, no PCAP was written, and no `tcpdump` or DDK worker remained.
+Local validation checks the structured schema/builder/backend/worker mapping, exact executable, filter handling, artifact placeholder, ACL, GUI review/download path, and absence of command execution inside the builder.
 
-Authenticated desktop and mobile validation confirmed the capture control in both Jobs & Reports and Tool Registry with SECURITY styling, no external request, no runtime error, and no document overflow. All 39 project files matched the source tree byte for byte after deployment.
+After an explicitly approved deployment, target-safe verification will:
+
+- reject malformed/unknown structured fields;
+- compile and run a loopback-only capture;
+- generate and validate a bounded PCAP;
+- reject an invalid BPF expression before capture;
+- exercise cancellation and singleton behavior;
+- prove interface flags and protected configuration remain unchanged;
+- prove no tcpdump worker or unexpected listener remains;
+- exercise authenticated download and outside-path denial.
+
+No v2.1 production acceptance is claimed until those deployed target and authenticated-browser checks actually pass.

@@ -2,16 +2,16 @@
   "id": "serial",
   "name": "USB & Serial Attribution",
   "category": "Serial",
-  "description": "Read-only sysfs ownership mapping for serial nodes, plus disabled terminal and bridge placeholders.",
-  "package_names": ["picocom", "ser2net", "conserver", "gensio-bin"],
-  "expected_binaries": ["picocom", "ser2net", "conserver"],
-  "required_hardware": ["serial_detected"],
-  "status_probe": "serial_detected",
-  "risk_level": "INFO",
+  "description": "Sysfs ownership mapping plus bounded receive and confirmed transmit/receive sessions for reviewed general-purpose USB serial nodes.",
+  "package_names": ["picocom", "socat", "ser2net", "conserver", "gensio-bin"],
+  "expected_binaries": ["picocom", "socat", "ser2net", "conserver"],
+  "required_hardware": ["serial"],
+  "status_probe": "serial",
+  "risk_level": "ACTION",
   "enabled": true,
   "actions": [
     {"id": "serial.inspect", "class": "INFO", "enabled": true},
-    {"id": "serial.session", "class": "ACTION", "enabled": false}
+    {"id": "serial.session", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Inspection never opens a port. EC25-owned nodes are MODEM RESERVED; every other adapter remains UNREVIEWED until its hardware identity is explicitly approved."
+  "help_text": "Inspection remains read-only. Bounded socat sessions expose live non-reserved device selection, baud/data/parity/stop/flow settings, receive artifacts, and target-bound confirmation for transmit. EC25 modem nodes remain MODEM RESERVED. A continuous interactive terminal would require an authenticated PTY streaming transport and is not represented by one-shot jobs."
 }

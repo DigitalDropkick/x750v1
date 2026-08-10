@@ -22,7 +22,7 @@ allowed_target() {
 		/www/ddk/gl_home.html) return 0 ;;
 		# Retained only so backups from pre-template DDK builds remain removable.
 		/www/luci-static/resources/view/ddk/*) return 0 ;;
-		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker) return 0 ;;
+		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker) return 0 ;;
 		/usr/share/ddk-field-console/*) return 0 ;;
 		*) return 1 ;;
 	esac

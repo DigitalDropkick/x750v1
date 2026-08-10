@@ -15,8 +15,8 @@
 	<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 	<meta name="color-scheme" content="dark">
 	<title>Digital Dropkick Field Console</title>
-	<link rel="stylesheet" href="/luci-static/resources/ddk/console.css?v=1.9.0">
-	<script defer src="/luci-static/resources/ddk/console-app.js?v=1.9.0"></script>
+	<link rel="stylesheet" href="/luci-static/resources/ddk/console.css?v=2.1.0">
+	<script defer src="/luci-static/resources/ddk/console-app.js?v=2.1.0"></script>
 </head>
 <body class="ddk-page">
 	<div class="ddk-shell">
@@ -37,7 +37,7 @@
 				<a href="/">GL.iNet</a>
 			</div>
 		</nav>
-		<main id="ddk-app" class="ddk-console" data-page="<%=util.pcdata(page)%>" data-session="<%=util.pcdata(session)%>" data-cgi="/cgi-bin/cgi-exec" data-download="/cgi-bin/cgi-download" data-base="<%=util.pcdata(base)%>">
+		<main id="ddk-app" class="ddk-console" data-page="<%=util.pcdata(page)%>" data-session="<%=util.pcdata(session)%>" data-cgi="/cgi-bin/cgi-exec" data-download="/cgi-bin/cgi-download" data-upload="/cgi-bin/cgi-upload" data-base="<%=util.pcdata(base)%>">
 			<div class="ddk-loading">Initializing authenticated field console…</div>
 		</main>
 		<noscript><p class="ddk-noscript">JavaScript is required for the Field Console. No external scripts are used.</p></noscript>

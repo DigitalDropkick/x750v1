@@ -22,8 +22,8 @@ fail() {
 
 model="$(ubus call system board | jsonfilter -e '@.model')"
 [ "$model" = 'GL.iNet GL-X750' ] || fail "target identity changed: $model"
-[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '1.9.0' ] || fail 'Field Console version is not 1.9.0'
-pass 'GL-X750 identity and Field Console 1.9.0'
+[ "$(cat /usr/share/ddk-field-console/VERSION 2>/dev/null || true)" = '2.1.0' ] || fail 'Field Console version is not 2.1.0'
+pass 'GL-X750 identity and Field Console 2.1.0'
 
 mount | grep -q '^/dev/sda1 on /overlay type ext4 ' || fail 'extroot is not active on /dev/sda1'
 pass 'extroot mounted from /dev/sda1'
@@ -81,8 +81,9 @@ pass 'network, firewall, wireless, uhttpd, rpcd, rtl_tcp, and camera configurati
 if netstat -lntup 2>/dev/null | grep -q 'ddk'; then fail 'a DDK listener exists'; fi
 # BusyBox on this target has no standalone pgrep.
 # shellcheck disable=SC2009
-if ps w | grep '[d]dk-job-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
-if pidof nmap tcpdump uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver >/dev/null 2>&1; then fail 'a bounded-operation client is unexpectedly active'; fi
+if ps w | grep -E '[d]dk-(job|apple)-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
+if pidof nmap tcpdump iperf3 uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver socat picocom usbmuxd idevice_id ideviceinfo idevicepair irecovery idevicerestore >/dev/null 2>&1; then fail 'a bounded-operation client or temporary Apple helper is unexpectedly active'; fi
+if netstat -lntup 2>/dev/null | grep -Eq ':(5038|27015)[[:space:]]'; then fail 'an Operator Mode temporary listener remained after boot'; fi
 pass 'no DDK listener or idle operation worker exists'
 
 available_kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"

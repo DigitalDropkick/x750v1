@@ -12,5 +12,5 @@
   "actions": [
     {"id": "monitoring.snapshot", "class": "INFO", "enabled": false}
   ],
-  "help_text": "The console observes existing monitoring availability and does not enable or reconfigure collectors."
+  "help_text": "A useful snapshot is pending exact installed collector/client inspection, bounded query schemas, credential-safe output, and proof that no idle service is enabled implicitly."
 }

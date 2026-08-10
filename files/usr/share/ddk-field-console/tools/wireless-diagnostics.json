@@ -13,5 +13,5 @@
     {"id": "wireless.survey", "class": "INFO", "enabled": false},
     {"id": "wireless.monitor", "class": "SECURITY", "enabled": false}
   ],
-  "help_text": "Monitor-mode changes can disrupt connectivity and remain disabled."
+  "help_text": "Survey/monitor controls require exact radio/interface selection, management-link protection, installed-tool schemas, state-change confirmation, rollback, and target-safe wireless tests."
 }

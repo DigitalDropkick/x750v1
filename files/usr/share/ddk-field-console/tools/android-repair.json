@@ -2,7 +2,7 @@
   "id": "android-repair",
   "name": "Android / ADB",
   "category": "Device Repair",
-  "description": "Private, transient Android USB identity plus future explicit repair workflows.",
+  "description": "Private USB identity plus structured ADB 1.0.32 diagnostics, artifacts, backup, file, package, and device-management workflows.",
   "package_names": ["adb"],
   "expected_binaries": ["adb"],
   "required_hardware": ["android"],
@@ -13,7 +13,8 @@
   "actions": [
     {"id": "android.identify", "class": "INFO", "execution": "info", "enabled": true},
     {"id": "android.operator_guide", "class": "INFO", "execution": "info", "enabled": true},
-    {"id": "android.shell", "class": "DISRUPTIVE", "enabled": false}
+    {"id": "android.adb_diagnostics", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "android.adb_manage", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Identification reads sanitized sysfs USB metadata only. It never invokes ADB, starts the ADB server, opens the device, or retains customer identifiers."
+  "help_text": "Operator Mode uses exact ADB 1.0.32 syntax and a temporary localhost-only server on DDK-reserved port 5038, killed after every job. ADB shell remains unavailable because arbitrary remote shell text would violate the no-generic-web-shell boundary."
 }

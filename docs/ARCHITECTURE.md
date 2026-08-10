@@ -11,7 +11,7 @@ The target's installed LuCI 23.119 applications establish the native pattern:
 1. `/usr/share/luci/menu.d/ddk-field-console.json` creates `Digital Dropkick` below the authenticated `admin` tree.
 2. The menu renders `/usr/lib/lua/luci/view/ddk/shell.htm`, a standalone authenticated template that avoids this firmware's broken nginx `/ubus/` route.
 3. Shared dependency-free JavaScript and namespaced CSS live in `/www/luci-static/resources/ddk/`.
-4. `/usr/share/rpcd/acl.d/ddk-field-console.json` permits execution only of the fixed DDK helper and read access only to validated camera artifacts through the already-installed authenticated LuCI `cgi-io` paths.
+4. `/usr/share/rpcd/acl.d/ddk-field-console.json` permits execution only of the fixed DDK helper and read access only to exact DDK artifact-name patterns through the already-installed authenticated LuCI `cgi-io` paths.
 
 Static LuCI assets contain no secrets. All live information and executable behavior remain behind the existing LuCI session boundary. `/www/ddk/gl_home.html` is a content-free static redirect to the authenticated overview, providing the memorable `/ddk` path without a CGI handler, port, nginx rule, uhttpd rule, or firewall rule.
 
@@ -27,22 +27,24 @@ The public website supplied the visual vocabulary and source imagery, not runtim
 
 - accepts a small command vocabulary;
 - rejects unknown verbs, action IDs, job IDs, report IDs, and extra arguments;
+- accepts versioned structured values only for exact Operator Mode action IDs;
+- loads `operator-actions.lua`, which validates/normalizes values and constructs literal argv arrays without executing commands;
 - reads procfs/sysfs and fixed system commands;
 - loads and validates tool manifests;
 - loads the fixed `usb-identity.lua` classifier for bounded sysfs-only mobile/programmer attribution;
 - returns bounded JSON;
-- starts only allowlisted DDK workers;
+- starts only fixed action-to-worker-to-executable mappings;
 - never accepts an executable path or shell fragment from the browser.
 
-The helper uses fixed command strings from server-side tables. Browser values can select a table entry but can never become a command.
+Legacy INFO/fixed-profile helpers use source-owned command strings. Operator Mode browser values pass through type, character, range, target, and live-choice validation before an action-specific builder may place them into one literal argv element. No browser value is evaluated as Lua, interpreted as a path, or concatenated into shell syntax. See [OPERATOR-MODE.md](OPERATOR-MODE.md).
 
 ## UI pages
 
 - **Overview:** system, network, Tailscale, hardware, safe INFO actions, and capability summary.
-- **Tool Registry:** hardware-aware modules and disabled future actions.
+- **Tool Registry:** hardware-aware modules, Operator Mode controls, and not-yet-migrated actions.
 - **Package Inventory:** all installed packages with search, type filters, and bounded rendering controls.
-- **Jobs & Reports:** asynchronous proof, system report, bounded Nmap discovery, cellular/radio/camera snapshots, polling, DDK-owned stop, report view/download, and authenticated camera-artifact view/download.
-- **Settings:** read-only security posture and operating limits. It intentionally changes no configuration.
+- **Jobs & Reports:** asynchronous proof, system reports, structured native workflows including Android ADB, existing hardware snapshots, polling, DDK-owned stop, report view/download, and authenticated artifact download.
+- **Settings:** security posture, operating limits, and authenticated DDK-controlled input staging. It intentionally changes no appliance configuration.
 
 ## Tool registry
 
@@ -56,7 +58,7 @@ Hardware and software are reported separately:
 - `state`: derived as `UNAVAILABLE`, `HARDWARE REQUIRED`, `READY / NO DEVICE`, `NOT CONFIGURED`, or `READY`.
 - `console_enabled`: whether the module has intentionally wired console behavior.
 
-Disabled actions remain visible as roadmap placeholders. The manifest cannot create an executable action by itself; the backend allowlist must also implement the ID.
+Not-yet-migrated actions remain visible as roadmap entries. The manifest cannot create an executable action by itself; Operator Mode also requires a schema/builder, exact backend mapping, worker, review-list entry, GUI, and tests. Risk class does not make an otherwise reviewed action non-runnable.
 
 ## INFO action flow
 
@@ -68,11 +70,11 @@ Disabled actions remain visible as roadmap placeholders. The manifest cannot cre
 
 Base INFO IDs are system refresh, interfaces, routes, USB, serial attribution, Tailscale, storage/mounts, memory/swap, and installed-package count. Version 2 adds three private identity renderers and three static full-CLI handoff renderers. They run synchronously because they only traverse bounded sysfs metadata or server-side constant text; they create no job and invoke no device-management utility. Both serial aliases use one sysfs-only renderer; neither opens a serial device.
 
-## Mobile/programmer identity and SSH handoff
+## Mobile/programmer identity and fallback
 
 `usb-identity.lua` inspects at most 64 USB devices and 16 interfaces per device. Android requires a reviewed vendor plus protocol/descriptor evidence; Apple requires `05ac` plus a mobile-mode descriptor; programmer identities use a conservative reviewed table. The status API receives counts/reasons only. Full records, including sanitized serial identifiers, are generated only after browser confirmation and exist only in the immediate authenticated response.
 
-The companion `*.operator_guide` actions return static command references plus live `binary_exists()` readiness. Displayed commands are text, never a backend command string. Full native tools remain available through operator-controlled SSH; no browser action can submit their targets, paths, flags, images, device serials, or commands. See [DEVICE-IDENTITY.md](DEVICE-IDENTITY.md) and [SSH-TOOL-HANDOFFS.md](SSH-TOOL-HANDOFFS.md).
+The companion `*.operator_guide` actions return static command references plus live `binary_exists()` readiness. Displayed commands are text, never a backend command string. They remain a v2 compatibility/fallback path. Android and Apple now have separate structured actions with on-demand helper lifecycle, correlated target selection, sealed inputs, artifacts/workspaces, and confirmation; programmer operations still await migration and hardware acceptance. See [ANDROID-ADB.md](ANDROID-ADB.md), [APPLE-OPERATOR.md](APPLE-OPERATOR.md), [DEVICE-IDENTITY.md](DEVICE-IDENTITY.md), [SSH-TOOL-HANDOFFS.md](SSH-TOOL-HANDOFFS.md), and [OPERATOR-MODE.md](OPERATOR-MODE.md).
 
 ## Serial ownership model
 
@@ -82,26 +84,35 @@ The backend walks `/sys/class/tty` for `ttyUSB*` and `ttyACM*`, resolves each US
 
 Long work never occupies a LuCI request:
 
-1. The helper validates a job action and enforces a maximum of two active jobs.
-2. It creates `/tmp/ddk/jobs/<generated-job-id>/` with restrictive permissions.
-3. A fixed `/usr/libexec/ddk-job-worker` task is detached with stdin, stdout, and stderr disconnected from the LuCI request.
-4. The worker atomically updates `status`, `pid`, `metadata.json`, `stdout`, and `stderr`.
-5. The browser polls the helper for that generated job ID.
+1. For an Operator Mode action, the client first obtains its server-owned schema and submits a versioned options envelope for validation.
+2. The backend creates a mode-0700, five-minute, one-time prepared plan containing normalized options, a literal argv array, declared artifacts, locks, wall limit, target summary, and confirmation policy.
+3. The client reviews the server-built plan and starts it by prepared ID. Consequential plans require the exact target-bound confirmation phrase.
+4. The helper atomically claims the plan, rechecks its exact action/worker/executable mapping, enforces a maximum of two active jobs, and atomically acquires global/action/resource locks.
+5. It creates `/tmp/ddk/jobs/<generated-job-id>/` with restrictive permissions, optionally creates the matching DDK extroot artifact directory and exact declared workspaces, resolves only registered fixed artifact/upload/workspace placeholders, and writes one literal argument per line.
+6. One exact allowlisted worker (`/usr/libexec/ddk-job-worker` or `/usr/libexec/ddk-apple-worker`) is detached with stdin, stdout, and stderr disconnected from the LuCI request.
+7. The worker independently rechecks its action, metadata, executable and material live target state, then atomically updates status while tracking the native child for cancellation.
+8. The browser polls the helper for that generated job ID.
 
 Limits:
 
 - two concurrently active DDK jobs;
+- one-time prepared plans with a five-minute lifetime;
+- atomic global, per-action, and shared-resource locks with stale-owner recovery;
 - 128 KiB stdout and 32 KiB stderr per job;
 - 20 retained job directories;
 - jobs older than four hours and reports older than 24 hours are eligible for cleanup;
 - transient output only under `/tmp/ddk/`;
 - only `TERM` may be sent, and only after PID, job directory, and worker command line all match.
 
-The system includes an asynchronous read-only demo, a sanitized system-report task, bounded Nmap discovery, a non-promiscuous LAN metadata snapshot, hardware-gated RTL-433, UVC-camera, GPS/GNSS, and passive CAN snapshots, and a cellular snapshot. The Nmap task accepts no browser target or flags, permits one active scan, and tracks its child process for safe cancellation. The packet task accepts no browser arguments, requires server-derived `br-lan`, uses one fixed BPF profile, permits one active capture, compares interface flags before/after, emits only decoded text, and tracks its child for cancellation. The RTL-433 task requires exactly one reviewed VID:PID and safe sysfs serial, selects that serial directly, refuses a claimed driver or existing receiver, holds the shared `rtl_sdr` resource, and uses fixed receive/time/file/output controls. The camera task requires exactly one sysfs-attributed USB UVC camera and primary node, refuses an open device or enabled/running camera service, confirms V4L2 capture capability, holds the shared `camera` resource, and creates one bounded validated JPEG. The GPS task requires exactly one external USB GNSS identity and one exclusive reviewed serial node, excludes the EC25-AF, reads only a fixed byte/window ceiling, checksum-filters NMEA, and deletes raw input while holding the shared `gps` resource. The CAN task requires exactly one already-up physical `canN` and `candump`, uses one fixed receive-only profile, compares flags before/after, and holds the shared `can` resource; it has no configuration or transmit path. The cellular task is fixed to the verified EC25-AF management node and four read-only UQMI actions; it parses only approved identity, registration, and signal fields into output.
+The system includes an asynchronous read-only demo, a sanitized system-report task, and structured Nmap 7.91, tcpdump 4.9.3, iperf3 3.11, RTL-433 20.11, fswebcam 20140113, socat 1.7.4.1/stty 9.0, and gpsdecode 3.23.1 actions, plus the preserved passive CAN and cellular snapshots. Nmap supports validated targets and practical installed scan/output options without a `/24` clamp. tcpdump supports live interface selection, a validated one-element BPF filter, decoded/PCAP output, interface-state comparison, and PCAP validation. iperf3 supports client and temporary server workflows and revalidates server bind addresses immediately before launch. Hardware-bound structured actions use live server choices and independent worker revalidation. Each has its own wall/output/artifact controls and direct-child cancellation. Older fixed workers remain only for compatibility and regression coverage.
 
-## Camera artifact handling
+CAN and cellular retain their v2 fixed-profile implementations until migrated. Their current bounds and missing-hardware/runtime gates remain enforced; action classification does not prevent future structured expansion.
 
-A completed camera job may contain one mode-0600 `snapshot.jpg` below its mode-0700 job directory. The backend advertises the artifact only when the action ID, completed state, regular-file type, JPEG magic, and 256 KiB limit all match. The browser validates the generated job ID, derives the fixed path, and requests it from the existing authenticated `/cgi-bin/cgi-download` endpoint. The rpcd ACL matches only `/tmp/ddk/jobs/job-[0-9]*-[0-9]*/snapshot.jpg`; no generic `/tmp` or arbitrary file read is granted. The file never enters `/www`, JSON, a report, or a network listener. See [CAMERA-SNAPSHOT.md](CAMERA-SNAPSHOT.md).
+## Artifact handling
+
+A completed job may advertise only action-declared, mode-restricted regular files with fixed names in its `/tmp` job directory or matching DDK extroot artifact directory. Extroot storage is mandatory when a declared ceiling exceeds 16 MiB, and start requires the full ceiling plus a 100 MiB free-space reserve. The backend requires completed state and validates each filename, storage class, kind, size, and per-action ceiling; workers additionally validate formats such as image/PCAP/ADB-backup magic or JSON. The browser validates the generated job ID and safe metadata-provided name, derives the exact storage-class path, then requests it from the existing authenticated `/cgi-bin/cgi-download` endpoint. rpcd ACLs match only reviewed job/name patterns; no generic `/tmp`, `/overlay`, or arbitrary file read is granted. Files never enter `/www`, reports, or a new listener. Cleanup removes matching extroot artifacts with job expiry, including orphans after reboot.
+
+Authenticated input uses generated reservations below mode-0700 `/overlay/ddk-field-console/uploads/`. Native `cgi-upload` may write only an exact generated `payload.bin`; finalization atomically seals it under a non-uploadable name, closes the write path, verifies declared size and applicable archive magic, calculates SHA-256, and applies one-hour reservation/24-hour sealed retention with a 10-file ceiling. Consumers select upload IDs and must revalidate the sealed metadata. No browser-provided router path is accepted.
 
 ## Report handling
 
@@ -128,8 +139,9 @@ Persistent swap activation is deliberately separate from application deployment.
 
 - No package installation or upgrade.
 - No service activation.
-- No ttyd integration or browser shell; full device-tool operation is handed off to the existing SSH service.
+- No ttyd integration, browser shell, arbitrary-command transport, executable selector, or arbitrary native flag list.
 - No network, firewall, wireless, cellular, Tailscale, or extroot mutation.
 - No swapfile creation, initialization, resize, direct activation, or deactivation. The separately approved fstab entry is the only persistent swap configuration change.
 - No generic command runner or PID kill endpoint.
+- No arbitrary router filesystem read/write or upload destination; authenticated inputs are confined to generated DDK reservations.
 - No Node, npm, Python server, frontend framework, telemetry, or external asset.

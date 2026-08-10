@@ -10,8 +10,8 @@
   "risk_level": "ACTION",
   "enabled": true,
   "actions": [
-    {"id": "radio.rtl433_snapshot", "class": "ACTION", "execution": "job", "enabled": true},
+    {"id": "radio.rtl433_snapshot", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
     {"id": "radio.ais", "class": "ACTION", "enabled": false}
   ],
-  "help_text": "The enabled profile requires exactly one reviewed 0bda:2832/2838 dongle with a safe USB serial and no claimed kernel driver. It receives for 20 seconds at fixed 433.92 MHz, emits bounded JSON text, and never starts rtl_tcp or saves raw I/Q."
+  "help_text": "RTL-433 exposes hardware-gated device, frequency, rate, gain, decoder, duration, analyzer, metadata, decoded-output, and bounded raw-IQ controls. AIS still needs exact native parameter mapping, artifacts, and attached-tuner tests."
 }

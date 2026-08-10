@@ -12,5 +12,5 @@
   "actions": [
     {"id": "bluetooth.scan", "class": "SECURITY", "enabled": false}
   ],
-  "help_text": "Software is distinct from an attached and enabled HCI controller."
+  "help_text": "Structured discovery is pending exact installed-tool help inspection and an attached, server-selected HCI controller; package presence alone is not runnable hardware."
 }

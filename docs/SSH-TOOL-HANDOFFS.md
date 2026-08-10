@@ -1,6 +1,8 @@
 # Full Native Tool Use over SSH
 
-The Field Console is a safe authenticated preflight and handoff layer; it is not a replacement shell. The Android, Apple, and firmware modules deliberately separate:
+> v2 compatibility/fallback reference: this document describes the production-accepted 2.0 SSH workflows. It no longer defines the desired GUI boundary. Under [Operator Mode](OPERATOR-MODE.md), practical native functionality should move into exact structured actions when its targets, parameters, lifecycle, artifacts, and recovery behavior can be represented safely. The GUI will still never become a generic shell.
+
+The currently deployed v2 Field Console is a safe authenticated preflight and handoff layer. The local v2.1 feature branch adds structured Android ADB and Apple normal/recovery/DFU/restore workflows; firmware and native subflows that require a future PTY/archive/secret protocol still use this fallback reference.
 
 - browser-safe identification and readiness;
 - full operator-controlled CLI use through SSH.
@@ -50,14 +52,15 @@ adb pull REMOTE_PATH LOCAL_PATH
 adb push LOCAL_PATH REMOTE_PATH
 adb install LOCAL_APK
 adb reboot bootloader
-adb sideload UPDATE_ZIP
 adb help
 adb kill-server
 ```
 
+The inspected 1.0.32 help does not advertise `sideload`, so the v2.1 GUI does not assume that newer syntax.
+
 The first transport command may start ADB’s local server on port 5037. Do not use `adb -a`: the installed version documents that option as listening on all interfaces, which conflicts with the appliance’s no-WAN-exposure policy. Run `adb kill-server` when the session is finished and confirm no listener remains.
 
-Shell, push, install, reboot, sideload, backup, restore, port-forwarding, and TCP-device connections can alter or expose customer data. Confirm the exact device selection, screen authorization/trust state, backup plan, and written scope before use.
+Shell, push, install, reboot, backup, restore, port-forwarding, and TCP-device connections can alter or expose customer data. Confirm the exact device selection, screen authorization/trust state, backup plan, and written scope before use. Prefer the structured v2.1 actions for the represented operations; see [ANDROID-ADB.md](ANDROID-ADB.md).
 
 Fastboot is not currently installed. DDK does not install or substitute it.
 
@@ -144,12 +147,11 @@ Do not copy a generic write example directly into a customer job. Tool syntax al
 
 ## Relationship to the browser
 
-The browser can request only six exact v2 INFO IDs: three identity snapshots and three static/full-CLI handoffs. It cannot submit a command, option, path, target, device serial, port, PID, image, or script.
+Production v2 can request only six exact mobile/programmer INFO IDs: three identity snapshots and three static/full-CLI handoffs. The local v2.1 source preserves those INFO actions and adds exact structured controls; it still cannot submit a command string, executable path, router path, PID, or script.
 
-The disabled GUI placeholders remain useful security boundaries:
+The remaining disabled v2 GUI placeholders record unimplemented work:
 
-- `android.shell`
 - `apple.restore`
 - `firmware.write`
 
-They do not restrict SSH. They prove that no browser session—legitimate or compromised—can silently cross into customer-device shell, restore, erase, debug, or flash behavior.
+`android.shell` was removed rather than exposed as arbitrary command text; represented Android work now uses `android.adb_diagnostics` and `android.adb_manage`. Apple’s former disabled restore placeholder is now backed by five real structured actions; its fallback remains relevant only for the explicitly unrepresented PTY/archive/secret workflows in [APPLE-OPERATOR.md](APPLE-OPERATOR.md). Firmware placeholders do not restrict SSH and must not be enabled cosmetically: each needs structured target controls, an exact validator/argv builder, a fixed worker, on-demand helper cleanup, authenticated file input where relevant, consequential confirmation, artifacts, cancellation, and tests. Until that implementation exists, SSH remains the firmware fallback.

@@ -13,5 +13,5 @@
     {"id": "auth.inventory", "class": "INFO", "enabled": false},
     {"id": "auth.program", "class": "SECURITY", "enabled": false}
   ],
-  "help_text": "No token programming, PIN, credential, or key material is accepted by phase one."
+  "help_text": "Inventory/programming is pending exact reader/token selection, installed-tool schemas, protected PIN/key input handling, target confirmation, redacted output, and approved-token tests."
 }

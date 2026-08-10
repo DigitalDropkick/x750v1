@@ -2,7 +2,7 @@
   "id": "network-discovery",
   "name": "Network Discovery",
   "category": "Network Diagnostics",
-  "description": "Bounded host discovery plus installed route, reachability, DNS, LLDP, and SNMP tooling.",
+  "description": "Native Nmap 7.91 discovery and operator-controlled TCP/UDP scanning with validated targets, timing, detection, and artifacts.",
   "package_names": ["nmap-full", "netdiscover", "arp-scan", "fping", "mtr-nojson", "httping", "bind-dig", "lldpd", "snmp-utils"],
   "expected_binaries": ["nmap", "arp-scan", "fping", "dig"],
   "required_hardware": [],
@@ -10,7 +10,7 @@
   "risk_level": "SECURITY",
   "enabled": true,
   "actions": [
-    {"id": "network.nmap_lan_discovery", "class": "SECURITY", "enabled": true}
+    {"id": "network.nmap_lan_discovery", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "The enabled profile performs host discovery only on the server-derived private br-lan subnet; all other discovery actions remain disabled."
+  "help_text": "Operator Mode validates structured IPv4, IPv6, CIDR, hostname, port, scan, timing, detection, interface, NSE-category, and artifact choices before the backend constructs the exact Nmap argv."
 }

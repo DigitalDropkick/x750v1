@@ -13,5 +13,5 @@
     {"id": "automation.mqtt_publish", "class": "ACTION", "enabled": false},
     {"id": "automation.relay", "class": "DISRUPTIVE", "enabled": false}
   ],
-  "help_text": "Broker destinations, topics, payloads, credentials, and relay targets require separate allowlists."
+  "help_text": "Operator Mode still needs typed broker/topic/payload and relay-target schemas, credential isolation, exact destination allowlists, confirmation policy, and side-effect tests."
 }

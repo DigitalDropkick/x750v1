@@ -1,6 +1,8 @@
 # Release Modules and Future Hardware Acceptance
 
-Version 2.0 completes the planned base console, bounded field operations, private mobile/programmer identity, and full native-CLI operator handoff. Remaining work is hardware-specific acceptance or a separately scoped purpose-built workflow, not an unfinished base phase.
+> Historical v2 roadmap: the fixed-profile and SSH-handoff limitations below record what was production-accepted in versions 1.x–2.0. Repository-root `AGENTS.md` and [Operator Mode](OPERATOR-MODE.md) supersede those limitations as product policy. Version 2.1 must migrate practical native functionality through structured schemas, exact backend argv builders, target validation, resource controls, artifacts, and appropriate confirmation. Classification as `ACTION`, `SECURITY`, or `DISRUPTIVE` is not a blocker.
+
+Version 2.0 completed the earlier base-console plan and remains the production-accepted baseline. Version 2.1 is an active local feature branch: the shared architecture plus Nmap, tcpdump, and iperf3 are implemented, while hardware/tool-family migrations and deployed acceptance remain outstanding.
 
 ## Release phases
 
@@ -86,6 +88,8 @@ The no-device/missing-runtime acceptance gate passed as part of the v1.9 Burn On
 
 `android.identify` and `apple.identify` read bounded sanitized sysfs only. Customer USB serial identifiers exist only in the confirmed authenticated response; status, jobs, reports, logs, and persistent storage receive none. Positive synthetic ADB and Apple recovery fixtures plus negative Apple Bluetooth/generic FTDI fixtures prove the conservative classifier. `android.operator_guide` and `apple.operator_guide` preserve complete native CLI access through SSH without making the browser a shell.
 
+Android is subsequently migrated in the local 2.1 source: `android.adb_diagnostics` and `android.adb_manage` use exact ADB 1.0.32 structured controls, live USB transport correlation, an isolated temporary port-5038 server, sealed inputs, bounded artifacts, cancellation, and exact target/material confirmation. Apple is also migrated through five normal/recovery/DFU/restore actions with on-demand usbmuxd, ECID/UDID correlation, sealed inputs, isolated restore cache, and confirmation. See [ANDROID-ADB.md](ANDROID-ADB.md) and [APPLE-OPERATOR.md](APPLE-OPERATOR.md).
+
 ## 5. Firmware-programmer identification (implemented in 2.0.0)
 
 `firmware.identify` identifies reviewed programmers without opening them or invoking a tool. `firmware.operator_guide` reports executable readiness and hands full use to SSH with voltage, targeting, backup, hashing, verification, and recovery guidance. Browser-based read/write/erase/debug remains disabled. Any future one-click operation still requires its own manifest, exact target selection, power model, image validation, rollback, and hardware acceptance.
@@ -94,8 +98,8 @@ The combined v2 acceptance gate passed on 2026-08-09: 37 production checks compl
 
 ## Recommended next work
 
-1. Attach an approved Android device and verify normal/ADB/fastboot descriptor behavior without customer data retention.
-2. Attach approved Apple normal/recovery/DFU examples and verify classification.
-3. Attach one known programmer family at a time and extend the conservative table only when evidence requires it.
-4. Repair the missing `candump` and `flashrom` executable payloads only under a separate package-change approval.
-5. Promote recurring SSH procedures into GUI actions only after their exact device, inputs, failure modes, and recovery path are fixed.
+1. Complete Phase 1 review of the shared input/artifact boundary and Android ADB migration.
+2. Audit and migrate the exact installed Apple/libimobiledevice and recovery tools using on-demand helper lifecycle and sealed restore inputs.
+3. Migrate firmware/programming, industrial/Modbus, storage/recovery, Bluetooth/smartcard, and automation families incrementally.
+4. Attach one approved hardware family at a time and verify device selection, native execution, cancellation, artifacts, cleanup, and consequential confirmation.
+5. Keep `candump`, fastboot, and flashrom unavailable until their genuine payload/runtime requirements are present under separate package/hardware authorization; do not install substitutes implicitly.

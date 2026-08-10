@@ -2,7 +2,7 @@
   "id": "packet-capture",
   "name": "Capture & Traffic",
   "category": "Packet Capture",
-  "description": "Bounded LAN metadata snapshots plus installed capture, replay, flow-export, and traffic-analysis utilities.",
+  "description": "Native tcpdump 4.9.3 capture with validated live interfaces, BPF filters, decode controls, and authenticated PCAP artifacts.",
   "package_names": ["tcpdump", "tcpreplay", "netsniff-ng", "dnstop", "nfdump", "softflowd", "hping3"],
   "expected_binaries": ["tcpdump", "tcpreplay", "netsniff-ng", "dnstop"],
   "required_hardware": [],
@@ -10,8 +10,8 @@
   "risk_level": "SECURITY",
   "enabled": true,
   "actions": [
-    {"id": "capture.lan_metadata_snapshot", "class": "SECURITY", "execution": "job", "enabled": true},
+    {"id": "capture.lan_metadata_snapshot", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
     {"id": "capture.replay", "class": "DISRUPTIVE", "enabled": false}
   ],
-  "help_text": "The enabled profile observes only ARP, ICMP, and DHCP metadata on server-derived br-lan for 20 seconds in non-promiscuous mode. It creates decoded transient text, never a PCAP file. Replay and general capture remain disabled."
+  "help_text": "Operator Mode passes a bounded filter as one argv element, requires native tcpdump BPF compilation before capture, supports decoded text and PCAP output, and preserves the legacy metadata profile for compatibility. Packet replay remains a separate unimplemented action."
 }

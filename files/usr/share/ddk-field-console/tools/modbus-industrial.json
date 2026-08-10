@@ -13,5 +13,5 @@
     {"id": "industrial.modbus_read", "class": "ACTION", "enabled": false},
     {"id": "industrial.modbus_write", "class": "DISRUPTIVE", "enabled": false}
   ],
-  "help_text": "Bus, unit, register, function, and serial parameters require strict typed validation. Writes remain disabled."
+  "help_text": "Read/write controls are pending exact installed-client syntax, typed transport/unit/function/register/datatype/value schemas, target validation, write confirmation, and approved-device tests."
 }

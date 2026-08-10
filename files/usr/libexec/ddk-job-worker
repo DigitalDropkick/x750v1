@@ -16,11 +16,13 @@ job_pid="${job_numbers#*-}"
 case "$job_epoch" in ''|*[!0-9]*) exit 64 ;; esac
 case "$job_pid" in ''|*[!0-9]*) exit 64 ;; esac
 case "$task" in
-	demo|system_report|nmap_lan_discovery|cellular_snapshot|tcpdump_lan_metadata|rtl433_snapshot|camera_snapshot|gps_snapshot|can_capture) ;;
+	demo|system_report|nmap_lan_discovery|operator_nmap|cellular_snapshot|tcpdump_lan_metadata|operator_tcpdump|operator_iperf3|operator_rtl433|operator_camera|operator_serial|operator_gps|operator_adb|rtl433_snapshot|camera_snapshot|gps_snapshot|can_capture) ;;
 	*) exit 64 ;;
 esac
 
 job_dir="$job_root/$job_id"
+artifact_root="/overlay/ddk-field-console/artifacts/$job_id"
+lock_root="/tmp/ddk/locks"
 [ -d "$job_dir" ] || exit 66
 [ -f "$job_dir/metadata.json" ] || exit 66
 
@@ -31,6 +33,45 @@ status_set() {
 }
 
 child_pid=""
+restore_tty_device=""
+restore_tty_state=""
+adb_server_owned=0
+
+cleanup_adb_server() {
+	[ "$adb_server_owned" -eq 1 ] || return 0
+	/usr/bin/timeout 10 /usr/bin/adb -P 5038 kill-server >/dev/null 2>&1 || true
+	adb_server_owned=0
+}
+
+cleanup_adb_artifacts() {
+	case "$artifact_root" in /overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*) ;; *) return 0 ;; esac
+	rm -f "$artifact_root/android-logcat.txt" "$artifact_root/android-bugreport.txt" "$artifact_root/android-backup.ab"
+	[ ! -e "$artifact_root/android-pull.bin" ] || rm -rf -- "$artifact_root/android-pull.bin"
+	rmdir "$artifact_root" 2>/dev/null || true
+}
+
+restore_tty() {
+	case "$restore_tty_device" in /dev/ttyUSB*) restore_number="${restore_tty_device#/dev/ttyUSB}" ;; /dev/ttyACM*) restore_number="${restore_tty_device#/dev/ttyACM}" ;; *) return 0 ;; esac
+	case "$restore_number" in ''|*[!0-9]*) return 0 ;; esac
+	[ -n "$restore_tty_state" ] || return 0
+	/bin/stty -F "$restore_tty_device" "$restore_tty_state" >/dev/null 2>&1 || true
+	restore_tty_device=""
+	restore_tty_state=""
+}
+
+release_locks() {
+	cleanup_adb_server
+	restore_tty
+	rm -f "$job_dir/adb-devices.txt" "$job_dir/adb-devices.stderr" "$job_dir/adb-upload.sha256"
+	[ -f "$job_dir/lock-keys" ] || return 0
+	while IFS= read -r lock_key; do
+		case "$lock_key" in ''|*[!a-z0-9_.-]*) continue ;; esac
+		lock_path="$lock_root/$lock_key"
+		[ "$(cat "$lock_path/owner" 2>/dev/null || true)" = "$job_id" ] || continue
+		rm -f "$lock_path/owner"
+		rmdir "$lock_path" 2>/dev/null || true
+	done < "$job_dir/lock-keys"
+}
 
 stop_job() {
 	# Invoked asynchronously by the signal trap.
@@ -49,12 +90,19 @@ stop_job() {
 		esac
 		fi
 		# shellcheck disable=SC2317
-		rm -f "$job_dir"/cellular-*.json "$job_dir"/cellular-*.json.err \
+			rm -f "$job_dir"/cellular-*.json "$job_dir"/cellular-*.json.err \
 			"$job_dir"/tcpdump.stderr "$job_dir"/rtl433.output "$job_dir"/rtl433.stderr \
 			"$job_dir"/camera.info "$job_dir"/camera.stderr \
 			"$job_dir"/gnss.raw "$job_dir"/gnss.decoded "$job_dir"/gnss.stderr \
 			"$job_dir"/can.frames "$job_dir"/can.stderr \
-			"$job_dir"/snapshot.jpg "$job_dir"/snapshot.jpg.next
+			"$job_dir"/snapshot.jpg "$job_dir"/snapshot.jpg.next \
+			"$job_dir"/snapshot.png "$job_dir"/rtl433.jsonl "$job_dir"/rtl433.csv \
+			"$job_dir"/rtl433.txt "$job_dir"/rtl433.cu8 \
+			"$job_dir"/serial.bin "$job_dir"/serial-input.bin "$job_dir"/stdin-hex \
+			"$job_dir"/adb.output "$job_dir"/adb.stderr "$job_dir"/adb-devices.txt "$job_dir"/adb-devices.stderr "$job_dir"/adb-upload.sha256 \
+			"$job_dir"/nmap.nmap "$job_dir"/nmap.xml "$job_dir"/nmap.gnmap \
+			"$job_dir"/capture.pcap "$job_dir"/iperf3.json
+		cleanup_adb_artifacts
 		# shellcheck disable=SC2317
 		status_set stopped
 	# shellcheck disable=SC2317
@@ -65,6 +113,7 @@ stop_job() {
 
 task_fail() {
 	printf '%s\n' "$1" >> "$job_dir/stderr"
+	[ "$task" != 'operator_adb' ] || cleanup_adb_artifacts
 	status_set failed
 	exit 65
 }
@@ -155,6 +204,7 @@ run_uqmi_query() {
 	return "$query_result"
 }
 
+trap release_locks EXIT
 trap stop_job HUP INT TERM
 printf '%s\n' "$$" > "$job_dir/pid"
 : > "$job_dir/stdout"
@@ -237,6 +287,100 @@ elif [ "$task" = "system_report" ]; then
 	rm -f "$report_tmp"
 	chmod 600 "$report_path"
 	printf 'Report ready: %s\n' "$report_id" > "$job_dir/stdout"
+elif [ "$task" = "operator_nmap" ]; then
+	[ -x /usr/bin/nmap ] || task_fail 'Nmap is not installed at the exact reviewed path.'
+	LC_ALL=C /usr/bin/nmap --version 2>&1 | grep -Fq 'Nmap version 7.91 ' || task_fail 'Nmap version drifted from the reviewed 7.91 argv contract.'
+	[ -x /usr/bin/jsonfilter ] || task_fail 'The native jsonfilter helper is unavailable.'
+	[ -f "$job_dir/argv" ] && [ ! -L "$job_dir/argv" ] || task_fail 'The prepared argv file is missing or unsafe.'
+	[ -f "$job_dir/wall-timeout" ] && [ ! -L "$job_dir/wall-timeout" ] || task_fail 'The prepared wall-timeout file is missing or unsafe.'
+	action_id="$(jsonfilter -i "$job_dir/metadata.json" -e '@.action_id' 2>/dev/null || true)"
+	operator_mode="$(jsonfilter -i "$job_dir/metadata.json" -e '@.operator_mode' 2>/dev/null || true)"
+	[ "$action_id" = 'network.nmap_lan_discovery' ] && [ "$operator_mode" = 'true' ] || task_fail 'Prepared metadata does not authorize the Nmap operator worker.'
+
+	set --
+	argument_count=0
+	while IFS= read -r argv_item; do
+		[ -n "$argv_item" ] || task_fail 'Prepared argv contains an empty element.'
+		argument_count=$((argument_count + 1))
+		[ "$argument_count" -le 256 ] || task_fail 'Prepared argv exceeds 256 elements.'
+		set -- "$@" "$argv_item"
+	done < "$job_dir/argv"
+	[ "$#" -ge 3 ] || task_fail 'Prepared Nmap argv is incomplete.'
+	[ "$1" = '/usr/bin/nmap' ] || task_fail 'Prepared executable does not match the exact Nmap allowlist.'
+
+	wall_timeout="$(cat "$job_dir/wall-timeout")"
+	case "$wall_timeout" in ''|*[!0-9]*) task_fail 'Prepared wall timeout is invalid.' ;; esac
+	[ "$wall_timeout" -ge 10 ] && [ "$wall_timeout" -le 1800 ] || task_fail 'Prepared wall timeout is outside the appliance range.'
+	target_summary="$(jsonfilter -i "$job_dir/metadata.json" -e '@.target_summary' 2>/dev/null || true)"
+	argv_preview="$(jsonfilter -i "$job_dir/metadata.json" -e '@.argv_preview' 2>/dev/null || true)"
+	{
+		printf '%s\n' 'DIGITAL DROPKICK - NMAP OPERATOR SCAN'
+		printf 'Native binary: /usr/bin/nmap 7.91\n'
+		printf 'Validated targets: %s\n' "$target_summary"
+		printf 'Validated invocation: %s\n' "$argv_preview"
+		printf 'Independent wall timeout: %s seconds\n' "$wall_timeout"
+		printf 'Started (UTC): '
+		date -u
+		printf '\n[NATIVE OUTPUT]\n'
+	} > "$job_dir/stdout"
+
+	(
+		# POSIX file-size units are 512-byte blocks. This independently caps every native output file at 2 MiB.
+		ulimit -f 4096
+		exec "$@"
+	) >> "$job_dir/stdout" 2> "$job_dir/stderr" &
+	child_pid=$!
+	deadline_epoch=$(( $(date +%s) + wall_timeout ))
+	timed_out=0
+	while kill -0 "$child_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$deadline_epoch" ]; then
+			timed_out=1
+			kill -TERM "$child_pid" 2>/dev/null || true
+			sleep 2
+			kill -KILL "$child_pid" 2>/dev/null || true
+			break
+		fi
+		sleep 1
+	done
+	child_result=0
+	wait "$child_pid" 2>/dev/null || child_result=$?
+	child_pid=""
+	if [ "$timed_out" -eq 1 ]; then
+		result=124
+		printf 'Nmap exceeded the validated %s-second wall timeout.\n' "$wall_timeout" >> "$job_dir/stderr"
+	else
+		result="$child_result"
+	fi
+	for artifact_name in nmap.nmap nmap.xml nmap.gnmap; do
+		artifact_path="$job_dir/$artifact_name"
+		[ -e "$artifact_path" ] || continue
+		if [ -L "$artifact_path" ] || [ ! -f "$artifact_path" ]; then
+			rm -f "$artifact_path"
+			printf 'Rejected unsafe artifact: %s\n' "$artifact_name" >> "$job_dir/stderr"
+			result=65
+			continue
+		fi
+		artifact_size="$(wc -c < "$artifact_path" 2>/dev/null || printf 0)"
+		case "$artifact_size" in ''|*[!0-9]*) artifact_size=0 ;; esac
+		case "$artifact_name" in nmap.xml) artifact_limit=2097152 ;; *) artifact_limit=1048576 ;; esac
+		if [ "$artifact_size" -le 0 ] || [ "$artifact_size" -gt "$artifact_limit" ]; then
+			rm -f "$artifact_path"
+			printf 'Rejected empty or oversized artifact: %s\n' "$artifact_name" >> "$job_dir/stderr"
+			result=65
+		elif [ "$artifact_name" = 'nmap.xml' ] && ! head -c 4096 "$artifact_path" | grep -Fq '<nmaprun'; then
+			rm -f "$artifact_path"
+			printf '%s\n' 'Rejected Nmap XML artifact without the native nmaprun document root.' >> "$job_dir/stderr"
+			result=65
+		else
+			chmod 600 "$artifact_path"
+		fi
+	done
+	{
+		printf '\nCompleted (UTC): '
+		date -u
+	} >> "$job_dir/stdout"
+	head -c 131072 "$job_dir/stdout" > "$job_dir/stdout.next"
+	mv "$job_dir/stdout.next" "$job_dir/stdout"
 elif [ "$task" = "nmap_lan_discovery" ]; then
 	command -v nmap >/dev/null 2>&1 || task_fail 'Nmap is not installed; the console did not attempt installation.'
 	command -v jsonfilter >/dev/null 2>&1 || task_fail 'The native jsonfilter helper is unavailable.'
@@ -302,6 +446,983 @@ elif [ "$task" = "nmap_lan_discovery" ]; then
 	date -u >> "$job_dir/stdout"
 	head -c 131072 "$job_dir/stdout" > "$job_dir/stdout.next"
 	mv "$job_dir/stdout.next" "$job_dir/stdout"
+elif [ "$task" = "operator_tcpdump" ]; then
+	[ -x /usr/sbin/tcpdump ] || task_fail 'Tcpdump is not installed at the exact reviewed path.'
+	tcpdump_version="$(LC_ALL=C /usr/sbin/tcpdump --version 2>&1 || true)"
+	printf '%s\n' "$tcpdump_version" | grep -Fq 'tcpdump version 4.9.3' || task_fail 'Tcpdump version drifted from the reviewed 4.9.3 argv contract.'
+	printf '%s\n' "$tcpdump_version" | grep -Fq 'libpcap version 1.10.1 ' || task_fail 'libpcap version drifted from the reviewed 1.10.1 filter behavior.'
+	[ -x /usr/bin/jsonfilter ] || task_fail 'The native jsonfilter helper is unavailable.'
+	[ -x /usr/bin/timeout ] || task_fail 'The native timeout helper is unavailable.'
+	[ -f "$job_dir/argv" ] && [ ! -L "$job_dir/argv" ] || task_fail 'The prepared argv file is missing or unsafe.'
+	action_id="$(jsonfilter -i "$job_dir/metadata.json" -e '@.action_id' 2>/dev/null || true)"
+	operator_mode="$(jsonfilter -i "$job_dir/metadata.json" -e '@.operator_mode' 2>/dev/null || true)"
+	[ "$action_id" = 'capture.lan_metadata_snapshot' ] && [ "$operator_mode" = 'true' ] || task_fail 'Prepared metadata does not authorize the tcpdump operator worker.'
+	interface="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.interface' 2>/dev/null || true)"
+	filter="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.filter' 2>/dev/null || true)"
+	output_format="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.output_format' 2>/dev/null || true)"
+	case "$interface" in any) ;; ''|*[!A-Za-z0-9_.-]*) task_fail 'Prepared capture interface is invalid.' ;; *) [ -d "/sys/class/net/$interface" ] || task_fail 'Prepared capture interface is no longer present.' ;; esac
+	case "$output_format" in decoded|pcap|decoded_pcap) ;; *) task_fail 'Prepared capture output format is invalid.' ;; esac
+	[ "${#filter}" -le 1024 ] || task_fail 'Prepared capture filter exceeds 1024 bytes.'
+
+	if [ -n "$filter" ]; then
+		if ! /usr/bin/timeout 8 /usr/sbin/tcpdump -d -i "$interface" "$filter" >/dev/null 2> "$job_dir/tcpdump.stderr"; then
+			head -c 4096 "$job_dir/tcpdump.stderr" >> "$job_dir/stderr"
+			task_fail 'Tcpdump rejected the structured BPF capture filter.'
+		fi
+	else
+		if ! /usr/bin/timeout 8 /usr/sbin/tcpdump -d -i "$interface" >/dev/null 2> "$job_dir/tcpdump.stderr"; then
+			head -c 4096 "$job_dir/tcpdump.stderr" >> "$job_dir/stderr"
+			task_fail 'Tcpdump could not compile an all-traffic capture on the selected interface.'
+		fi
+	fi
+	: > "$job_dir/tcpdump.stderr"
+
+	set --
+	argument_count=0
+	while IFS= read -r argv_item; do
+		[ -n "$argv_item" ] || task_fail 'Prepared argv contains an empty element.'
+		argument_count=$((argument_count + 1))
+		[ "$argument_count" -le 256 ] || task_fail 'Prepared argv exceeds 256 elements.'
+		set -- "$@" "$argv_item"
+	done < "$job_dir/argv"
+	[ "$#" -ge 3 ] && [ "$1" = '/usr/sbin/tcpdump' ] || task_fail 'Prepared executable does not match the exact tcpdump allowlist.'
+	for argv_item in "$@"; do
+		case "$argv_item" in /tmp/ddk/jobs/*) [ "$argv_item" = "$job_dir/capture.pcap" ] || task_fail 'Prepared tcpdump artifact path escaped its DDK job.' ;; esac
+	done
+	wall_timeout="$(cat "$job_dir/wall-timeout")"
+	case "$wall_timeout" in ''|*[!0-9]*) task_fail 'Prepared capture duration is invalid.' ;; esac
+	[ "$wall_timeout" -ge 1 ] && [ "$wall_timeout" -le 1800 ] || task_fail 'Prepared capture duration is outside the appliance range.'
+	interface_flags_before="$(for flags_path in /sys/class/net/*/flags; do printf '%s=' "$(basename "$(dirname "$flags_path")")"; cat "$flags_path"; done)"
+	target_summary="$(jsonfilter -i "$job_dir/metadata.json" -e '@.target_summary' 2>/dev/null || true)"
+	argv_preview="$(jsonfilter -i "$job_dir/metadata.json" -e '@.argv_preview' 2>/dev/null || true)"
+	{
+		printf '%s\n' 'DIGITAL DROPKICK - TCPDUMP OPERATOR CAPTURE'
+		printf 'Native binary: /usr/sbin/tcpdump 4.9.3 / libpcap 1.10.1\n'
+		printf 'Validated scope: %s\n' "$target_summary"
+		printf 'Validated invocation: %s\n' "$argv_preview"
+		printf 'Duration ceiling: %s seconds\n' "$wall_timeout"
+		printf 'Started (UTC): '
+		date -u
+		[ "$output_format" = 'decoded' ] && printf '\n[DECODED CAPTURE]\n'
+	} > "$job_dir/stdout"
+
+	(
+		# POSIX file-size units are 512-byte blocks. Every capture or decoded-output file is capped at 8 MiB.
+		ulimit -f 16384
+		exec "$@"
+	) >> "$job_dir/stdout" 2> "$job_dir/tcpdump.stderr" &
+	child_pid=$!
+	deadline_epoch=$(( $(date +%s) + wall_timeout ))
+	window_ended=0
+	while kill -0 "$child_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$deadline_epoch" ]; then
+			window_ended=1
+			kill -TERM "$child_pid" 2>/dev/null || true
+			sleep 1
+			kill -KILL "$child_pid" 2>/dev/null || true
+			break
+		fi
+		sleep 1
+	done
+	child_result=0
+	wait "$child_pid" 2>/dev/null || child_result=$?
+	child_pid=""
+	if [ "$window_ended" -eq 0 ] && [ "$child_result" -ne 0 ]; then
+		result="$child_result"
+		head -c 4096 "$job_dir/tcpdump.stderr" >> "$job_dir/stderr"
+	fi
+	interface_flags_after="$(for flags_path in /sys/class/net/*/flags; do printf '%s=' "$(basename "$(dirname "$flags_path")")"; cat "$flags_path"; done)"
+	[ "$interface_flags_before" = "$interface_flags_after" ] || task_fail 'Interface flags did not return to their pre-capture state.'
+
+	if [ "$result" -eq 0 ] && { [ "$output_format" = 'pcap' ] || [ "$output_format" = 'decoded_pcap' ]; }; then
+		pcap_path="$job_dir/capture.pcap"
+		[ -f "$pcap_path" ] && [ ! -L "$pcap_path" ] || task_fail 'Tcpdump did not create a regular PCAP artifact.'
+		pcap_size="$(wc -c < "$pcap_path" 2>/dev/null || printf 0)"
+		case "$pcap_size" in ''|*[!0-9]*) pcap_size=0 ;; esac
+		[ "$pcap_size" -ge 24 ] && [ "$pcap_size" -le 8388608 ] || task_fail 'PCAP artifact is empty, truncated, or exceeds 8 MiB.'
+		pcap_magic="$(hexdump -n 4 -e '4/1 "%02x"' "$pcap_path" 2>/dev/null || true)"
+		case "$pcap_magic" in d4c3b2a1|a1b2c3d4|4d3cb2a1|a1b23c4d) ;; *) task_fail 'PCAP artifact magic is invalid.' ;; esac
+		chmod 600 "$pcap_path"
+	fi
+
+	if [ "$result" -eq 0 ] && [ "$output_format" = 'decoded_pcap' ]; then
+		[ -f "$job_dir/decode-argv" ] && [ ! -L "$job_dir/decode-argv" ] || task_fail 'Prepared decode argv is missing or unsafe.'
+		set --
+		while IFS= read -r argv_item; do [ -n "$argv_item" ] || task_fail 'Prepared decode argv contains an empty element.'; set -- "$@" "$argv_item"; done < "$job_dir/decode-argv"
+		[ "$#" -ge 3 ] && [ "$1" = '/usr/sbin/tcpdump' ] && [ "$3" = "$job_dir/capture.pcap" ] || task_fail 'Prepared decode argv does not match the exact tcpdump artifact.'
+		printf '\n[DECODED PCAP]\n' >> "$job_dir/stdout"
+		decode_result=0
+		(
+			# Bound decoded text independently even when a compact PCAP expands substantially.
+			ulimit -f 512
+			exec /usr/bin/timeout 30 "$@"
+		) >> "$job_dir/stdout" 2>> "$job_dir/tcpdump.stderr" || decode_result=$?
+		case "$decode_result" in 0|159) ;; *) result="$decode_result" ;; esac
+	fi
+	{
+		printf '\n[CAPTURE STATUS]\n'
+		tail -n 4 "$job_dir/tcpdump.stderr" 2>/dev/null || true
+		printf 'Stop condition: %s\n' "$(if [ "$window_ended" -eq 1 ]; then printf '%s' 'validated duration'; else printf '%s' 'packet ceiling or native completion'; fi)"
+		printf 'Completed (UTC): '
+		date -u
+	} >> "$job_dir/stdout"
+	rm -f "$job_dir/tcpdump.stderr"
+	head -c 131072 "$job_dir/stdout" > "$job_dir/stdout.next"
+	mv "$job_dir/stdout.next" "$job_dir/stdout"
+elif [ "$task" = "operator_iperf3" ]; then
+	[ -x /usr/bin/iperf3 ] || task_fail 'iperf3 is not installed at the exact reviewed path.'
+	LC_ALL=C /usr/bin/iperf3 --version 2>&1 | grep -Fq 'iperf 3.11 ' || task_fail 'iperf3 version drifted from the reviewed 3.11 argv contract.'
+	[ -x /usr/bin/jsonfilter ] || task_fail 'The native jsonfilter helper is unavailable.'
+	[ -f "$job_dir/argv" ] && [ ! -L "$job_dir/argv" ] || task_fail 'The prepared argv file is missing or unsafe.'
+	action_id="$(jsonfilter -i "$job_dir/metadata.json" -e '@.action_id' 2>/dev/null || true)"
+	operator_mode="$(jsonfilter -i "$job_dir/metadata.json" -e '@.operator_mode' 2>/dev/null || true)"
+	mode="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.mode' 2>/dev/null || true)"
+	bind_address="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.bind_address' 2>/dev/null || true)"
+	json_output="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.json_output' 2>/dev/null || true)"
+	[ "$action_id" = 'throughput.iperf3' ] && [ "$operator_mode" = 'true' ] || task_fail 'Prepared metadata does not authorize the iperf3 operator worker.'
+	case "$mode" in client|server) ;; *) task_fail 'Prepared iperf3 mode is invalid.' ;; esac
+	case "$json_output" in true|false) ;; *) task_fail 'Prepared iperf3 output selection is invalid.' ;; esac
+	if [ "$mode" = 'server' ]; then
+		case "$bind_address" in ''|*[!A-Fa-f0-9:.]*) task_fail 'Prepared server bind address is invalid.' ;; esac
+		ip -o addr show | grep -F -q " $bind_address/" || task_fail 'Prepared server bind address is no longer assigned to this router.'
+	fi
+
+	set --
+	argument_count=0
+	while IFS= read -r argv_item; do
+		[ -n "$argv_item" ] || task_fail 'Prepared argv contains an empty element.'
+		argument_count=$((argument_count + 1))
+		[ "$argument_count" -le 256 ] || task_fail 'Prepared argv exceeds 256 elements.'
+		set -- "$@" "$argv_item"
+	done < "$job_dir/argv"
+	[ "$#" -ge 3 ] && [ "$1" = '/usr/bin/iperf3' ] || task_fail 'Prepared executable does not match the exact iperf3 allowlist.'
+	for argv_item in "$@"; do
+		case "$argv_item" in /tmp/ddk/jobs/*) [ "$argv_item" = "$job_dir/iperf3.json" ] || task_fail 'Prepared iperf3 artifact path escaped its DDK job.' ;; esac
+	done
+	wall_timeout="$(cat "$job_dir/wall-timeout")"
+	case "$wall_timeout" in ''|*[!0-9]*) task_fail 'Prepared iperf3 wall timeout is invalid.' ;; esac
+	[ "$wall_timeout" -ge 1 ] && [ "$wall_timeout" -le 7200 ] || task_fail 'Prepared iperf3 wall timeout is outside the appliance range.'
+	target_summary="$(jsonfilter -i "$job_dir/metadata.json" -e '@.target_summary' 2>/dev/null || true)"
+	argv_preview="$(jsonfilter -i "$job_dir/metadata.json" -e '@.argv_preview' 2>/dev/null || true)"
+	{
+		printf '%s\n' 'DIGITAL DROPKICK - IPERF3 OPERATOR WORKFLOW'
+		printf 'Native binary: /usr/bin/iperf3 3.11\n'
+		printf 'Mode: %s\n' "$mode"
+		printf 'Validated endpoint: %s\n' "$target_summary"
+		printf 'Validated invocation: %s\n' "$argv_preview"
+		printf 'Independent wall timeout: %s seconds\n' "$wall_timeout"
+		printf 'Started (UTC): '
+		date -u
+		printf '\n[NATIVE OUTPUT]\n'
+	} > "$job_dir/stdout"
+
+	(
+		# Bound text and JSON output independently on the 121 MiB appliance.
+		ulimit -f 4096
+		exec "$@"
+	) >> "$job_dir/stdout" 2> "$job_dir/stderr" &
+	child_pid=$!
+	deadline_epoch=$(( $(date +%s) + wall_timeout ))
+	window_ended=0
+	while kill -0 "$child_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$deadline_epoch" ]; then
+			window_ended=1
+			kill -TERM "$child_pid" 2>/dev/null || true
+			sleep 1
+			kill -KILL "$child_pid" 2>/dev/null || true
+			break
+		fi
+		sleep 1
+	done
+	child_result=0
+	wait "$child_pid" 2>/dev/null || child_result=$?
+	child_pid=""
+	if [ "$window_ended" -eq 1 ]; then
+		if [ "$mode" = 'server' ]; then
+			printf '%s\n' 'Temporary server window ended; no listener was left running.' >> "$job_dir/stdout"
+		else
+			result=124
+			printf 'iperf3 client exceeded the validated %s-second wall timeout.\n' "$wall_timeout" >> "$job_dir/stderr"
+		fi
+	elif [ "$child_result" -ne 0 ]; then
+		result="$child_result"
+	fi
+
+	if [ -e "$job_dir/iperf3.json" ]; then
+		json_size="$(wc -c < "$job_dir/iperf3.json" 2>/dev/null || printf 0)"
+		case "$json_size" in ''|*[!0-9]*) json_size=0 ;; esac
+		if [ -L "$job_dir/iperf3.json" ] || [ ! -f "$job_dir/iperf3.json" ] ||
+		   [ "$json_size" -le 1 ] || [ "$json_size" -gt 2097152 ] ||
+		   ! jsonfilter -i "$job_dir/iperf3.json" -e '@' >/dev/null 2>&1; then
+			rm -f "$job_dir/iperf3.json"
+			if [ "$result" -eq 0 ] && { [ "$mode" = 'client' ] || [ "$window_ended" -eq 0 ]; }; then
+				printf '%s\n' 'iperf3 JSON artifact was invalid or exceeded 2 MiB.' >> "$job_dir/stderr"
+				result=65
+			fi
+		else
+			chmod 600 "$job_dir/iperf3.json"
+		fi
+	elif [ "$json_output" = 'true' ] && [ "$result" -eq 0 ] && { [ "$mode" = 'client' ] || [ "$window_ended" -eq 0 ]; }; then
+		printf '%s\n' 'iperf3 did not create the requested JSON artifact.' >> "$job_dir/stderr"
+		result=65
+	elif [ "$json_output" = 'true' ] && [ "$mode" = 'server' ] && [ "$window_ended" -eq 1 ]; then
+		printf '%s\n' 'No iperf3 JSON artifact was retained because the temporary server window ended without a complete native result.' >> "$job_dir/stdout"
+	fi
+	{
+		printf '\nCompleted (UTC): '
+		date -u
+	} >> "$job_dir/stdout"
+	head -c 131072 "$job_dir/stdout" > "$job_dir/stdout.next"
+	mv "$job_dir/stdout.next" "$job_dir/stdout"
+elif [ "$task" = "operator_rtl433" ]; then
+	[ -x /usr/bin/rtl_433 ] || task_fail 'rtl_433 is not installed at the exact reviewed path.'
+	[ -x /usr/bin/jsonfilter ] || task_fail 'The native jsonfilter helper is unavailable.'
+	opkg status rtl_433 2>/dev/null | grep -Fqx 'Version: 20.11-2' || task_fail 'rtl_433 package version drifted from the reviewed 20.11-2 argv contract.'
+	[ -f "$job_dir/argv" ] && [ ! -L "$job_dir/argv" ] || task_fail 'The prepared argv file is missing or unsafe.'
+	action_id="$(jsonfilter -i "$job_dir/metadata.json" -e '@.action_id' 2>/dev/null || true)"
+	operator_mode="$(jsonfilter -i "$job_dir/metadata.json" -e '@.operator_mode' 2>/dev/null || true)"
+	device_selector="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.device' 2>/dev/null || true)"
+	output_format="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.output_format' 2>/dev/null || true)"
+	raw_iq="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.raw_iq' 2>/dev/null || true)"
+	[ "$action_id" = 'radio.rtl433_snapshot' ] && [ "$operator_mode" = 'true' ] || task_fail 'Prepared metadata does not authorize the rtl_433 operator worker.'
+	case "$device_selector" in :*) ;; *) task_fail 'Prepared RTL-SDR selector is invalid.' ;; esac
+	rtl_serial="${device_selector#:}"
+	case "$rtl_serial" in ''|*[!A-Za-z0-9_.-]*) task_fail 'Prepared RTL-SDR serial is invalid.' ;; esac
+	[ "${#rtl_serial}" -le 64 ] || task_fail 'Prepared RTL-SDR serial exceeds 64 bytes.'
+	case "$output_format" in json|kv|csv) ;; *) task_fail 'Prepared rtl_433 output format is invalid.' ;; esac
+	case "$raw_iq" in true|false) ;; *) task_fail 'Prepared rtl_433 raw-IQ selection is invalid.' ;; esac
+	if pidof rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 >/dev/null 2>&1; then
+		task_fail 'A radio receiver or RTL-SDR client is already active; the console did not stop or replace it.'
+	fi
+	rtl_matches=0
+	for usb_device in /sys/bus/usb/devices/*; do
+		[ -r "$usb_device/idVendor" ] && [ -r "$usb_device/idProduct" ] || continue
+		vendor_id="$(cat "$usb_device/idVendor")"
+		product_id="$(cat "$usb_device/idProduct")"
+		[ "$vendor_id" = '0bda' ] && { [ "$product_id" = '2832' ] || [ "$product_id" = '2838' ]; } || continue
+		[ "$(cat "$usb_device/serial" 2>/dev/null || true)" = "$rtl_serial" ] || continue
+		for usb_interface in "$usb_device":*; do
+			[ -e "$usb_interface" ] || continue
+			[ ! -L "$usb_interface/driver" ] || task_fail 'The selected RTL-SDR became claimed by a kernel driver.'
+		done
+		rtl_matches=$((rtl_matches + 1))
+	done
+	[ "$rtl_matches" -eq 1 ] || task_fail 'The selected reviewed RTL-SDR serial is no longer uniquely present.'
+
+	set --
+	argument_count=0
+	while IFS= read -r argv_item; do
+		[ -n "$argv_item" ] || task_fail 'Prepared argv contains an empty element.'
+		argument_count=$((argument_count + 1))
+		[ "$argument_count" -le 256 ] || task_fail 'Prepared argv exceeds 256 elements.'
+		set -- "$@" "$argv_item"
+	done < "$job_dir/argv"
+	[ "$#" -ge 8 ] && [ "$1" = '/usr/bin/rtl_433' ] || task_fail 'Prepared executable does not match the exact rtl_433 allowlist.'
+	for argv_item in "$@"; do
+		case "$argv_item" in /tmp/ddk/jobs/*) [ "$argv_item" = "$job_dir/rtl433.cu8" ] || task_fail 'Prepared rtl_433 artifact path escaped its DDK job.' ;; esac
+	done
+	wall_timeout="$(cat "$job_dir/wall-timeout")"
+	case "$wall_timeout" in ''|*[!0-9]*) task_fail 'Prepared rtl_433 wall timeout is invalid.' ;; esac
+	[ "$wall_timeout" -ge 11 ] && [ "$wall_timeout" -le 910 ] || task_fail 'Prepared rtl_433 wall timeout is outside the appliance range.'
+	case "$output_format" in json) decoded_name=rtl433.jsonl ;; csv) decoded_name=rtl433.csv ;; *) decoded_name=rtl433.txt ;; esac
+	decoded_path="$job_dir/$decoded_name"
+	target_summary="$(jsonfilter -i "$job_dir/metadata.json" -e '@.target_summary' 2>/dev/null || true)"
+	argv_preview="$(jsonfilter -i "$job_dir/metadata.json" -e '@.argv_preview' 2>/dev/null || true)"
+	{
+		printf '%s\n' 'DIGITAL DROPKICK - RTL-433 OPERATOR RECEIVE'
+		printf '%s\n' 'Native binary: /usr/bin/rtl_433 / package 20.11-2'
+		printf 'Validated receiver/frequencies: %s\n' "$target_summary"
+		printf 'Validated invocation: %s\n' "$argv_preview"
+		printf 'Independent wall timeout: %s seconds\n' "$wall_timeout"
+		printf '%s\n' 'Lifecycle: foreground receive only; no rtl_tcp or persistent radio service'
+		printf 'Started (UTC): '
+		date -u
+	} > "$job_dir/stdout"
+	(
+		# The decoded stream and optional raw-IQ artifact are each capped at 8 MiB.
+		ulimit -f 16384
+		exec "$@"
+	) > "$decoded_path" 2> "$job_dir/rtl433.stderr" &
+	child_pid=$!
+	deadline_epoch=$(( $(date +%s) + wall_timeout ))
+	timed_out=0
+	while kill -0 "$child_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$deadline_epoch" ]; then
+			timed_out=1
+			kill -TERM "$child_pid" 2>/dev/null || true
+			sleep 1
+			kill -KILL "$child_pid" 2>/dev/null || true
+			break
+		fi
+		sleep 1
+	done
+	child_result=0
+	wait "$child_pid" 2>/dev/null || child_result=$?
+	child_pid=""
+	if [ "$timed_out" -eq 1 ]; then
+		result=124
+		printf 'rtl_433 exceeded the validated %s-second wall timeout.\n' "$wall_timeout" >> "$job_dir/stderr"
+	elif [ "$child_result" -ne 0 ]; then
+		result="$child_result"
+	fi
+	head -c 65536 "$job_dir/rtl433.stderr" >> "$job_dir/stderr" 2>/dev/null || true
+	rm -f "$job_dir/rtl433.stderr"
+	decoded_size="$(wc -c < "$decoded_path" 2>/dev/null || printf 0)"
+	case "$decoded_size" in ''|*[!0-9]*) decoded_size=0 ;; esac
+	if [ "$decoded_size" -eq 0 ]; then
+		rm -f "$decoded_path"
+		printf '%s\n' 'No decoded events were emitted during the validated receive window.' >> "$job_dir/stdout"
+	elif [ "$decoded_size" -gt 2097152 ] || [ -L "$decoded_path" ] || [ ! -f "$decoded_path" ]; then
+		rm -f "$decoded_path"
+		printf '%s\n' 'Rejected unsafe or oversized rtl_433 decoded artifact.' >> "$job_dir/stderr"
+		result=65
+	else
+		chmod 600 "$decoded_path"
+	fi
+	if [ "$raw_iq" = 'true' ]; then
+		raw_path="$job_dir/rtl433.cu8"
+		raw_size="$(wc -c < "$raw_path" 2>/dev/null || printf 0)"
+		case "$raw_size" in ''|*[!0-9]*) raw_size=0 ;; esac
+		if [ -L "$raw_path" ] || [ ! -f "$raw_path" ] || [ "$raw_size" -le 0 ] || [ "$raw_size" -gt 8388608 ]; then
+			rm -f "$raw_path"
+			printf '%s\n' 'Requested raw-IQ artifact was absent, unsafe, empty, or exceeded 8 MiB.' >> "$job_dir/stderr"
+			result=65
+		else
+			chmod 600 "$raw_path"
+		fi
+	fi
+	printf 'Completed (UTC): ' >> "$job_dir/stdout"
+	date -u >> "$job_dir/stdout"
+elif [ "$task" = "operator_camera" ]; then
+	[ -x /usr/bin/fswebcam ] || task_fail 'fswebcam is not installed at the exact reviewed path.'
+	[ -x /usr/bin/jsonfilter ] || task_fail 'The native jsonfilter helper is unavailable.'
+	LC_ALL=C /usr/bin/fswebcam --version 2>&1 | grep -Fqx 'fswebcam 20140113' || task_fail 'fswebcam version drifted from the reviewed 20140113 argv contract.'
+	[ -f "$job_dir/argv" ] && [ ! -L "$job_dir/argv" ] || task_fail 'The prepared argv file is missing or unsafe.'
+	action_id="$(jsonfilter -i "$job_dir/metadata.json" -e '@.action_id' 2>/dev/null || true)"
+	operator_mode="$(jsonfilter -i "$job_dir/metadata.json" -e '@.operator_mode' 2>/dev/null || true)"
+	camera_device="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.device' 2>/dev/null || true)"
+	image_format="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.format' 2>/dev/null || true)"
+	[ "$action_id" = 'camera.still_snapshot' ] && [ "$operator_mode" = 'true' ] || task_fail 'Prepared metadata does not authorize the camera operator worker.'
+	case "$camera_device" in /dev/video*) ;; *) task_fail 'Prepared camera node is invalid.' ;; esac
+	case "$image_format" in jpeg|png) ;; *) task_fail 'Prepared camera format is invalid.' ;; esac
+	camera_name="${camera_device#/dev/}"
+	camera_number="${camera_name#video}"
+	case "$camera_number" in ''|*[!0-9]*) task_fail 'Prepared camera node suffix is invalid.' ;; esac
+	[ "$camera_device" = "/dev/video$camera_number" ] || task_fail 'Prepared camera node is not canonical.'
+	[ -c "$camera_device" ] && [ ! -L "$camera_device" ] || task_fail 'Selected camera node is no longer a direct character device.'
+	camera_class="/sys/class/video4linux/$camera_name"
+	[ "$(cat "$camera_class/index" 2>/dev/null || true)" = '0' ] || task_fail 'Selected camera node is no longer a primary UVC capture node.'
+	camera_device_path="$(readlink -f "$camera_class/device" 2>/dev/null || true)"
+	camera_usb_parent="$(readlink -f "$camera_device_path/.." 2>/dev/null || true)"
+	case "$camera_device_path:$camera_usb_parent" in /sys/devices/*:/sys/devices/*) ;; *) task_fail 'Selected camera sysfs ownership is invalid.' ;; esac
+	[ "$(basename "$(readlink "$camera_device_path/driver" 2>/dev/null || true)")" = 'uvcvideo' ] || task_fail 'Selected camera is no longer owned by uvcvideo.'
+	[ "$(cat "$camera_device_path/bInterfaceClass" 2>/dev/null || true)" = '0e' ] || task_fail 'Selected camera USB interface is no longer Video class.'
+	[ "$(uci -q get mjpg-streamer.core.enabled 2>/dev/null || true)" = '0' ] || task_fail 'mjpg-streamer is not explicitly disabled.'
+	[ "$(uci -q get motion.general.enabled 2>/dev/null || true)" = '0' ] || task_fail 'motion is not explicitly disabled.'
+	if pidof fswebcam mjpg_streamer motion v4l2rtspserver >/dev/null 2>&1; then task_fail 'A camera client or service is already active.'; fi
+	for camera_fd in /proc/[0-9]*/fd/*; do
+		[ -L "$camera_fd" ] || continue
+		[ "$(readlink "$camera_fd" 2>/dev/null || true)" != "$camera_device" ] || task_fail 'Selected camera node is already open by another process.'
+	done
+
+	set --
+	argument_count=0
+	while IFS= read -r argv_item; do
+		[ -n "$argv_item" ] || task_fail 'Prepared argv contains an empty element.'
+		argument_count=$((argument_count + 1))
+		[ "$argument_count" -le 128 ] || task_fail 'Prepared camera argv exceeds 128 elements.'
+		set -- "$@" "$argv_item"
+	done < "$job_dir/argv"
+	[ "$#" -ge 8 ] && [ "$1" = '/usr/bin/fswebcam' ] || task_fail 'Prepared executable does not match the exact fswebcam allowlist.'
+	artifact_name="$(if [ "$image_format" = 'png' ]; then printf '%s' snapshot.png; else printf '%s' snapshot.jpg; fi)"
+	artifact_path="$job_dir/$artifact_name"
+	for argv_item in "$@"; do
+		case "$argv_item" in /tmp/ddk/jobs/*) [ "$argv_item" = "$artifact_path" ] || task_fail 'Prepared camera artifact path escaped its DDK job.' ;; esac
+	done
+	wall_timeout="$(cat "$job_dir/wall-timeout")"
+	case "$wall_timeout" in ''|*[!0-9]*) task_fail 'Prepared camera wall timeout is invalid.' ;; esac
+	[ "$wall_timeout" -ge 30 ] && [ "$wall_timeout" -le 60 ] || task_fail 'Prepared camera wall timeout is outside the appliance range.'
+	target_summary="$(jsonfilter -i "$job_dir/metadata.json" -e '@.target_summary' 2>/dev/null || true)"
+	argv_preview="$(jsonfilter -i "$job_dir/metadata.json" -e '@.argv_preview' 2>/dev/null || true)"
+	{
+		printf '%s\n' 'DIGITAL DROPKICK - CAMERA STILL OPERATOR'
+		printf '%s\n' 'Native binary: /usr/bin/fswebcam 20140113'
+		printf 'Validated camera/format: %s\n' "$target_summary"
+		printf 'Validated invocation: %s\n' "$argv_preview"
+		printf '%s\n' 'Lifecycle: one foreground capture; no camera daemon or listener'
+		printf '%s\n' 'Privacy: the authenticated transient image may contain private customer information'
+		printf 'Started (UTC): '
+		date -u
+	} > "$job_dir/stdout"
+	(
+		# Limit the one native image file to 4 MiB.
+		ulimit -f 8192
+		exec /usr/bin/timeout "$wall_timeout" "$@"
+	) >> "$job_dir/stdout" 2> "$job_dir/stderr" &
+	child_pid=$!
+	child_result=0
+	wait "$child_pid" 2>/dev/null || child_result=$?
+	child_pid=""
+	if [ "$child_result" -eq 124 ]; then printf 'fswebcam exceeded the validated %s-second wall timeout.\n' "$wall_timeout" >> "$job_dir/stderr"; result=124
+	elif [ "$child_result" -ne 0 ]; then result="$child_result"; fi
+	if [ "$result" -eq 0 ]; then
+		[ -f "$artifact_path" ] && [ ! -L "$artifact_path" ] || task_fail 'fswebcam did not create a regular DDK artifact.'
+		artifact_size="$(wc -c < "$artifact_path" 2>/dev/null || printf 0)"
+		case "$artifact_size" in ''|*[!0-9]*) artifact_size=0 ;; esac
+		[ "$artifact_size" -gt 8 ] && [ "$artifact_size" -le 4194304 ] || task_fail 'Camera artifact is empty, truncated, or exceeds 4 MiB.'
+		artifact_magic="$(hexdump -n 8 -e '8/1 "%02x"' "$artifact_path" 2>/dev/null || true)"
+		if [ "$image_format" = 'jpeg' ]; then
+			case "$artifact_magic" in ffd8ff*) ;; *) task_fail 'Camera JPEG artifact magic is invalid.' ;; esac
+		else
+			[ "$artifact_magic" = '89504e470d0a1a0a' ] || task_fail 'Camera PNG artifact magic is invalid.'
+		fi
+		chmod 600 "$artifact_path"
+	else
+		rm -f "$artifact_path"
+	fi
+	printf 'Completed (UTC): ' >> "$job_dir/stdout"
+	date -u >> "$job_dir/stdout"
+elif [ "$task" = "operator_serial" ]; then
+	[ -x /usr/bin/socat ] || task_fail 'socat is not installed at the exact reviewed path.'
+	[ -x /usr/bin/xxd ] || task_fail 'xxd is unavailable for private serial input decoding.'
+	[ -x /bin/stty ] || task_fail 'stty is unavailable for tty-state preservation.'
+	[ -x /usr/bin/jsonfilter ] || task_fail 'The native jsonfilter helper is unavailable.'
+	LC_ALL=C /usr/bin/socat -V 2>&1 | grep -Fq 'socat version 1.7.4.1 ' || task_fail 'socat version drifted from the reviewed 1.7.4.1 serial contract.'
+	LC_ALL=C /bin/stty --version 2>&1 | grep -Fq 'stty (GNU coreutils) 9.0' || task_fail 'stty version drifted from the reviewed 9.0 tty-state contract.'
+	[ -f "$job_dir/argv" ] && [ ! -L "$job_dir/argv" ] || task_fail 'The prepared argv file is missing or unsafe.'
+	action_id="$(jsonfilter -i "$job_dir/metadata.json" -e '@.action_id' 2>/dev/null || true)"
+	operator_mode="$(jsonfilter -i "$job_dir/metadata.json" -e '@.operator_mode' 2>/dev/null || true)"
+	serial_device="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.device' 2>/dev/null || true)"
+	serial_mode="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.mode' 2>/dev/null || true)"
+	read_kib="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.read_kib' 2>/dev/null || true)"
+	output_view="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.output_view' 2>/dev/null || true)"
+	transmit_bytes="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.transmit_bytes' 2>/dev/null || true)"
+	[ "$action_id" = 'serial.session' ] && [ "$operator_mode" = 'true' ] || task_fail 'Prepared metadata does not authorize the serial operator worker.'
+	case "$serial_mode" in receive|transmit_receive) ;; *) task_fail 'Prepared serial mode is invalid.' ;; esac
+	case "$output_view" in hex_ascii|hex|ascii) ;; *) task_fail 'Prepared serial output view is invalid.' ;; esac
+	case "$read_kib" in ''|*[!0-9]*) task_fail 'Prepared serial receive ceiling is invalid.' ;; esac
+	[ "$read_kib" -ge 1 ] && [ "$read_kib" -le 2048 ] || task_fail 'Prepared serial receive ceiling is outside the appliance range.'
+	case "$transmit_bytes" in ''|*[!0-9]*) task_fail 'Prepared serial transmit length is invalid.' ;; esac
+	[ "$transmit_bytes" -ge 0 ] && [ "$transmit_bytes" -le 4096 ] || task_fail 'Prepared serial transmit length is outside the appliance range.'
+	case "$serial_device" in /dev/ttyUSB*|/dev/ttyACM*) ;; *) task_fail 'Prepared serial node is invalid.' ;; esac
+	serial_name="${serial_device#/dev/}"
+	case "$serial_name" in ttyUSB*) serial_number="${serial_name#ttyUSB}" ;; ttyACM*) serial_number="${serial_name#ttyACM}" ;; *) task_fail 'Prepared serial node class is invalid.' ;; esac
+	case "$serial_number" in ''|*[!0-9]*) task_fail 'Prepared serial node suffix is invalid.' ;; esac
+	[ "$serial_device" = "/dev/${serial_name%"$serial_number"}$serial_number" ] || task_fail 'Prepared serial node is not canonical.'
+	[ -c "$serial_device" ] && [ ! -L "$serial_device" ] || task_fail 'Selected serial node is no longer a direct character device.'
+	serial_class="/sys/class/tty/$serial_name"
+	serial_interface="$(readlink -f "$serial_class/device/.." 2>/dev/null || true)"
+	serial_parent="$(readlink -f "$serial_class/device/../.." 2>/dev/null || true)"
+	case "$serial_interface:$serial_parent" in /sys/devices/*:/sys/devices/*) ;; *) task_fail 'Selected serial sysfs ownership is invalid.' ;; esac
+	serial_vendor="$(cat "$serial_parent/idVendor" 2>/dev/null || true)"
+	serial_product="$(cat "$serial_parent/idProduct" 2>/dev/null || true)"
+	case "$serial_vendor:$serial_product" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f]:[0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) task_fail 'Selected serial USB identity is invalid.' ;; esac
+	[ "$serial_vendor:$serial_product" != '2c7c:0125' ] || task_fail 'The Quectel EC25 modem ports are reserved and cannot be opened by Serial Operator.'
+	serial_driver="$(basename "$(readlink "$serial_interface/driver" 2>/dev/null || true)")"
+	case "$serial_driver" in cdc_acm|ftdi_sio|cp210x|pl2303|ch341|usbserial) ;; *) task_fail 'Selected serial driver is not in the reviewed general-purpose set.' ;; esac
+	for serial_fd in /proc/[0-9]*/fd/*; do
+		[ -L "$serial_fd" ] || continue
+		[ "$(readlink "$serial_fd" 2>/dev/null || true)" != "$serial_device" ] || task_fail 'Selected serial node is already open by another process.'
+	done
+
+	set --
+	argument_count=0
+	serial_address_count=0
+	while IFS= read -r argv_item; do
+		[ -n "$argv_item" ] || task_fail 'Prepared argv contains an empty element.'
+		argument_count=$((argument_count + 1))
+		[ "$argument_count" -le 32 ] || task_fail 'Prepared serial argv exceeds 32 elements.'
+		case "$argv_item" in
+			OPEN:*) serial_address_count=$((serial_address_count + 1)); case "$argv_item" in "OPEN:$serial_device,"*) ;; *) task_fail 'Prepared socat address does not match the selected serial node.' ;; esac ;;
+			*/dev/tty*|*../*) task_fail 'Prepared serial argv contains an unexpected device path.' ;;
+		esac
+		set -- "$@" "$argv_item"
+	done < "$job_dir/argv"
+	[ "$#" -ge 5 ] && [ "$1" = '/usr/bin/socat' ] && [ "$serial_address_count" -eq 1 ] || task_fail 'Prepared executable or address does not match the exact socat allowlist.'
+	wall_timeout="$(cat "$job_dir/wall-timeout")"
+	case "$wall_timeout" in ''|*[!0-9]*) task_fail 'Prepared serial wall timeout is invalid.' ;; esac
+	[ "$wall_timeout" -ge 6 ] && [ "$wall_timeout" -le 305 ] || task_fail 'Prepared serial wall timeout is outside the appliance range.'
+	restore_tty_device="$serial_device"
+	restore_tty_state="$(/bin/stty -F "$serial_device" -g 2>/dev/null || true)"
+	[ -n "$restore_tty_state" ] || task_fail 'Unable to preserve the selected serial node state.'
+
+	serial_input="$job_dir/serial-input.bin"
+	if [ "$serial_mode" = 'transmit_receive' ]; then
+		[ -f "$job_dir/stdin-hex" ] && [ ! -L "$job_dir/stdin-hex" ] || task_fail 'Prepared private serial input is missing or unsafe.'
+		serial_hex="$(tr -d '\r\n' < "$job_dir/stdin-hex")"
+		case "$serial_hex" in ''|*[!0-9a-f]*) task_fail 'Prepared private serial input is invalid.' ;; esac
+		[ $(( ${#serial_hex} % 2 )) -eq 0 ] || task_fail 'Prepared private serial input is incomplete.'
+		printf '%s\n' "$serial_hex" | /usr/bin/xxd -r -p > "$serial_input" || task_fail 'Unable to decode private serial input.'
+		rm -f "$job_dir/stdin-hex"
+		input_size="$(wc -c < "$serial_input" 2>/dev/null || printf 0)"
+		[ "$input_size" = "$transmit_bytes" ] || task_fail 'Private serial input length does not match validated metadata.'
+		chmod 600 "$serial_input"
+	else
+		[ "$transmit_bytes" -eq 0 ] || task_fail 'Receive-only serial job contains a transmit length.'
+		[ ! -e "$job_dir/stdin-hex" ] || task_fail 'Receive-only serial job unexpectedly contains private input.'
+	fi
+	target_summary="$(jsonfilter -i "$job_dir/metadata.json" -e '@.target_summary' 2>/dev/null || true)"
+	argv_preview="$(jsonfilter -i "$job_dir/metadata.json" -e '@.argv_preview' 2>/dev/null || true)"
+	{
+		printf '%s\n' 'DIGITAL DROPKICK - BOUNDED SERIAL OPERATOR'
+		printf '%s\n' 'Native binary: /usr/bin/socat 1.7.4.1; tty restore: /bin/stty 9.0'
+		printf 'Validated target/settings: %s\n' "$target_summary"
+		printf 'Mode: %s; transmit bytes: %s; receive ceiling: %s KiB\n' "$serial_mode" "$transmit_bytes" "$read_kib"
+		printf 'Validated invocation: %s\n' "$argv_preview"
+		printf '%s\n' 'Safety: EC25 excluded; original tty state restored on completion, failure, or cancellation'
+		printf 'Started (UTC): '
+		date -u
+	} > "$job_dir/stdout"
+	serial_artifact="$job_dir/serial.bin"
+	(
+		# POSIX file-size units are 512-byte blocks; read_kib * 2 is the exact KiB ceiling.
+		ulimit -f $((read_kib * 2))
+		if [ "$serial_mode" = 'transmit_receive' ]; then exec "$@" < "$serial_input"; else exec "$@" < /dev/null; fi
+	) > "$serial_artifact" 2> "$job_dir/stderr" &
+	child_pid=$!
+	deadline_epoch=$(( $(date +%s) + wall_timeout ))
+	timed_out=0
+	while kill -0 "$child_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$deadline_epoch" ]; then
+			timed_out=1
+			kill -TERM "$child_pid" 2>/dev/null || true
+			sleep 1
+			kill -KILL "$child_pid" 2>/dev/null || true
+			break
+		fi
+		sleep 1
+	done
+	child_result=0
+	wait "$child_pid" 2>/dev/null || child_result=$?
+	child_pid=""
+	restore_tty
+	rm -f "$serial_input" "$job_dir/stdin-hex"
+	if [ "$timed_out" -eq 1 ]; then
+		result=124
+		printf 'Serial session exceeded the validated %s-second wall timeout.\n' "$wall_timeout" >> "$job_dir/stderr"
+	else
+		case "$child_result" in 0|153) ;; *) result="$child_result" ;; esac
+	fi
+	serial_size="$(wc -c < "$serial_artifact" 2>/dev/null || printf 0)"
+	case "$serial_size" in ''|*[!0-9]*) serial_size=0 ;; esac
+	serial_limit=$((read_kib * 1024))
+	if [ "$serial_size" -eq 0 ]; then
+		rm -f "$serial_artifact"
+		printf '%s\n' 'No serial bytes were received during the validated session window.' >> "$job_dir/stdout"
+	elif [ -L "$serial_artifact" ] || [ ! -f "$serial_artifact" ] || [ "$serial_size" -gt "$serial_limit" ]; then
+		rm -f "$serial_artifact"
+		printf '%s\n' 'Rejected unsafe or oversized serial artifact.' >> "$job_dir/stderr"
+		result=65
+	else
+		chmod 600 "$serial_artifact"
+		printf '\n[RECEIVED PREVIEW]\n' >> "$job_dir/stdout"
+		case "$output_view" in
+			hex_ascii) /usr/bin/hexdump -C "$serial_artifact" | head -c 65536 >> "$job_dir/stdout" ;;
+			hex) /usr/bin/hexdump -v -e '1/1 "%02x"' "$serial_artifact" | head -c 65536 >> "$job_dir/stdout"; printf '\n' >> "$job_dir/stdout" ;;
+			ascii) /usr/bin/hexdump -v -e '1/1 "%_p"' "$serial_artifact" | head -c 65536 >> "$job_dir/stdout"; printf '\n' >> "$job_dir/stdout" ;;
+		esac
+	fi
+	printf 'Completed (UTC): ' >> "$job_dir/stdout"
+	date -u >> "$job_dir/stdout"
+	head -c 131072 "$job_dir/stdout" > "$job_dir/stdout.next"
+	mv "$job_dir/stdout.next" "$job_dir/stdout"
+elif [ "$task" = "operator_gps" ]; then
+	[ -x /bin/dd ] || task_fail 'The exact read-only byte-copy helper is unavailable.'
+	[ -x /usr/bin/gpsdecode ] || task_fail 'gpsdecode is not installed at the exact reviewed path.'
+	[ -x /usr/bin/jsonfilter ] || task_fail 'The native jsonfilter helper is unavailable.'
+	[ -x /usr/bin/timeout ] || task_fail 'The native timeout helper is unavailable.'
+	LC_ALL=C /usr/bin/gpsdecode -V 2>&1 | grep -Fqx 'gpsdecode revision 3.23.1' || task_fail 'gpsdecode version drifted from the reviewed 3.23.1 contract.'
+	[ -f "$job_dir/argv" ] && [ ! -L "$job_dir/argv" ] || task_fail 'The prepared capture argv file is missing or unsafe.'
+	[ -f "$job_dir/decode-argv" ] && [ ! -L "$job_dir/decode-argv" ] || task_fail 'The prepared gpsdecode argv file is missing or unsafe.'
+	action_id="$(jsonfilter -i "$job_dir/metadata.json" -e '@.action_id' 2>/dev/null || true)"
+	operator_mode="$(jsonfilter -i "$job_dir/metadata.json" -e '@.operator_mode' 2>/dev/null || true)"
+	gnss_device="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.device' 2>/dev/null || true)"
+	duration="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.duration' 2>/dev/null || true)"
+	capture_kib="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.capture_kib' 2>/dev/null || true)"
+	position_summary="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.position_summary' 2>/dev/null || true)"
+	decoded_artifact="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.decoded_artifact' 2>/dev/null || true)"
+	raw_artifact="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.raw_artifact' 2>/dev/null || true)"
+	[ "$action_id" = 'gps.snapshot' ] && [ "$operator_mode" = 'true' ] || task_fail 'Prepared metadata does not authorize the GPS/GNSS operator worker.'
+	case "$duration" in ''|*[!0-9]*) task_fail 'Prepared GNSS duration is invalid.' ;; esac
+	[ "$duration" -ge 1 ] && [ "$duration" -le 300 ] || task_fail 'Prepared GNSS duration is outside the appliance range.'
+	case "$capture_kib" in ''|*[!0-9]*) task_fail 'Prepared GNSS byte ceiling is invalid.' ;; esac
+	[ "$capture_kib" -ge 1 ] && [ "$capture_kib" -le 2048 ] || task_fail 'Prepared GNSS byte ceiling is outside the appliance range.'
+	case "$position_summary:$decoded_artifact:$raw_artifact" in true:true:true|true:true:false|true:false:true|true:false:false|false:true:true|false:true:false|false:false:true) ;; *) task_fail 'Prepared GNSS output selection is invalid.' ;; esac
+	if pidof gpsd >/dev/null 2>&1; then task_fail 'gpsd is active; the console will not compete for its GNSS device or stop the service.'; fi
+	case "$gnss_device" in /dev/ttyUSB*) gnss_number="${gnss_device#/dev/ttyUSB}" ;; /dev/ttyACM*) gnss_number="${gnss_device#/dev/ttyACM}" ;; *) task_fail 'Prepared GNSS node failed its strict path check.' ;; esac
+	case "$gnss_number" in ''|*[!0-9]*) task_fail 'Prepared GNSS node failed its numeric suffix check.' ;; esac
+	[ -c "$gnss_device" ] && [ ! -L "$gnss_device" ] || task_fail 'Selected GNSS node is no longer a direct character device.'
+	gnss_name="${gnss_device#/dev/}"
+	gnss_interface="$(readlink -f "/sys/class/tty/$gnss_name/device/.." 2>/dev/null || true)"
+	gnss_parent="$(readlink -f "/sys/class/tty/$gnss_name/device/../.." 2>/dev/null || true)"
+	case "$gnss_interface:$gnss_parent" in /sys/devices/*:/sys/devices/*) ;; *) task_fail 'Selected GNSS sysfs ownership is invalid.' ;; esac
+	gnss_vendor="$(cat "$gnss_parent/idVendor" 2>/dev/null || true)"
+	gnss_product="$(cat "$gnss_parent/idProduct" 2>/dev/null || true)"
+	case "$gnss_vendor:$gnss_product" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f]:[0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) task_fail 'Selected GNSS USB identity is invalid.' ;; esac
+	[ "$gnss_vendor:$gnss_product" != '2c7c:0125' ] || task_fail 'The Quectel EC25 modem ports are reserved and cannot be opened by GNSS Operator.'
+	gnss_driver="$(basename "$(readlink -f "$gnss_interface/driver" 2>/dev/null || true)")"
+	case "$gnss_driver" in cdc_acm|ftdi_sio|cp210x|pl2303|ch341|usbserial) ;; *) task_fail 'Selected GNSS driver is not in the reviewed receiver set.' ;; esac
+	gnss_descriptor="$(printf '%s %s' "$(cat "$gnss_parent/manufacturer" 2>/dev/null || true)" "$(cat "$gnss_parent/product" 2>/dev/null || true)" | tr '[:upper:]' '[:lower:]')"
+	case "$gnss_vendor:$gnss_descriptor" in 1546:*|*u-blox*|*ublox*|*gnss*|*gps*) ;; *) task_fail 'Selected serial device no longer has a reviewed GNSS identity.' ;; esac
+	for gnss_fd in /proc/[0-9]*/fd/*; do
+		[ -L "$gnss_fd" ] || continue
+		[ "$(readlink "$gnss_fd" 2>/dev/null || true)" != "$gnss_device" ] || task_fail 'Selected GNSS node is already open by another process.'
+	done
+
+	set --
+	while IFS= read -r argv_item; do [ -n "$argv_item" ] || task_fail 'Prepared GNSS capture argv contains an empty element.'; set -- "$@" "$argv_item"; done < "$job_dir/argv"
+	expected_count=$((capture_kib * 4))
+	[ "$#" -eq 4 ] && [ "$1" = '/bin/dd' ] && [ "$2" = "if=$gnss_device" ] && [ "$3" = 'bs=256' ] && [ "$4" = "count=$expected_count" ] || task_fail 'Prepared GNSS capture argv does not match the exact byte-copy allowlist.'
+	set --
+	decode_count=0
+	while IFS= read -r argv_item; do [ -n "$argv_item" ] || task_fail 'Prepared gpsdecode argv contains an empty element.'; decode_count=$((decode_count + 1)); [ "$decode_count" -le 16 ] || task_fail 'Prepared gpsdecode argv exceeds 16 elements.'; set -- "$@" "$argv_item"; done < "$job_dir/decode-argv"
+	[ "$#" -ge 3 ] && [ "$1" = '/usr/bin/gpsdecode' ] && [ "$2" = '-d' ] || task_fail 'Prepared decoder does not match the exact gpsdecode allowlist.'
+	wall_timeout="$(cat "$job_dir/wall-timeout")"
+	case "$wall_timeout" in ''|*[!0-9]*) task_fail 'Prepared GNSS wall timeout is invalid.' ;; esac
+	[ "$wall_timeout" -ge 11 ] && [ "$wall_timeout" -le 310 ] || task_fail 'Prepared GNSS wall timeout is outside the appliance range.'
+	gnss_raw="$job_dir/gnss.raw"
+	gnss_decoded="$job_dir/gnss.decoded"
+	gnss_error="$job_dir/gnss.stderr"
+	target_summary="$(jsonfilter -i "$job_dir/metadata.json" -e '@.target_summary' 2>/dev/null || true)"
+	argv_preview="$(jsonfilter -i "$job_dir/metadata.json" -e '@.argv_preview' 2>/dev/null || true)"
+	{
+		printf '%s\n' 'DIGITAL DROPKICK - GPS / GNSS OPERATOR RECEIVE'
+		printf '%s\n' 'Native tools: /bin/dd plus /usr/bin/gpsdecode 3.23.1'
+		printf 'Validated receiver/window: %s\n' "$target_summary"
+		printf 'Validated invocations:\n%s\n' "$argv_preview"
+		printf '%s\n' 'Safety: receive-only; EC25 excluded; no serial reconfiguration, gpsd, listener, NTRIP, or receiver command'
+		printf '%s\n' 'Privacy: precise location may appear only in authenticated transient output/artifacts'
+		printf 'Started (UTC): '
+		date -u
+	} > "$job_dir/stdout"
+	(
+		ulimit -f $((capture_kib * 2))
+		exec /bin/dd "if=$gnss_device" bs=256 "count=$expected_count"
+	) > "$gnss_raw" 2> "$gnss_error" &
+	child_pid=$!
+	deadline_epoch=$(( $(date +%s) + duration ))
+	window_ended=0
+	while kill -0 "$child_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$deadline_epoch" ]; then window_ended=1; kill -TERM "$child_pid" 2>/dev/null || true; sleep 1; kill -KILL "$child_pid" 2>/dev/null || true; break; fi
+		sleep 1
+	done
+	read_result=0
+	wait "$child_pid" 2>/dev/null || read_result=$?
+	child_pid=""
+	case "$read_result" in 0|143|153) ;; *) result="$read_result"; head -c 4096 "$gnss_error" >> "$job_dir/stderr" ;; esac
+	gnss_bytes="$(wc -c < "$gnss_raw" 2>/dev/null || printf 0)"
+	case "$gnss_bytes" in ''|*[!0-9]*) gnss_bytes=0 ;; esac
+	gnss_limit=$((capture_kib * 1024))
+	if [ "$result" -eq 0 ] && [ "$gnss_bytes" -gt 0 ] && [ "$gnss_bytes" -le "$gnss_limit" ]; then
+		decode_result=0
+		(
+			ulimit -f 4096
+			exec /usr/bin/timeout 30 "$@"
+		) < "$gnss_raw" > "$gnss_decoded" 2> "$gnss_error" || decode_result=$?
+		case "$decode_result" in 0|159) ;; *) result="$decode_result"; head -c 4096 "$gnss_error" >> "$job_dir/stderr" ;; esac
+	elif [ "$result" -eq 0 ]; then
+		printf '%s\n' 'No GNSS bytes arrived during the validated receive window, or the raw ceiling was violated.' >> "$job_dir/stderr"
+		result=69
+	fi
+	if [ "$result" -eq 0 ] && [ "$position_summary" = 'true' ]; then
+		awk -F, '
+			function coordinate(value, hemisphere, degrees, whole, minutes, decimal) {
+				if (value !~ /^[0-9]+[.][0-9]+$/) return ""
+				whole = substr(value, 1, degrees) + 0; minutes = substr(value, degrees + 1) + 0
+				if (minutes < 0 || minutes >= 60) return ""
+				decimal = whole + (minutes / 60); if (hemisphere == "S" || hemisphere == "W") decimal = -decimal
+				return sprintf("%.6f", decimal)
+			}
+			{
+				gsub(/\r$/, "", $0); talker = $1; sub(/^[$]/, "", talker); type = substr(talker, length(talker) - 2)
+				if (type == "RMC" && $3 == "A") { lat = coordinate($4, $5, 2); lon = coordinate($6, $7, 3); if (lat != "" && lon != "") { latitude=lat; longitude=lon; fix=1; utc_time=$2; utc_date=$10; speed=$8; track=$9 } }
+				if (type == "GGA" && ($7 + 0) > 0) { lat = coordinate($3, $4, 2); lon = coordinate($5, $6, 3); if (lat != "" && lon != "") { latitude=lat; longitude=lon; fix=1; utc_time=$2; quality=$7; satellites=$8; hdop=$9; altitude=$10 } }
+			}
+			END {
+				if (!fix) exit 2
+				print "\n[VALIDATED POSITION]"; printf "Latitude: %s\nLongitude: %s\n", latitude, longitude
+				if (utc_time != "") printf "Receiver UTC time: %s\n", utc_time
+				if (utc_date != "") printf "Receiver UTC date: %s\n", utc_date
+				if (quality != "") printf "Fix quality: %s\n", quality
+				if (satellites != "") printf "Satellites used: %s\n", satellites
+				if (hdop != "") printf "HDOP: %s\n", hdop
+				if (altitude != "") printf "Altitude: %s m\n", altitude
+				if (speed ~ /^[0-9]+([.][0-9]+)?$/) printf "Speed: %.2f km/h\n", speed * 1.852
+				if (track ~ /^[0-9]+([.][0-9]+)?$/) printf "Course: %.2f degrees\n", track
+			}
+		' "$gnss_decoded" >> "$job_dir/stdout" || printf '%s\n' 'No checksum-validated position fix was decoded during the receive window.' >> "$job_dir/stderr"
+	fi
+	decoded_size="$(wc -c < "$gnss_decoded" 2>/dev/null || printf 0)"
+	case "$decoded_size" in ''|*[!0-9]*) decoded_size=0 ;; esac
+	if [ "$decoded_artifact" = 'true' ]; then
+		if [ "$decoded_size" -gt 0 ] && [ "$decoded_size" -le 2097152 ] && [ -f "$gnss_decoded" ] && [ ! -L "$gnss_decoded" ]; then chmod 600 "$gnss_decoded"; else rm -f "$gnss_decoded"; printf '%s\n' 'Requested GNSS decoded artifact was absent, unsafe, empty, or oversized.' >> "$job_dir/stderr"; result=65; fi
+	else rm -f "$gnss_decoded"; fi
+	if [ "$raw_artifact" = 'true' ]; then
+		if [ "$gnss_bytes" -gt 0 ] && [ "$gnss_bytes" -le "$gnss_limit" ] && [ -f "$gnss_raw" ] && [ ! -L "$gnss_raw" ]; then chmod 600 "$gnss_raw"; else rm -f "$gnss_raw"; printf '%s\n' 'Requested GNSS raw artifact was absent, unsafe, empty, or oversized.' >> "$job_dir/stderr"; result=65; fi
+	else rm -f "$gnss_raw"; fi
+	rm -f "$gnss_error"
+	printf '\nReceived bytes: %s; stop condition: %s\n' "$gnss_bytes" "$(if [ "$window_ended" -eq 1 ]; then printf '%s' 'validated duration'; else printf '%s' 'byte ceiling or native completion'; fi)" >> "$job_dir/stdout"
+	printf 'Completed (UTC): ' >> "$job_dir/stdout"
+	date -u >> "$job_dir/stdout"
+	head -c 131072 "$job_dir/stdout" > "$job_dir/stdout.next"
+	mv "$job_dir/stdout.next" "$job_dir/stdout"
+elif [ "$task" = "operator_adb" ]; then
+	[ -x /usr/bin/adb ] || task_fail 'ADB is not installed at the exact reviewed path.'
+	[ -x /usr/bin/jsonfilter ] || task_fail 'The native jsonfilter helper is unavailable.'
+	[ -x /usr/bin/sha256sum ] || task_fail 'The native SHA-256 helper is unavailable.'
+	LC_ALL=C /usr/bin/adb version 2>&1 | grep -Fqx 'Android Debug Bridge version 1.0.32' || task_fail 'ADB version drifted from the reviewed 1.0.32 contract.'
+	[ -f "$job_dir/argv" ] && [ ! -L "$job_dir/argv" ] || task_fail 'The prepared ADB argv file is missing or unsafe.'
+	[ -f "$job_dir/wall-timeout" ] && [ ! -L "$job_dir/wall-timeout" ] || task_fail 'The prepared ADB wall-timeout file is missing or unsafe.'
+	action_id="$(jsonfilter -i "$job_dir/metadata.json" -e '@.action_id' 2>/dev/null || true)"
+	operator_mode="$(jsonfilter -i "$job_dir/metadata.json" -e '@.operator_mode' 2>/dev/null || true)"
+	operation="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.operation' 2>/dev/null || true)"
+	case "$action_id:$operator_mode" in android.adb_diagnostics:true|android.adb_manage:true) ;; *) task_fail 'Prepared metadata does not authorize the ADB operator worker.' ;; esac
+
+	set --
+	argument_count=0
+	while IFS= read -r argv_item; do
+		[ -n "$argv_item" ] || task_fail 'Prepared ADB argv contains an empty element.'
+		argument_count=$((argument_count + 1)); [ "$argument_count" -le 256 ] || task_fail 'Prepared ADB argv exceeds 256 elements.'
+		set -- "$@" "$argv_item"
+	done < "$job_dir/argv"
+	[ "$#" -ge 6 ] && [ "$1" = '/usr/bin/adb' ] && [ "$2" = '-P' ] && [ "$3" = '5038' ] && [ "$4" = '-s' ] || task_fail 'Prepared ADB argv does not use the isolated exact executable/port/selector prefix.'
+	adb_serial="$5"
+	adb_command="$6"
+	case "$adb_serial" in ''|*[!A-Za-z0-9._-]*) task_fail 'Prepared ADB serial failed its strict transport grammar.' ;; esac
+	case "$action_id:$operation:$adb_command" in
+		android.adb_diagnostics:get_state:get-state|android.adb_diagnostics:get_serialno:get-serialno|android.adb_diagnostics:get_devpath:get-devpath|\
+		android.adb_diagnostics:getprop:shell|android.adb_diagnostics:list_packages:shell|android.adb_diagnostics:logcat:logcat|\
+		android.adb_diagnostics:bugreport:bugreport|android.adb_diagnostics:pull:pull|android.adb_diagnostics:backup:backup|\
+		android.adb_manage:push:push|android.adb_manage:install:install|android.adb_manage:uninstall:uninstall|\
+		android.adb_manage:restore:restore|android.adb_manage:reboot:reboot|android.adb_manage:root:root|\
+		android.adb_manage:remount:remount|android.adb_manage:usb:usb|android.adb_manage:tcpip:tcpip) ;;
+		*) task_fail 'Prepared ADB operation does not match its exact native command allowlist.' ;;
+	esac
+	wall_timeout="$(cat "$job_dir/wall-timeout")"
+	case "$wall_timeout" in ''|*[!0-9]*) task_fail 'Prepared ADB wall timeout is invalid.' ;; esac
+	[ "$wall_timeout" -ge 10 ] && [ "$wall_timeout" -le 1800 ] || task_fail 'Prepared ADB wall timeout is outside the appliance range.'
+
+	expected_artifact=""
+	case "$operation" in
+		logcat) expected_artifact=android-logcat.txt ;;
+		bugreport) expected_artifact=android-bugreport.txt ;;
+		pull) expected_artifact=android-pull.bin ;;
+		backup) expected_artifact=android-backup.ab ;;
+	esac
+	if [ -n "$expected_artifact" ]; then
+		[ -d "$artifact_root" ] && [ ! -L "$artifact_root" ] && [ "$(stat -c '%a' "$artifact_root" 2>/dev/null || true)" = '700' ] || task_fail 'Prepared ADB extroot artifact directory is missing or unsafe.'
+		[ "$(jsonfilter -i "$job_dir/metadata.json" -e '@.artifacts[0].name' 2>/dev/null || true)" = "$expected_artifact" ] || task_fail 'Prepared ADB artifact declaration does not match the operation.'
+		[ "$(jsonfilter -i "$job_dir/metadata.json" -e '@.artifacts[0].storage' 2>/dev/null || true)" = 'extroot' ] || task_fail 'Prepared ADB artifact is not bound to extroot storage.'
+	fi
+	for adb_arg in "$@"; do
+		case "$adb_arg" in
+			/overlay/ddk-field-console/artifacts/*)
+				[ -n "$expected_artifact" ] && [ "$adb_arg" = "$artifact_root/$expected_artifact" ] || task_fail 'Prepared ADB argv escaped its exact extroot artifact path.' ;;
+		esac
+	done
+
+	input_id=""
+	input_path=""
+	if [ -f "$job_dir/input-uploads.json" ] && [ ! -L "$job_dir/input-uploads.json" ]; then
+		input_id="$(jsonfilter -i "$job_dir/input-uploads.json" -e '@[0].id' 2>/dev/null || true)"
+		input_kind="$(jsonfilter -i "$job_dir/input-uploads.json" -e '@[0].kind' 2>/dev/null || true)"
+		input_path="$(jsonfilter -i "$job_dir/input-uploads.json" -e '@[0].sealed_path' 2>/dev/null || true)"
+		input_size="$(jsonfilter -i "$job_dir/input-uploads.json" -e '@[0].size' 2>/dev/null || true)"
+		input_sha256="$(jsonfilter -i "$job_dir/input-uploads.json" -e '@[0].sha256' 2>/dev/null || true)"
+		second_input="$(jsonfilter -i "$job_dir/input-uploads.json" -e '@[1].id' 2>/dev/null || true)"
+		case "$input_id" in upload-[0-9]*-[0-9]*-[0-9]*) ;; *) task_fail 'Prepared ADB input upload ID is invalid.' ;; esac
+		[ -z "$second_input" ] || task_fail 'Prepared ADB job unexpectedly contains multiple input uploads.'
+		[ "$input_path" = "/overlay/ddk-field-console/uploads/$input_id/sealed.bin" ] || task_fail 'Prepared ADB input path escaped its exact DDK upload directory.'
+		case "$input_size" in ''|*[!0-9]*) task_fail 'Prepared ADB input size is invalid.' ;; esac
+		[ "$input_size" -ge 1 ] && [ "$input_size" -le 1073741824 ] || task_fail 'Prepared ADB input size is outside the appliance range.'
+		case "$input_sha256" in *[!0-9a-f]*|'') task_fail 'Prepared ADB input SHA-256 is invalid.' ;; esac
+		[ "${#input_sha256}" -eq 64 ] || task_fail 'Prepared ADB input SHA-256 length is invalid.'
+		[ -f "$input_path" ] && [ ! -L "$input_path" ] && [ "$(stat -c '%s' "$input_path")" = "$input_size" ] && [ "$(stat -c '%a' "$input_path")" = '600' ] || task_fail 'Sealed ADB input file no longer matches its validated metadata.'
+		[ -d "${input_path%/sealed.bin}/payload.bin" ] || task_fail 'Sealed ADB input write path is not closed.'
+		case "$operation:$input_kind" in push:firmware_image|push:android_package|push:android_backup|push:device_input|install:android_package|restore:android_backup) ;; *) task_fail 'Prepared ADB input kind does not match the selected operation.' ;; esac
+		if [ "$operation" = 'restore' ] && ! head -c 15 "$input_path" | grep -Fqx 'ANDROID BACKUP'; then task_fail 'Sealed ADB restore input has an invalid backup header.'; fi
+		input_argv_matches=0
+		for adb_arg in "$@"; do [ "$adb_arg" != "$input_path" ] || input_argv_matches=$((input_argv_matches + 1)); done
+		[ "$input_argv_matches" -eq 1 ] || task_fail 'Prepared ADB argv does not reference exactly one validated sealed input.'
+		/usr/bin/timeout 300 /usr/bin/sha256sum "$input_path" > "$job_dir/adb-upload.sha256" 2>/dev/null &
+		child_pid=$!
+		hash_result=0
+		wait "$child_pid" 2>/dev/null || hash_result=$?
+		child_pid=""
+		[ "$hash_result" -eq 0 ] && [ "$(awk 'NR == 1 {print $1}' "$job_dir/adb-upload.sha256")" = "$input_sha256" ] || task_fail 'Sealed ADB input failed worker-side SHA-256 verification.'
+	else
+		case "$operation" in push|install|restore) task_fail 'Prepared ADB operation requires one sealed DDK input upload.' ;; esac
+	fi
+
+	valid_adb_package() {
+		adb_package_value="$1"
+		[ "${#adb_package_value}" -ge 3 ] && [ "${#adb_package_value}" -le 192 ] || return 1
+		case "$adb_package_value" in [A-Za-z]*.*) ;; *) return 1 ;; esac
+		case "$adb_package_value" in *..*|*.) return 1 ;; esac
+		case "$adb_package_value" in *[!A-Za-z0-9_.]*) return 1 ;; esac
+	}
+
+	valid_adb_remote_path() {
+		adb_remote_value="$1"
+		[ "${#adb_remote_value}" -ge 2 ] && [ "${#adb_remote_value}" -le 256 ] || return 1
+		case "$adb_remote_value" in /*) ;; *) return 1 ;; esac
+		case "$adb_remote_value" in *//*|*/../*|*/..|*/./*|*/.) return 1 ;; esac
+		case "$adb_remote_value" in *[!A-Za-z0-9_./+@%:=\ -]*) return 1 ;; esac
+	}
+
+	validate_adb_native_argv() {
+		[ "$#" -ge 6 ] || return 1
+		shift 5
+		adb_native_command="$1"
+		shift
+		case "$operation" in
+			get_state) [ "$adb_native_command" = 'get-state' ] && [ "$#" -eq 0 ] ;;
+			get_serialno) [ "$adb_native_command" = 'get-serialno' ] && [ "$#" -eq 0 ] ;;
+			get_devpath) [ "$adb_native_command" = 'get-devpath' ] && [ "$#" -eq 0 ] ;;
+			getprop)
+				[ "$adb_native_command" = 'shell' ] && [ "${1:-}" = 'getprop' ] || return 1
+				shift
+				[ "$#" -le 1 ] || return 1
+				if [ "$#" -eq 1 ]; then case "$1" in ''|*[!A-Za-z0-9_.-]*) return 1 ;; esac; fi ;;
+			list_packages)
+				[ "$adb_native_command" = 'shell' ] && [ "${1:-}" = 'pm' ] && [ "${2:-}" = 'list' ] && [ "${3:-}" = 'packages' ] || return 1
+				shift 3
+				adb_package_filter_seen=0
+				for adb_option in "$@"; do
+					case "$adb_option" in
+						-3|-s|-e|-d|-f) ;;
+						''|*[!A-Za-z0-9_.-]*) return 1 ;;
+						*) [ "$adb_package_filter_seen" -eq 0 ] || return 1; adb_package_filter_seen=1 ;;
+					esac
+				done ;;
+			logcat)
+				[ "$adb_native_command" = 'logcat' ] && [ "${1:-}" = '-d' ] && [ "${2:-}" = '-v' ] && [ "${4:-}" = '-t' ] || return 1
+				case "${3:-}" in brief|process|tag|thread|raw|time|threadtime|long) ;; *) return 1 ;; esac
+				case "${5:-}" in ''|*[!0-9]*) return 1 ;; esac
+				shift 5
+				for adb_filter in "$@"; do case "$adb_filter" in *':'[VDIWEFS]) case "$adb_filter" in *[!A-Za-z0-9_.:*-]*) return 1 ;; esac ;; *) return 1 ;; esac; done ;;
+			bugreport) [ "$adb_native_command" = 'bugreport' ] && [ "$#" -eq 0 ] ;;
+			pull)
+				[ "$adb_native_command" = 'pull' ] || return 1
+				if [ "${1:-}" = '-a' ]; then shift; fi
+				[ "$#" -eq 2 ] && valid_adb_remote_path "$1" && [ "$2" = "$artifact_root/android-pull.bin" ] ;;
+			backup)
+				[ "$adb_native_command" = 'backup' ] && [ "${1:-}" = '-f' ] && [ "${2:-}" = "$artifact_root/android-backup.ab" ] || return 1
+				shift 2
+				adb_apk_choice=0; adb_obb_choice=0; adb_shared_choice=0; adb_shared_enabled=0; adb_all_choice=0; adb_system_choice=0; adb_package_count=0
+				for adb_option in "$@"; do
+					case "$adb_option" in
+						-apk|-noapk) [ "$adb_apk_choice" -eq 0 ] || return 1; adb_apk_choice=1 ;;
+						-obb|-noobb) [ "$adb_obb_choice" -eq 0 ] || return 1; adb_obb_choice=1 ;;
+						-shared|-noshared) [ "$adb_shared_choice" -eq 0 ] || return 1; adb_shared_choice=1; [ "$adb_option" != '-shared' ] || adb_shared_enabled=1 ;;
+						-all) [ "$adb_all_choice" -eq 0 ] || return 1; adb_all_choice=1 ;;
+						-system|-nosystem) [ "$adb_system_choice" -eq 0 ] || return 1; adb_system_choice=1 ;;
+						*) valid_adb_package "$adb_option" || return 1; adb_package_count=$((adb_package_count + 1)); [ "$adb_package_count" -le 128 ] || return 1 ;;
+					esac
+				done
+				[ "$adb_apk_choice" -eq 1 ] && [ "$adb_obb_choice" -eq 1 ] && [ "$adb_shared_choice" -eq 1 ] || return 1
+				if [ "$adb_all_choice" -eq 1 ]; then [ "$adb_system_choice" -eq 1 ] || return 1; else [ "$adb_system_choice" -eq 0 ] || return 1; fi
+				[ "$adb_all_choice" -eq 1 ] || [ "$adb_shared_enabled" -eq 1 ] || [ "$adb_package_count" -gt 0 ] ;;
+			push) [ "$adb_native_command" = 'push' ] && [ "$#" -eq 3 ] && [ "$1" = '-p' ] && [ "$2" = "$input_path" ] && valid_adb_remote_path "$3" ;;
+			install)
+				[ "$adb_native_command" = 'install' ] && [ "$#" -ge 1 ] || return 1
+				while [ "$#" -gt 1 ]; do case "$1" in -r|-t|-d|-s) shift ;; *) return 1 ;; esac; done
+				[ "$1" = "$input_path" ] ;;
+			uninstall)
+				[ "$adb_native_command" = 'uninstall' ] || return 1
+				if [ "${1:-}" = '-k' ]; then shift; fi
+				[ "$#" -eq 1 ] && valid_adb_package "$1" ;;
+			restore) [ "$adb_native_command" = 'restore' ] && [ "$#" -eq 1 ] && [ "$1" = "$input_path" ] ;;
+			reboot) [ "$adb_native_command" = 'reboot' ] && { [ "$#" -eq 0 ] || { [ "$#" -eq 1 ] && { [ "$1" = 'bootloader' ] || [ "$1" = 'recovery' ]; }; }; } ;;
+			root|remount|usb) [ "$adb_native_command" = "$operation" ] && [ "$#" -eq 0 ] ;;
+			tcpip) [ "$adb_native_command" = 'tcpip' ] && [ "$#" -eq 1 ] || return 1; case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -ge 1024 ] && [ "$1" -le 65535 ] ;;
+			*) return 1 ;;
+		esac
+	}
+	validate_adb_native_argv "$@" || task_fail 'Prepared ADB argv failed independent operation-specific validation.'
+
+	if netstat -lntp 2>/dev/null | grep -Eq '(^|[.:])5038[[:space:]]'; then task_fail 'DDK isolated ADB port 5038 is already in use; no server was started.'; fi
+	adb_server_owned=1
+	/usr/bin/adb -P 5038 devices -l > "$job_dir/adb-devices.txt" 2> "$job_dir/adb-devices.stderr" &
+	child_pid=$!
+	discovery_deadline=$(( $(date +%s) + 15 ))
+	while kill -0 "$child_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$discovery_deadline" ]; then kill -TERM "$child_pid" 2>/dev/null || true; sleep 1; kill -KILL "$child_pid" 2>/dev/null || true; break; fi
+		sleep 1
+	done
+	discovery_result=0
+	wait "$child_pid" 2>/dev/null || discovery_result=$?
+	child_pid=""
+	[ "$discovery_result" -eq 0 ] || task_fail 'Isolated ADB device discovery failed.'
+	netstat -lntp 2>/dev/null | grep -E '127[.]0[.]0[.]1:5038[[:space:]]' >/dev/null || task_fail 'Temporary ADB server did not bind only to localhost port 5038.'
+	awk -v serial="$adb_serial" '$1 == serial && $2 == "device" {found=1} END {exit found ? 0 : 1}' "$job_dir/adb-devices.txt" || task_fail 'Selected ADB serial is no longer present in the authorized device state.'
+
+	adb_output="$job_dir/adb.output"
+	adb_error="$job_dir/adb.stderr"
+	artifact_path=""
+	file_blocks=256
+	case "$operation" in
+		logcat) artifact_path="$artifact_root/android-logcat.txt"; file_blocks=16384 ;;
+		bugreport) artifact_path="$artifact_root/android-bugreport.txt"; file_blocks=524288 ;;
+		pull) file_blocks=524288 ;;
+		backup) artifact_path="$artifact_root/android-backup.ab"; file_blocks=2097152 ;;
+	esac
+	native_output="$adb_output"
+	case "$operation" in logcat|bugreport) native_output="$artifact_path" ;; esac
+	{
+		printf '%s\n' 'DIGITAL DROPKICK - ANDROID ADB OPERATOR'
+		printf '%s\n' 'Native binary: /usr/bin/adb 1.0.32'
+		printf 'Validated target/operation: %s / %s\n' "$adb_serial" "$operation"
+		printf '%s\n' 'Server lifecycle: isolated localhost port 5038; killed on completion, failure, or cancellation'
+		printf 'Started (UTC): '
+		date -u
+	} > "$job_dir/stdout"
+	(
+		ulimit -f "$file_blocks"
+		exec "$@"
+	) > "$native_output" 2> "$adb_error" &
+	child_pid=$!
+	deadline_epoch=$(( $(date +%s) + wall_timeout ))
+	timed_out=0
+	while kill -0 "$child_pid" 2>/dev/null; do
+		if [ "$(date +%s)" -ge "$deadline_epoch" ]; then timed_out=1; kill -TERM "$child_pid" 2>/dev/null || true; sleep 2; kill -KILL "$child_pid" 2>/dev/null || true; break; fi
+		sleep 1
+	done
+	child_result=0
+	wait "$child_pid" 2>/dev/null || child_result=$?
+	child_pid=""
+	cleanup_adb_server
+	if netstat -lntp 2>/dev/null | grep -Eq '(^|[.:])5038[[:space:]]'; then printf '%s\n' 'Temporary ADB server or listener remained after cleanup.' >> "$job_dir/stderr"; result=65; fi
+	if [ "$timed_out" -eq 1 ]; then printf 'ADB operation exceeded the validated %s-second wall timeout.\n' "$wall_timeout" >> "$job_dir/stderr"; result=124
+	elif [ "$child_result" -ne 0 ]; then head -c 32768 "$adb_error" >> "$job_dir/stderr"; result="$child_result"; fi
+
+	if [ "$result" -eq 0 ]; then
+		case "$operation" in
+			logcat)
+				[ -f "$artifact_path" ] && [ ! -L "$artifact_path" ] && [ -s "$artifact_path" ] && [ "$(stat -c '%s' "$artifact_path")" -le 8388608 ] || result=65 ;;
+			bugreport)
+				[ -f "$artifact_path" ] && [ ! -L "$artifact_path" ] && [ -s "$artifact_path" ] && [ "$(stat -c '%s' "$artifact_path")" -le 268435456 ] || result=65 ;;
+			pull)
+				artifact_path="$artifact_root/android-pull.bin"
+				if [ ! -f "$artifact_path" ] || [ -L "$artifact_path" ] || [ ! -s "$artifact_path" ] || [ "$(stat -c '%s' "$artifact_path" 2>/dev/null || printf 0)" -gt 268435456 ]; then rm -rf -- "$artifact_path"; result=65; fi ;;
+			backup)
+				if ! { [ -f "$artifact_path" ] && [ ! -L "$artifact_path" ] && [ -s "$artifact_path" ] && [ "$(stat -c '%s' "$artifact_path")" -le 1073741824 ] && head -c 15 "$artifact_path" | grep -Fqx 'ANDROID BACKUP'; }; then result=65; fi ;;
+		esac
+	fi
+	if [ "$result" -eq 0 ] && [ -n "$artifact_path" ]; then
+		chmod 600 "$artifact_path"
+		printf 'Authenticated artifact ready: %s (%s bytes)\n' "${artifact_path##*/}" "$(stat -c '%s' "$artifact_path")" >> "$job_dir/stdout"
+	elif [ "$result" -ne 0 ]; then
+		cleanup_adb_artifacts
+		printf '%s\n' 'ADB output artifact was absent, unsafe, invalid, or exceeded its reviewed ceiling.' >> "$job_dir/stderr"
+	fi
+	if [ -s "$adb_output" ]; then printf '\n[NATIVE OUTPUT]\n' >> "$job_dir/stdout"; head -c 131072 "$adb_output" >> "$job_dir/stdout"; fi
+	if [ -s "$adb_error" ] && [ "$result" -eq 0 ]; then head -c 32768 "$adb_error" >> "$job_dir/stderr"; fi
+	printf 'Completed (UTC): ' >> "$job_dir/stdout"
+	date -u >> "$job_dir/stdout"
+	head -c 131072 "$job_dir/stdout" > "$job_dir/stdout.next"
+	mv "$job_dir/stdout.next" "$job_dir/stdout"
+	rm -f "$adb_output" "$adb_error"
 elif [ "$task" = "tcpdump_lan_metadata" ]; then
 	[ -x /usr/sbin/tcpdump ] || task_fail 'Tcpdump is not installed at the reviewed path; the console did not attempt installation.'
 	command -v jsonfilter >/dev/null 2>&1 || task_fail 'The native jsonfilter helper is unavailable.'

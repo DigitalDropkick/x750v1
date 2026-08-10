@@ -13,5 +13,5 @@
     {"id": "can.capture", "class": "ACTION", "execution": "job", "enabled": true},
     {"id": "can.transmit", "class": "DISRUPTIVE", "execution": "job", "enabled": false}
   ],
-  "help_text": "Capture requires exactly one already-up physical canN interface and /usr/bin/candump. This target currently has neither; the console never configures bitrate/link state and never transmits."
+  "help_text": "This target currently has neither a physical canN nor candump/cansend payload. Structured receive, configuration, and confirmed transmit require those exact runtimes plus approved hardware and bus-impact tests."
 }
