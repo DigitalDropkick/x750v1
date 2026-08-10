@@ -1,0 +1,533 @@
+#!/bin/sh
+# shellcheck disable=SC2317
+
+set -eu
+umask 077
+
+job_id="${1:-}"
+task="${2:-}"
+job_root=/tmp/ddk/jobs
+lock_root=/tmp/ddk/locks
+artifact_root="/overlay/ddk-field-console/artifacts/$job_id"
+job_numbers="${job_id#job-}"
+job_epoch="${job_numbers%%-*}"
+job_owner="${job_numbers#*-}"
+
+[ "$job_numbers" != "$job_id" ] || exit 64
+[ "$job_epoch" != "$job_numbers" ] || exit 64
+case "$job_epoch:$job_owner" in *[!0-9:]*|:*|*:) exit 64 ;; esac
+case "$task" in phase3_openocd|phase3_avrdude|phase3_dfu|phase3_serial|phase3_storage|phase3_squashfs) ;; *) exit 64 ;; esac
+
+job_dir="$job_root/$job_id"
+[ -d "$job_dir" ] && [ ! -L "$job_dir" ] && [ -f "$job_dir/metadata.json" ] && [ ! -L "$job_dir/metadata.json" ] && [ -f "$job_dir/argv" ] && [ ! -L "$job_dir/argv" ] || exit 66
+
+status_set() {
+	printf '%s\n' "$1" > "$job_dir/status.next"
+	mv "$job_dir/status.next" "$job_dir/status"
+}
+
+native_pid=""
+worker_success=0
+workspace=""
+openocd_commands="$job_dir/openocd-commands.cfg"
+runtime_limit_kb=16777216
+
+stop_pid() {
+	stop_value="$1"
+	case "$stop_value" in ''|*[!0-9]*) return 0 ;; esac
+	kill -TERM "$stop_value" 2>/dev/null || true
+	sleep 1
+	kill -KILL "$stop_value" 2>/dev/null || true
+	wait "$stop_value" 2>/dev/null || true
+}
+
+cleanup_workspace() {
+	case "$workspace" in /overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/workspace-squashfs-recovery)
+		[ ! -e "$workspace" ] || rm -rf -- "$workspace"
+		;;
+	esac
+	workspace=""
+}
+
+cleanup_partial_artifacts() {
+	[ "$worker_success" -eq 0 ] || return 0
+	case "$artifact_root" in /overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*)
+		rm -f "$artifact_root/firmware-read.hex" "$artifact_root/firmware-read.bin" \
+			"$artifact_root/firmware-dfu-read.bin" "$artifact_root/firmware-serial-read.bin" \
+			"$artifact_root/storage-badblocks.txt" "$artifact_root/storage-image.raw" \
+			"$artifact_root/recovered-files.tar"
+		rmdir "$artifact_root" 2>/dev/null || true
+		;;
+	esac
+	rm -f "$job_dir/storage-image.sha256"
+}
+
+release_locks() {
+	cleanup_workspace
+	cleanup_partial_artifacts
+	rm -f "$openocd_commands" "$job_dir/phase3-native.out" "$job_dir/phase3-native.err" "$job_dir/phase3-tar.out" "$job_dir/phase3-tar.err" "$job_dir"/phase3-upload-*.sha256
+	[ -f "$job_dir/lock-keys" ] || return 0
+	while IFS= read -r lock_key; do
+		case "$lock_key" in ''|*[!a-z0-9_.-]*) continue ;; esac
+		lock_path="$lock_root/$lock_key"
+		[ "$(cat "$lock_path/owner" 2>/dev/null || true)" = "$job_id" ] || continue
+		rm -f "$lock_path/owner"
+		rmdir "$lock_path" 2>/dev/null || true
+	done < "$job_dir/lock-keys"
+}
+
+stop_job() {
+	trap - HUP INT TERM
+	[ -z "$native_pid" ] || stop_pid "$native_pid"
+	native_pid=""
+	status_set stopped
+	printf '%s\n' 'Phase 3 worker stopped by an authenticated DDK request; owned child, workspace, partial artifacts, and locks were cleaned.' >> "$job_dir/stderr"
+	exit 143
+}
+
+task_fail() {
+	printf '%s\n' "$1" >> "$job_dir/stderr"
+	status_set failed
+	exit 65
+}
+
+json_option() {
+	jsonfilter -i "$job_dir/metadata.json" -e "@.options.$1" 2>/dev/null || true
+}
+
+artifact_limit() {
+	wanted="$1"
+	artifact_index=0
+	while [ "$artifact_index" -lt 8 ]; do
+		artifact_name="$(jsonfilter -i "$job_dir/metadata.json" -e "@.artifacts[$artifact_index].name" 2>/dev/null || true)"
+		if [ "$artifact_name" = "$wanted" ]; then
+			jsonfilter -i "$job_dir/metadata.json" -e "@.artifacts[$artifact_index].max_size" 2>/dev/null || true
+			return
+		fi
+		artifact_index=$((artifact_index + 1))
+	done
+}
+
+validate_sealed_input() {
+	sealed_input="$1"
+	case "$sealed_input" in /overlay/ddk-field-console/uploads/upload-*/sealed.bin) ;; *) task_fail 'Prepared Phase 3 input path is outside DDK upload storage.' ;; esac
+	upload_dir="${sealed_input%/sealed.bin}"
+	upload_name="${upload_dir##*/}"
+	upload_numbers="${upload_name#upload-}"
+	upload_first="${upload_numbers%%-*}"
+	upload_rest="${upload_numbers#*-}"
+	upload_second="${upload_rest%%-*}"
+	upload_third="${upload_rest#*-}"
+	case "$upload_first:$upload_second:$upload_third" in *[!0-9:]*|:*|*:|*::*) task_fail 'Prepared Phase 3 upload ID is invalid.' ;; esac
+	if [ ! -f "$job_dir/input-uploads.json" ] || [ -L "$job_dir/input-uploads.json" ]; then task_fail 'Prepared Phase 3 input metadata is absent or unsafe.'; fi
+	input_match=0
+	input_index=0
+	while [ "$input_index" -lt 4 ]; do
+		input_path="$(jsonfilter -i "$job_dir/input-uploads.json" -e "@[$input_index].sealed_path" 2>/dev/null || true)"
+		if [ "$input_path" = "$sealed_input" ]; then
+			input_size="$(jsonfilter -i "$job_dir/input-uploads.json" -e "@[$input_index].size" 2>/dev/null || true)"
+			input_sha256="$(jsonfilter -i "$job_dir/input-uploads.json" -e "@[$input_index].sha256" 2>/dev/null || true)"
+			input_kind="$(jsonfilter -i "$job_dir/input-uploads.json" -e "@[$input_index].kind" 2>/dev/null || true)"
+			input_match=1
+			break
+		fi
+		input_index=$((input_index + 1))
+	done
+	[ "$input_match" -eq 1 ] || task_fail 'Prepared Phase 3 argv references an undeclared sealed input.'
+	case "$input_size" in ''|*[!0-9]*) task_fail 'Prepared Phase 3 input size is invalid.' ;; esac
+	case "$input_sha256" in ''|*[!0-9a-f]*) task_fail 'Prepared Phase 3 input SHA-256 is invalid.' ;; esac
+	[ "${#input_sha256}" -eq 64 ] || task_fail 'Prepared Phase 3 input SHA-256 length is invalid.'
+	case "$input_kind" in firmware_image|storage_image) ;; *) task_fail 'Prepared Phase 3 input kind is not allowed.' ;; esac
+	input_stat_size="$(stat -c '%s' "$sealed_input" 2>/dev/null || true)"
+	input_mode="$(stat -c '%a' "$sealed_input" 2>/dev/null || true)"
+	if [ ! -f "$sealed_input" ] || [ -L "$sealed_input" ] || [ "$input_stat_size" != "$input_size" ] || [ "$input_mode" != 600 ]; then task_fail 'Prepared Phase 3 sealed input failed path, mode, or size validation.'; fi
+	input_hash_file="$job_dir/phase3-upload-$input_index.sha256"
+	/usr/bin/timeout 1800 /usr/bin/sha256sum "$sealed_input" > "$input_hash_file" 2>/dev/null &
+	native_pid=$!
+	hash_result=0
+	wait "$native_pid" 2>/dev/null || hash_result=$?
+	native_pid=""
+	if [ "$hash_result" -ne 0 ] || [ "$(awk 'NR == 1 {print $1}' "$input_hash_file")" != "$input_sha256" ]; then task_fail 'Prepared Phase 3 sealed input failed worker-side SHA-256 verification.'; fi
+	rm -f "$input_hash_file"
+}
+
+sealed_path_for_upload_id() {
+	wanted_id="$1"
+	case "$wanted_id" in upload-[0-9]*-[0-9]*-[0-9]*) ;; *) task_fail 'Prepared upload selector is invalid.' ;; esac
+	index=0
+	while [ "$index" -lt 4 ]; do
+		candidate="$(jsonfilter -i "$job_dir/input-uploads.json" -e "@[$index].id" 2>/dev/null || true)"
+		if [ "$candidate" = "$wanted_id" ]; then
+			jsonfilter -i "$job_dir/input-uploads.json" -e "@[$index].sealed_path" 2>/dev/null || true
+			return
+		fi
+		index=$((index + 1))
+	done
+}
+
+validate_usb_target() {
+	topology="$(json_option device_topology)"
+	usb_id="$(json_option device_usb_id)"
+	case "$topology" in ''|*[!A-Za-z0-9_.:-]*) task_fail 'Prepared firmware USB topology is invalid.' ;; esac
+	case "$usb_id" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f]:[0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) task_fail 'Prepared firmware USB ID is invalid.' ;; esac
+	base="/sys/bus/usb/devices/$topology"
+	if [ ! -d "$base" ] || [ "$(cat "$base/idVendor" 2>/dev/null || true):$(cat "$base/idProduct" 2>/dev/null || true)" != "$usb_id" ]; then task_fail 'The exact selected firmware USB target is no longer present.'; fi
+	expected_serial="$(json_option device_serial)"
+	case "$expected_serial" in '') ;; *[!A-Za-z0-9._-]*) task_fail 'Prepared firmware USB serial identity is invalid.' ;; esac
+	if [ -n "$expected_serial" ] && { [ "${#expected_serial}" -gt 128 ] || [ "$(cat "$base/serial" 2>/dev/null || true)" != "$expected_serial" ]; }; then task_fail 'The selected firmware USB serial identity changed after review.'; fi
+	reviewed_programmer=0
+	case "$usb_id" in
+		03eb:2103|03eb:2104|03eb:2107|03eb:2141|03eb:2145|0483:3744|0483:3748|0483:374b|0483:374d|0483:374e|0483:3752|0483:3753|0483:3754|09fb:6001|09fb:6002|09fb:6003|0d28:0204|15ba:0003|15ba:0004|15ba:002a|15ba:002b|1d50:6008|1d50:6018|2e8a:000c|1366:*) reviewed_programmer=1 ;;
+	esac
+	descriptor="$(printf '%s %s' "$(cat "$base/manufacturer" 2>/dev/null || true)" "$(cat "$base/product" 2>/dev/null || true)" | tr '[:upper:]' '[:lower:]')"
+	if printf '%s' "$descriptor" | grep -Eq 'j-?link|st-?link|cmsis[ -]?dap|daplink|picoprobe|debug probe|black magic probe|usb[ -]?blaster|atmel[ -]?ice|avr dragon|jtagice|avrisp|pickit|bus pirate|tigard|ft232h'; then reviewed_programmer=1; fi
+	for interface in "$base":*; do
+		[ -d "$interface" ] || continue
+		signature="$(cat "$interface/bInterfaceClass" 2>/dev/null || true):$(cat "$interface/bInterfaceSubClass" 2>/dev/null || true):$(cat "$interface/bInterfaceProtocol" 2>/dev/null || true)"
+		case "$signature" in fe:01:01|fe:01:02) reviewed_programmer=1 ;; esac
+	done
+	[ "$reviewed_programmer" -eq 1 ] || task_fail 'Firmware USB target no longer matches the reviewed programmer/DFU identity table.'
+}
+
+validate_dfu_target() {
+	validate_usb_target
+	expected_busnum="$(json_option busnum)"
+	expected_devnum="$(json_option devnum)"
+	case "$expected_busnum:$expected_devnum" in *[!0-9:]*) task_fail 'Prepared DFU bus/device binding is invalid.' ;; esac
+	if [ "$(cat "/sys/bus/usb/devices/$topology/busnum" 2>/dev/null || true)" != "$expected_busnum" ] ||
+	   [ "$(cat "/sys/bus/usb/devices/$topology/devnum" 2>/dev/null || true)" != "$expected_devnum" ]; then
+		task_fail 'The selected DFU bus/device address changed after review.'
+	fi
+	dfu_found=0
+	for interface in "/sys/bus/usb/devices/$topology":*; do
+		[ -d "$interface" ] || continue
+		signature="$(cat "$interface/bInterfaceClass" 2>/dev/null || true):$(cat "$interface/bInterfaceSubClass" 2>/dev/null || true):$(cat "$interface/bInterfaceProtocol" 2>/dev/null || true)"
+		case "$signature" in fe:01:01|fe:01:02) dfu_found=1 ;; esac
+	done
+	[ "$dfu_found" -eq 1 ] || task_fail 'The selected USB target no longer exposes a DFU runtime/mode interface.'
+}
+
+validate_serial_target() {
+	serial_device="$(json_option device)"
+	case "$serial_device" in /dev/ttyUSB[0-9]*|/dev/ttyACM[0-9]*) ;; *) task_fail 'Prepared serial programming node is invalid.' ;; esac
+	if [ ! -c "$serial_device" ] || [ -L "$serial_device" ]; then task_fail 'Selected serial programming node is no longer a direct character device.'; fi
+	serial_name="${serial_device#/dev/}"
+	serial_vendor="$(cat "/sys/class/tty/$serial_name/device/../../idVendor" 2>/dev/null || true)"
+	serial_product="$(cat "/sys/class/tty/$serial_name/device/../../idProduct" 2>/dev/null || true)"
+	[ "$serial_vendor:$serial_product" != '2c7c:0125' ] || task_fail 'The Quectel EC25 modem ports are reserved and cannot be used for programming.'
+	[ "$serial_vendor:$serial_product" = "$(json_option device_usb_id)" ] || task_fail 'Serial programming USB attribution changed after review.'
+	expected_topology="$(json_option device_topology)"
+	case "$expected_topology" in ''|*[!A-Za-z0-9_.:-]*) task_fail 'Prepared serial programming topology is invalid.' ;; esac
+	current_topology="$(basename "$(readlink -f "/sys/class/tty/$serial_name/device/../.." 2>/dev/null || true)")"
+	[ "$current_topology" = "$expected_topology" ] || task_fail 'Serial programming USB topology changed after review.'
+}
+
+storage_disk_for_node() {
+	storage_name="${1#/dev/}"
+	case "$storage_name" in sd[a-z]) printf '%s' "$storage_name" ;; sd[a-z][0-9]*) printf '%s' "$storage_name" | sed 's/[0-9][0-9]*$//' ;; *) return 1 ;; esac
+}
+
+validate_storage_target() {
+	storage_device="$(json_option device)"
+	storage_disk="$(storage_disk_for_node "$storage_device" 2>/dev/null || true)"
+	[ -n "$storage_disk" ] || task_fail 'Prepared storage target is not a supported USB block node.'
+	if [ ! -b "$storage_device" ] || [ -L "$storage_device" ]; then task_fail 'Selected storage target is no longer a direct block device.'; fi
+	storage_sysfs="$(readlink -f "/sys/class/block/$storage_disk" 2>/dev/null || true)"
+	case "$storage_sysfs" in */usb/*) ;; *) task_fail 'Selected storage target is no longer attributed to USB.' ;; esac
+	if awk -v disk="/dev/$storage_disk" '$1 ~ ("^" disk "[0-9]*$") && ($2 == "/" || $2 == "/overlay" || $2 == "/rom" || $2 == "/mnt/extroot") {found=1} END {exit found ? 0 : 1}' /proc/mounts; then task_fail 'Selected storage disk backs the router system or active extroot.'; fi
+	if { [ "$action_id" != storage.inspect ] || [ "${operation#smart_}" = "$operation" ]; } && awk -v disk="/dev/$storage_disk" '$1 ~ ("^" disk "[0-9]*$") {found=1} END {exit found ? 0 : 1}' /proc/mounts; then task_fail 'Selected storage disk or one of its partitions is mounted.'; fi
+	if awk -v disk="/dev/$storage_disk" 'NR > 1 && $1 ~ ("^" disk "[0-9]*$") {found=1} END {exit found ? 0 : 1}' /proc/swaps; then task_fail 'Selected storage disk backs active swap or system state.'; fi
+	expected_size="$(json_option device_size)"
+	actual_size_sectors="$(cat "/sys/class/block/${storage_device#/dev/}/size" 2>/dev/null || true)"
+	case "$expected_size:$actual_size_sectors" in *[!0-9:]*) task_fail 'Storage size binding is invalid.' ;; esac
+	[ $((actual_size_sectors * 512)) -eq "$expected_size" ] || task_fail 'Storage target size changed after review.'
+}
+
+validate_openocd_argv() {
+	[ "$1" = /usr/bin/openocd ] || task_fail 'Prepared OpenOCD argv lost its exact executable.'
+	shift
+	case "$#" in 2)
+		[ "$1" = -f ] || task_fail 'Prepared OpenOCD board argv is invalid.'
+		case "$2" in /usr/share/openocd/scripts/board/*.cfg) ;; *) task_fail 'Prepared OpenOCD board config is outside the installed board inventory.' ;; esac
+		;;
+	4)
+		if [ "$1" != -f ] || [ "$3" != -f ]; then task_fail 'Prepared OpenOCD interface/target argv is invalid.'; fi
+		case "$2:$4" in /usr/share/openocd/scripts/interface/*.cfg:/usr/share/openocd/scripts/target/*.cfg) ;; *) task_fail 'Prepared OpenOCD interface/target configs are outside their installed inventories.' ;; esac
+		;;
+	*) task_fail 'Prepared OpenOCD argv has an invalid shape.' ;;
+	esac
+	while [ "$#" -gt 0 ]; do
+		config_path="$2"
+		config_real="$(readlink -f "$config_path" 2>/dev/null || true)"
+		case "$config_real" in /usr/share/openocd/scripts/*.cfg) ;; *) task_fail 'Prepared OpenOCD config did not resolve inside the installed script tree.' ;; esac
+		[ -f "$config_real" ] || task_fail 'Prepared OpenOCD config is no longer a regular installed file.'
+		shift 2
+	done
+}
+
+run_native() {
+	native_out="$1"; native_err="$2"; shift 2
+	"$@" > "$native_out" 2> "$native_err" &
+	native_pid=$!
+	started_epoch="$(date +%s)"
+	deadline_epoch=$((started_epoch + wall_timeout))
+	timed_out=0
+	limit_exceeded=0
+	reserve_exhausted=0
+	while kill -0 "$native_pid" 2>/dev/null; do
+		now_epoch="$(date +%s)"
+		if [ "$now_epoch" -ge "$deadline_epoch" ]; then timed_out=1; stop_pid "$native_pid"; break; fi
+		if [ -d "$artifact_root" ]; then
+			artifact_kb="$(du -sk "$artifact_root" 2>/dev/null | awk 'NR == 1 {print $1}')"
+			case "$artifact_kb" in ''|*[!0-9]*) artifact_kb=0 ;; esac
+			if [ "$artifact_kb" -gt "$runtime_limit_kb" ]; then limit_exceeded=1; stop_pid "$native_pid"; break; fi
+			available_kb="$(df -Pk /overlay | awk 'NR == 2 {print $4}')"
+			case "$available_kb" in ''|*[!0-9]*) available_kb=0 ;; esac
+			if [ "$available_kb" -lt 102400 ]; then reserve_exhausted=1; stop_pid "$native_pid"; break; fi
+		fi
+		sleep 1
+	done
+	native_result=0
+	wait "$native_pid" 2>/dev/null || native_result=$?
+	native_pid=""
+	if [ "$timed_out" -eq 1 ]; then printf 'Native operation exceeded the validated %s-second wall timeout.\n' "$wall_timeout" >> "$job_dir/stderr"; native_result=124; fi
+	if [ "$limit_exceeded" -eq 1 ]; then printf '%s\n' 'Phase 3 output exceeded the declared artifact/workspace ceiling.' >> "$job_dir/stderr"; native_result=65; fi
+	if [ "$reserve_exhausted" -eq 1 ]; then printf '%s\n' 'Phase 3 operation stopped before violating the protected 100 MiB extroot reserve.' >> "$job_dir/stderr"; native_result=65; fi
+}
+
+validate_artifact() {
+	artifact_name="$1"; allow_empty="${2:-0}"
+	case "$artifact_name" in firmware-read.hex|firmware-read.bin|firmware-dfu-read.bin|firmware-serial-read.bin|storage-badblocks.txt|storage-image.raw|recovered-files.tar|storage-image.sha256) ;; *) task_fail 'Worker selected an unregistered Phase 3 artifact.' ;; esac
+	if [ "$artifact_name" = storage-image.sha256 ]; then artifact_path="$job_dir/$artifact_name"; else artifact_path="$artifact_root/$artifact_name"; fi
+	artifact_max="$(artifact_limit "$artifact_name")"
+	case "$artifact_max" in ''|*[!0-9]*) task_fail 'Artifact ceiling is absent or invalid.' ;; esac
+	artifact_size="$(stat -c '%s' "$artifact_path" 2>/dev/null || true)"
+	case "$artifact_size" in ''|*[!0-9]*) task_fail 'Native operation did not create a regular Phase 3 artifact.' ;; esac
+	if [ ! -f "$artifact_path" ] || [ -L "$artifact_path" ] || [ "$artifact_size" -gt "$artifact_max" ]; then task_fail 'Phase 3 artifact failed path/type/size validation.'; fi
+	[ "$allow_empty" -eq 1 ] || [ "$artifact_size" -gt 0 ] || task_fail 'Phase 3 artifact is unexpectedly empty.'
+	chmod 600 "$artifact_path"
+}
+
+trap release_locks EXIT
+trap stop_job HUP INT TERM
+printf '%s\n' "$$" > "$job_dir/pid"
+: > "$job_dir/stdout"
+: > "$job_dir/stderr"
+status_set running
+
+action_id="$(jsonfilter -i "$job_dir/metadata.json" -e '@.action_id' 2>/dev/null || true)"
+operation="$(json_option operation)"
+[ -n "$operation" ] || operation="${action_id#*.}"
+wall_timeout="$(cat "$job_dir/wall-timeout" 2>/dev/null || true)"
+case "$wall_timeout" in ''|*[!0-9]*) task_fail 'Prepared Phase 3 wall timeout is invalid.' ;; esac
+if [ "$wall_timeout" -lt 10 ] || [ "$wall_timeout" -gt 86400 ]; then task_fail 'Prepared Phase 3 wall timeout is outside the reviewed range.'; fi
+case "$task:$action_id" in
+	phase3_openocd:firmware.openocd|phase3_avrdude:firmware.avrdude|phase3_dfu:firmware.dfu|phase3_serial:firmware.serial) ;;
+	phase3_storage:storage.inspect|phase3_storage:storage.repair|phase3_storage:storage.image|phase3_storage:storage.restore|phase3_squashfs:storage.squashfs) ;;
+	*) task_fail 'Prepared Phase 3 task does not match its exact action ID.' ;;
+esac
+
+declared_extroot_kb=0
+artifact_index=0
+while [ "$artifact_index" -lt 8 ]; do
+	declared_name="$(jsonfilter -i "$job_dir/metadata.json" -e "@.artifacts[$artifact_index].name" 2>/dev/null || true)"
+	[ -n "$declared_name" ] || break
+	declared_storage="$(jsonfilter -i "$job_dir/metadata.json" -e "@.artifacts[$artifact_index].storage" 2>/dev/null || true)"
+	declared_max="$(jsonfilter -i "$job_dir/metadata.json" -e "@.artifacts[$artifact_index].max_size" 2>/dev/null || true)"
+	case "$declared_max" in ''|*[!0-9]*) task_fail 'Prepared Phase 3 artifact ceiling is invalid.' ;; esac
+	if [ "$declared_storage" = extroot ]; then declared_extroot_kb=$((declared_extroot_kb + (declared_max + 1023) / 1024)); fi
+	artifact_index=$((artifact_index + 1))
+done
+if [ "$declared_extroot_kb" -gt 0 ]; then runtime_limit_kb=$((declared_extroot_kb + 1024)); fi
+if [ "$task" = phase3_squashfs ] && [ "$operation" = extract ]; then
+	output_limit_mib="$(json_option output_limit_mib)"
+	case "$output_limit_mib" in ''|*[!0-9]*) task_fail 'Prepared SquashFS output ceiling is invalid.' ;; esac
+	if [ "$output_limit_mib" -lt 1 ] || [ "$output_limit_mib" -gt 8192 ]; then task_fail 'Prepared SquashFS output ceiling is outside the reviewed range.'; fi
+	runtime_limit_kb=$((output_limit_mib * 1024 + 1024))
+fi
+
+set --
+argv_count=0
+while IFS= read -r argv_item; do
+	[ -n "$argv_item" ] || task_fail 'Prepared Phase 3 argv contains an empty element.'
+	case "$argv_item" in *"$(printf '\r')"*|*"$(printf '\t')"*) task_fail 'Prepared Phase 3 argv contains a control character.' ;; esac
+	argv_count=$((argv_count + 1)); [ "$argv_count" -le 96 ] || task_fail 'Prepared Phase 3 argv exceeds the reviewed argument count.'
+	set -- "$@" "$argv_item"
+done < "$job_dir/argv"
+[ "$#" -ge 1 ] || task_fail 'Prepared Phase 3 argv is incomplete.'
+
+native_executable="$1"
+case "$task:$native_executable" in
+	phase3_openocd:/usr/bin/openocd|phase3_avrdude:/usr/bin/avrdude|phase3_dfu:/usr/bin/dfu-util|phase3_dfu:/usr/bin/dfu-programmer|phase3_serial:/usr/bin/stm32flash|phase3_serial:/usr/bin/bossac|phase3_serial:/usr/sbin/lpc21isp|phase3_storage:/usr/sbin/smartctl|phase3_storage:/usr/sbin/e2fsck|phase3_storage:/usr/sbin/badblocks|phase3_storage:/bin/dd|phase3_squashfs:/usr/sbin/unsquashfs) ;;
+	*) task_fail 'Prepared Phase 3 argv selected an executable outside the exact worker allowlist.' ;;
+esac
+[ -x "$native_executable" ] || task_fail 'Prepared Phase 3 native executable is unavailable.'
+
+case "$task" in
+	phase3_openocd) /usr/bin/openocd --version 2>&1 | grep -Fq 'Open On-Chip Debugger 0.11.0-v0.11.0-1-OpenWrt' || task_fail 'OpenOCD drifted from the reviewed 0.11.0 OpenWrt contract.' ;;
+	phase3_avrdude) /usr/bin/avrdude -? 2>&1 | grep -Fq 'avrdude version 6.3' || task_fail 'AVRDUDE drifted from the reviewed 6.3 contract.' ;;
+	phase3_dfu)
+		if [ "$native_executable" = /usr/bin/dfu-util ]; then [ "$(/usr/bin/dfu-util --version 2>&1 | sed -n '1p')" = 'dfu-util 0.11' ] || task_fail 'dfu-util drifted from the reviewed 0.11 contract.'
+		else [ "$(/usr/bin/dfu-programmer --version 2>&1 | sed -n '1p')" = 'dfu-programmer 0.7.2' ] || task_fail 'dfu-programmer drifted from the reviewed 0.7.2 contract.'; fi ;;
+	phase3_serial)
+		case "$native_executable" in
+			/usr/bin/stm32flash) /usr/bin/stm32flash -h 2>&1 | grep -Fq 'Usage: /usr/bin/stm32flash' || task_fail 'STM32Flash drifted from the reviewed 0.6 package contract.' ;;
+			/usr/bin/bossac) /usr/bin/bossac --help 2>&1 | grep -Fq 'BOSSA' || task_fail 'BOSSA drifted from the reviewed 1.9.1 package contract.' ;;
+			/usr/sbin/lpc21isp) /usr/sbin/lpc21isp 2>&1 | grep -Fq 'Version 1.97' || task_fail 'LPC21ISP drifted from the reviewed 1.97 contract.' ;;
+		esac ;;
+	phase3_storage)
+		case "$native_executable" in
+			/usr/sbin/smartctl) /usr/sbin/smartctl --version 2>&1 | grep -Fq 'smartctl 7.2 ' || task_fail 'smartctl drifted from the reviewed 7.2 contract.' ;;
+			/usr/sbin/e2fsck|/usr/sbin/badblocks) /usr/sbin/e2fsck -V 2>&1 | grep -Fq 'e2fsck 1.46.5' || task_fail 'e2fsprogs drifted from the reviewed 1.46.5 contract.' ;;
+			/bin/dd) /bin/dd --help 2>&1 | grep -Fq 'iflag=skip_bytes' || task_fail 'BusyBox dd drifted from the reviewed 1.35 byte-count contract.' ;;
+		esac ;;
+	phase3_squashfs) /usr/sbin/unsquashfs -version 2>&1 | grep -Fq 'unsquashfs version 4.5' || task_fail 'unsquashfs drifted from the reviewed 4.5 contract.' ;;
+esac
+
+avrdude_port_found=0
+avrdude_expected_port=""
+dfu_selector_found=0
+dfu_expected_selector=""
+if [ "$task" = phase3_avrdude ] && [ "$(json_option device_kind)" = usb ]; then
+	avrdude_expected_port=usb
+	[ -z "$(json_option device_serial)" ] || avrdude_expected_port="usb:$(json_option device_serial)"
+fi
+if [ "$task" = phase3_dfu ] && [ "$native_executable" = /usr/bin/dfu-programmer ]; then
+	dfu_expected_selector="$(json_option target):$(json_option busnum),$(json_option devnum)"
+fi
+for argv_item in "$@"; do
+	case "$argv_item" in *@JOB@*|*@ARTIFACT@*|*@UPLOAD@*|*@WORK@*) task_fail 'An unresolved DDK path placeholder reached the Phase 3 worker.' ;; esac
+	case "$argv_item" in
+		*"/overlay/ddk-field-console/uploads/"*"/sealed.bin"*)
+			upload_tail="${argv_item#*/overlay/ddk-field-console/uploads/}"
+			upload_id="${upload_tail%%/*}"
+			validate_sealed_input "/overlay/ddk-field-console/uploads/$upload_id/sealed.bin"
+			;;
+		/overlay/ddk-field-console/artifacts/*)
+			case "$argv_item" in "$artifact_root"/*) ;; *) task_fail 'Prepared Phase 3 argv escaped its exact artifact root.' ;; esac ;;
+		/overlay/*) task_fail 'Prepared Phase 3 argv references an unreviewed extroot path.' ;;
+	esac
+	if [ "$task" = phase3_storage ]; then
+		case "$argv_item" in
+			/dev/sd*|if=/dev/sd*|of=/dev/sd*)
+				argv_device="${argv_item#*=}"
+				[ "$argv_device" = "$(json_option device)" ] || task_fail 'Prepared storage argv is not bound to the exact reviewed block target.'
+				;;
+		esac
+	fi
+	if [ "$task" = phase3_serial ] || { [ "$task" = phase3_avrdude ] && [ "$(json_option device_kind)" = serial ]; }; then
+		case "$argv_item" in /dev/ttyUSB*|/dev/ttyACM*) [ "$argv_item" = "$(json_option device)" ] || task_fail 'Prepared firmware argv is not bound to the exact reviewed serial target.' ;; esac
+	fi
+	[ -z "$avrdude_expected_port" ] || [ "$argv_item" != "$avrdude_expected_port" ] || avrdude_port_found=1
+	[ -z "$dfu_expected_selector" ] || [ "$argv_item" != "$dfu_expected_selector" ] || dfu_selector_found=1
+done
+[ -z "$avrdude_expected_port" ] || [ "$avrdude_port_found" -eq 1 ] || task_fail 'Prepared AVRDUDE argv is not bound to the exact reviewed USB programmer identity.'
+[ -z "$dfu_expected_selector" ] || [ "$dfu_selector_found" -eq 1 ] || task_fail 'Prepared dfu-programmer argv is not bound to the exact reviewed bus/device address.'
+
+case "$task" in
+	phase3_openocd) validate_openocd_argv "$@"; validate_usb_target ;;
+	phase3_avrdude) if [ "$(json_option device_kind)" = serial ]; then validate_serial_target; else validate_usb_target; fi ;;
+	phase3_dfu) validate_dfu_target ;;
+	phase3_serial) validate_serial_target ;;
+	phase3_storage) validate_storage_target ;;
+esac
+
+native_out="$job_dir/phase3-native.out"
+native_err="$job_dir/phase3-native.err"
+native_output_artifact=0
+post_note=""
+if [ "$task" = phase3_squashfs ] && [ "$operation" = extract ]; then workspace="$artifact_root/workspace-squashfs-recovery"; fi
+
+if [ "$task" = phase3_openocd ]; then
+	{
+		printf '%s\n' 'gdb_port disabled' 'tcl_port disabled' 'telnet_port disabled'
+		printf 'adapter usb location %s\n' "$(json_option device_topology)"
+		adapter_speed="$(json_option adapter_speed)"; [ "$adapter_speed" = 0 ] || printf 'adapter speed %s\n' "$adapter_speed"
+		printf '%s\n' 'init'
+		if [ "$operation" = probe ]; then printf '%s\n' 'targets' 'flash banks' 'shutdown'
+		else
+			upload_id="$(json_option upload)"; firmware_input="$(sealed_path_for_upload_id "$upload_id")"; [ -n "$firmware_input" ] || task_fail 'OpenOCD sealed input could not be resolved.'; validate_sealed_input "$firmware_input"
+			printf '%s\n' 'reset halt'
+			printf 'program %s' "$firmware_input"
+			address="$(json_option address)"; [ -z "$address" ] || printf ' %s' "$address"
+			[ "$(json_option verify)" != true ] || printf '%s' ' verify'
+			[ "$(json_option reset)" != true ] || printf '%s' ' reset'
+			printf '%s\n' ' exit'
+		fi
+	} > "$openocd_commands"
+	chmod 600 "$openocd_commands"
+	set -- "$@" -f "$openocd_commands"
+fi
+
+if [ "$task" = phase3_dfu ] && [ "$native_executable" = /usr/bin/dfu-programmer ] && [ "$operation" = read ]; then
+	native_out="$artifact_root/firmware-dfu-read.bin"
+	native_output_artifact=1
+fi
+
+run_native "$native_out" "$native_err" "$@"
+primary_native_out="$native_out"
+
+if [ "$task" = phase3_storage ] && [ "$action_id" = storage.inspect ] && [ "${operation#smart_}" != "$operation" ]; then
+	if [ $((native_result & 3)) -ne 0 ]; then :; else native_result=0; fi
+fi
+if [ "$task" = phase3_storage ] && [ "$action_id" = storage.inspect ] && [ "$operation" = fsck_check ] && [ "$native_result" -le 4 ]; then native_result=0; fi
+if [ "$task" = phase3_storage ] && [ "$action_id" = storage.repair ] && [ "$native_result" -le 1 ]; then native_result=0; fi
+
+if [ "$native_result" -eq 0 ]; then
+	case "$action_id:$operation" in
+		firmware.avrdude:read_flash|firmware.avrdude:read_eeprom)
+			if [ "$(json_option output_format)" = i ]; then validate_artifact firmware-read.hex; else validate_artifact firmware-read.bin; fi ;;
+		firmware.dfu:read) validate_artifact firmware-dfu-read.bin ;;
+		firmware.serial:read) validate_artifact firmware-serial-read.bin ;;
+		storage.inspect:badblocks_read|storage.repair:badblocks_nondestructive)
+			[ -s "$artifact_root/storage-badblocks.txt" ] || printf '%s\n' '# No bad blocks reported by the completed native scan.' > "$artifact_root/storage-badblocks.txt"
+			validate_artifact storage-badblocks.txt ;;
+		storage.image:*)
+			validate_artifact storage-image.raw
+			if [ "$(json_option sha256)" = true ]; then
+				/usr/bin/timeout 1800 /usr/bin/sha256sum "$artifact_root/storage-image.raw" > "$job_dir/storage-image.sha256" 2>> "$job_dir/stderr" &
+				native_pid=$!; hash_result=0; wait "$native_pid" 2>/dev/null || hash_result=$?; native_pid=""
+				[ "$hash_result" -eq 0 ] || task_fail 'Unable to compute the completed storage image SHA-256.'
+				validate_artifact storage-image.sha256
+			fi ;;
+		storage.restore:*)
+			if [ "$(json_option verify)" = true ]; then
+				upload_id="$(json_option upload)"; restore_input="$(sealed_path_for_upload_id "$upload_id")"; restore_size="$(json_option image_size)"
+				/usr/bin/timeout "$wall_timeout" /usr/bin/cmp -s -n "$restore_size" "$restore_input" "$(json_option device)" >> "$job_dir/stdout" 2>> "$job_dir/stderr" &
+				native_pid=$!; compare_result=0; wait "$native_pid" 2>/dev/null || compare_result=$?; native_pid=""
+				[ "$compare_result" -eq 0 ] || task_fail 'Post-write comparison did not match the sealed storage image.'
+				post_note='Post-write byte comparison: MATCH'
+			fi ;;
+	esac
+fi
+
+if [ "$task" = phase3_squashfs ] && [ "$native_result" -eq 0 ] && [ "$operation" = extract ]; then
+	if [ ! -d "$workspace" ] || [ -L "$workspace" ]; then task_fail 'Prepared SquashFS recovery workspace is absent or unsafe.'; fi
+	limit_bytes=$(( $(json_option output_limit_mib) * 1048576 ))
+	workspace_bytes=$(( $(du -sk "$workspace" | awk 'NR == 1 {print $1}') * 1024 ))
+	[ "$workspace_bytes" -le "$limit_bytes" ] || task_fail 'Recovered SquashFS content exceeded the selected output ceiling.'
+	runtime_limit_kb=$((output_limit_mib * 2048 + 2048))
+	run_native "$job_dir/phase3-tar.out" "$job_dir/phase3-tar.err" /bin/tar c -f "$artifact_root/recovered-files.tar" -C "$workspace" .
+	[ "$native_result" -eq 0 ] || task_fail 'Unable to package recovered SquashFS files.'
+	validate_artifact recovered-files.tar
+fi
+
+{
+	printf 'Target: %s\nOperation: %s\nNative executable: %s\nNative exit: %s\n\n' "$(json_option device)" "$operation" "$native_executable" "$native_result"
+	if [ "$native_output_artifact" -eq 1 ]; then printf '%s\n' 'Native read output was isolated as an authenticated binary artifact.'; else head -c 126976 "$primary_native_out" 2>/dev/null || true; fi
+	[ -z "$post_note" ] || printf '\n%s\n' "$post_note"
+} > "$job_dir/stdout.next"
+mv "$job_dir/stdout.next" "$job_dir/stdout"
+[ ! -s "$native_err" ] || head -c 28672 "$native_err" >> "$job_dir/stderr"
+
+if [ "$native_result" -eq 0 ]; then
+	status_set complete
+	worker_success=1
+	printf '%s\n' 'Phase 3 native operation completed; owned workspaces, command files, child state, and locks are being cleaned.' >> "$job_dir/stdout"
+	printf '%s\n' 'Success'
+	exit 0
+fi
+
+printf 'Phase 3 native operation exited with status %s.\n' "$native_result" >> "$job_dir/stderr"
+status_set failed
+exit "$native_result"

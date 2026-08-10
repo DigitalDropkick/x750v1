@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.1.0 — Unreleased
+## 2.1.0 — 2026-08-10
 
 ### Operator Mode foundation
 
@@ -26,12 +26,24 @@
 - Added an exact Apple family worker that starts usbmuxd only on demand, refuses pre-existing helper ownership, revalidates UDID/ECID immediately before execution, tracks cancellation, protects extroot free space during restore, and removes its helper/cache/locks on every exit.
 - Preserved legacy fixed workers for compatibility while routing the v2.1 GUI through prepared Operator Mode actions.
 
+### Firmware and storage migration
+
+- Migrated OpenOCD 0.11 to reviewed live debug-adapter selection, installed board/interface/target configs, exact USB-topology binding, server-generated no-listener command files, probe/program controls, and confirmed sealed-image writes.
+- Migrated AVRDUDE 6.3 to exact installed programmer/part lists, stable USB-serial or reviewed serial-port selection, probe, flash/EEPROM read, verify, write, erase, formats, timing, verification, and authenticated backup artifacts.
+- Migrated dfu-util 0.11 and dfu-programmer 0.7.2 to live DFU interface selection, topology/serial or bus/address binding, read/write/detach/erase/launch/get controls, sealed images, confirmations, and binary backups.
+- Migrated STM32Flash, BOSSA 1.9.1, and LPC21ISP 1.97 to reviewed non-EC25 serial targets with native information/read/write/verify/erase/CRC/go/reset/security/boot controls where supported by each exact binary.
+- Added a conservative non-system USB block inventory that excludes every disk backing root, rom, overlay, extroot, or swap and binds target size/mount state again in the worker.
+- Added smartctl 7.2 health/tests, e2fsck 1.46.5 checks/repair, badblocks read/non-destructive tests, 16 GiB byte-range BusyBox dd imaging/restore with SHA-256/compare, and unsquashfs 4.5 stat/list/extract with isolated tar artifacts.
+- Added the exact `ddk-phase3-worker` with native-version/argv/target/input revalidation, target/resource locks, cancellation, 100 MiB extroot reserve enforcement, fixed artifacts, and partial-output/workspace cleanup.
+- Reframed the v2 static SSH handoffs as supplemental native references; structured GUI actions are now the primary interface for represented mobile, firmware, and storage work.
+
 ### Validation and release status
 
 - Updated local policy validation so `ACTION`, `SECURITY`, and reviewed `DISRUPTIVE` actions may be enabled when fully wired; removed tests whose purpose was to enforce the obsolete GUI-disabled/SSH-only policy.
 - Added malformed-envelope, unknown-option, prepared-request, loopback Nmap artifact, loopback tcpdump PCAP/BPF, loopback iperf3, upload traversal/size/signature/sealing/hash cleanup, ADB builder/worker/temporary-server rejection, hardware-gate, and reusable browser-control verification.
 - Added exact installer preflight for all migrated binaries plus target-Lua compilation/runtime builder validation.
-- Local validation and target-Lua syntax validation are required before release. Version 2.1 has not been deployed; version 2.0 remains the production-accepted baseline.
+- Added a pure Phase 3 planner suite covering all nine new actions, consequential confirmation, compound artifact/upload placeholders, target binding, active-system-media exclusion, ranges, unknown fields, and path traversal, plus target-safe worker no-device cleanup verification.
+- Production deployment passed 48 target checks with 0 warnings plus authenticated desktop/mobile browser acceptance, including structured controls and upload/seal/hash/delete. All 45 deployed files matched source byte for byte; protected configuration remained unchanged; and no DDK worker, operator-tool listener, or browser-proof upload remained. The full v2.0 rollback snapshot is `/root/ddk-backups/20260810T183331Z-field-console-v1`; the later UI-fix preinstall snapshot is `/root/ddk-backups/20260810T190440Z-field-console-v1`.
 
 ## 2.0.0 — 2026-08-09
 

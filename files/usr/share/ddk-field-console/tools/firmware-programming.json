@@ -2,7 +2,7 @@
   "id": "firmware-programming",
   "name": "Firmware / Embedded",
   "category": "Firmware Programming",
-  "description": "Read-only USB programmer identity with flash, JTAG/SWD, MCU bootloader, DFU, and EEPROM operations held disabled.",
+  "description": "Structured OpenOCD, AVRDUDE, USB DFU, and serial bootloader probe/read/backup/verify/write/erase workflows with exact live target selection.",
   "package_names": ["flashrom-usb", "openocd", "avrdude", "dfu-util", "dfu-programmer", "stm32flash", "bossa", "lpc21isp", "ftdi_eeprom"],
   "expected_binaries": ["flashrom", "openocd", "avrdude", "dfu-util", "stm32flash", "bossac", "lpc21isp", "ftdi_eeprom"],
   "required_hardware": ["programmer"],
@@ -13,7 +13,10 @@
   "actions": [
     {"id": "firmware.identify", "class": "INFO", "execution": "info", "enabled": true},
     {"id": "firmware.operator_guide", "class": "INFO", "execution": "info", "enabled": true},
-    {"id": "firmware.write", "class": "DISRUPTIVE", "enabled": false}
+    {"id": "firmware.openocd", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "openocd", "enabled": true},
+    {"id": "firmware.avrdude", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "avrdude", "enabled": true},
+    {"id": "firmware.dfu", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "dfu", "enabled": true},
+    {"id": "firmware.serial", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "serial_programmer", "enabled": true}
   ],
-  "help_text": "Identification remains available. Native read/backup/verify/write/erase/debug workflows require exact programmer/target schemas, voltage and hardware verification, authenticated images, hashes, artifacts, confirmation, and recovery tests."
+  "help_text": "The backend selects installed OpenOCD configs and native target lists, validates reviewed USB/serial hardware, binds sealed image hashes, builds literal argv, and requires target-bound confirmation for consequential operations. flashrom remains unavailable; FTDI EEPROM config serialization is documented as pending."
 }

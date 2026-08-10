@@ -62,11 +62,11 @@ Generic FTDI, USB-serial, hub, storage, modem, and Apple Bluetooth identities ar
 - The sysfs root is a source-code constant; the browser cannot submit a path.
 - Missing or changing devices fail as unavailable metadata rather than becoming an execution target.
 
-The module state is `READY / NO DEVICE` when the software is installed but no reviewed hardware is attached. Identity and fallback-guide actions remain usable so the operator can inspect the empty state and prepare before connecting hardware. Hardware-dependent ADB Operator actions remain disabled until a reviewed Android USB identity is present, then perform a fresh live transport correlation.
+The module state is `READY / NO DEVICE` when the software is installed but no reviewed hardware is attached. Identity and fallback-reference actions remain usable so the operator can inspect the empty state and prepare before connecting hardware. Hardware-dependent ADB and firmware Operator actions remain disabled until the exact reviewed target class is present, then perform fresh live transport/topology correlation.
 
 ## Full tool access
 
-DDK does not patch, replace, or weaken the installed CLI utilities. The companion `*.operator_guide` actions show executable readiness and copyable SSH references, but execute none of them. Android and Apple now have separate structured workflows documented in [ANDROID-ADB.md](ANDROID-ADB.md) and [APPLE-OPERATOR.md](APPLE-OPERATOR.md); the guides remain fallbacks for native workflows that require a future PTY, archive, secret-input, or hardware-specific protocol. Programming workflows are still being implemented and hardware-tested.
+DDK does not patch, replace, or weaken the installed CLI utilities. The companion `*.operator_guide` actions show executable readiness and supplemental copyable references, but execute none of them. Android, Apple, and firmware now have separate structured workflows documented in [ANDROID-ADB.md](ANDROID-ADB.md), [APPLE-OPERATOR.md](APPLE-OPERATOR.md), and [FIRMWARE-STORAGE-OPERATOR.md](FIRMWARE-STORAGE-OPERATOR.md); the guides remain fallbacks for native workflows that require a future PTY, archive, secret-input, target-specific config, or other unmodeled protocol. Live programming acceptance remains pending approved hardware.
 
 ## Acceptance model
 

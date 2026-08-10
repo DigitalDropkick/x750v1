@@ -7,4 +7,7 @@ camera.still_snapshot
 gps.snapshot
 radio.rtl433_snapshot
 serial.session
+storage.image
+storage.inspect
+storage.squashfs
 throughput.iperf3

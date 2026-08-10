@@ -2,7 +2,7 @@
 
 ## Status and native target
 
-Version 2.1 migrates `capture.lan_metadata_snapshot` from the v2 fixed metadata profile to the reusable Operator Mode transport. The exact target is `/usr/sbin/tcpdump` 4.9.3 with libpcap 1.10.1. This source has not been deployed; production remains on the accepted v2.0 fixed profile until separately approved.
+Version 2.1 migrates `capture.lan_metadata_snapshot` from the v2 fixed metadata profile to the reusable Operator Mode transport. The exact production target is `/usr/sbin/tcpdump` 4.9.3 with libpcap 1.10.1. Deployment acceptance exercised bounded loopback capture, PCAP generation, invalid-BPF rejection, cancellation, and cleanup.
 
 The old action ID is retained for compatibility. The v2.1 browser obtains its schema from the backend, prepares a validated plan, reviews the server-built invocation, confirms sensitive modes, and starts the one-time prepared request.
 

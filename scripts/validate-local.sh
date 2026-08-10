@@ -17,7 +17,8 @@ rg -F "Field Console version 2.1.0" scripts/router-verify.sh >/dev/null || fail 
 bash -n deploy.sh verify.sh rollback.sh configure-swap-autostart.sh rollback-swap-autostart.sh post-reboot-verify.sh scripts/verify-browser-authenticated.sh
 sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh \
 	scripts/router-configure-swap-autostart.sh scripts/router-rollback-swap-autostart.sh \
-	scripts/router-post-reboot-verify.sh files/usr/libexec/ddk-job-worker files/usr/libexec/ddk-apple-worker
+	scripts/router-post-reboot-verify.sh files/usr/libexec/ddk-job-worker files/usr/libexec/ddk-apple-worker \
+	files/usr/libexec/ddk-phase3-worker
 node --check scripts/verify-browser.mjs >/dev/null
 
 brand_root=files/www/luci-static/resources/ddk/brand
@@ -146,8 +147,12 @@ for identity_manifest in firmware-programming; do
 	[[ "$(jq -r '.enabled' "$manifest")" == true ]] || fail "identity module is not enabled: $identity_manifest"
 	[[ "$(jq -r '.no_device_state' "$manifest")" == 'READY / NO DEVICE' ]] || fail "identity no-device state is unsafe: $identity_manifest"
 	[[ "$(jq '[.actions[] | select(.class == "INFO" and .enabled == true)] | length' "$manifest")" -eq 2 ]] || fail "identity INFO action count is incorrect: $identity_manifest"
-	[[ "$(jq '[.actions[] | select(.class == "DISRUPTIVE")] | length' "$manifest")" -eq 1 ]] || fail "identity module lost its declared device-changing action: $identity_manifest"
+	[[ "$(jq '[.actions[] | select(.class == "DISRUPTIVE" and .execution == "job" and .parameter_schema == "operator-v1" and .enabled == true)] | length' "$manifest")" -eq 4 ]] || fail "firmware Operator Mode action contracts are incomplete: $identity_manifest"
 done
+storage_manifest=files/usr/share/ddk-field-console/tools/storage-recovery.json
+[[ "$(jq -r '.enabled' "$storage_manifest")" == true ]] || fail 'storage/recovery module is not enabled'
+[[ "$(jq '[.actions[] | select(.execution == "job" and .parameter_schema == "operator-v1" and .enabled == true)] | length' "$storage_manifest")" -eq 5 ]] || fail 'storage/recovery Operator Mode action contracts are incomplete'
+[[ "$(jq '[.actions[] | select(.hardware_mode == "storage")] | length' "$storage_manifest")" -eq 4 ]] || fail 'storage hardware-bound action markers are incomplete'
 apple_manifest=files/usr/share/ddk-field-console/tools/apple-repair.json
 [[ "$(jq -r '.enabled' "$apple_manifest")" == true ]] || fail 'Apple module is not enabled'
 [[ "$(jq -r '.no_device_state' "$apple_manifest")" == 'READY / NO DEVICE' ]] || fail 'Apple no-device state is unsafe'
@@ -173,7 +178,8 @@ for identity_guard in \
 	'Policy: sysfs metadata only' \
 	'not written to jobs, reports, logs, or persistent storage' \
 	'The browser does not execute any displayed command' \
-	'No command above was run by this request.'
+	'Structured GUI Operator Mode is the primary interface' \
+	'No native command above was run by this reference request.'
 do
 	rg -F -- "$identity_guard" files/usr/libexec/ddk-console >/dev/null || fail "identity privacy/handoff guard is missing: $identity_guard"
 done
@@ -181,8 +187,10 @@ done
 capture_worker=files/usr/libexec/ddk-job-worker
 operator_module=files/usr/share/ddk-field-console/operator-actions.lua
 apple_operator_module=files/usr/share/ddk-field-console/operator-apple.lua
+phase3_operator_module=files/usr/share/ddk-field-console/operator-phase3.lua
 [[ -f "$operator_module" ]] || fail 'Operator Mode action module is missing'
 [[ -f "$apple_operator_module" ]] || fail 'Apple Operator Mode action module is missing'
+[[ -f "$phase3_operator_module" ]] || fail 'Phase 3 Operator Mode action module is missing'
 for operator_guard in \
 	'MAX_TARGETS = 64' \
 	'Target must be an IPv4/IPv6 address, CIDR, hostname, or validated IPv4 octet range' \
@@ -226,6 +234,38 @@ fi
 if rg -n 'io\.popen|os\.execute|loadstring|loadfile|dofile|/bin/sh|sh[[:space:]]+-c' "$apple_operator_module"; then
 	fail 'Apple Operator Mode action module can execute commands or load code'
 fi
+if rg -n 'io\.popen|os\.execute|loadstring|loadfile|dofile|/bin/sh|sh[[:space:]]+-c' "$phase3_operator_module"; then
+	fail 'Phase 3 Operator Mode action module can execute commands or load code'
+fi
+for phase3_guard in \
+	'defaults(schema, options, "OpenOCD")' \
+	'defaults(schema, options, "AVRDUDE")' \
+	'defaults(schema, options, "DFU")' \
+	'defaults(schema, options, "serial programmer")' \
+	'defaults(schema, options, "storage inspection")' \
+	'defaults(schema, options, "storage repair")' \
+	'defaults(schema, options, "storage image")' \
+	'defaults(schema, options, "storage restore")' \
+	'defaults(schema, options, "SquashFS recovery")' \
+	'"/usr/bin/openocd"' \
+	'"/usr/bin/avrdude"' \
+	'"/usr/bin/dfu-util"' \
+	'"/usr/bin/dfu-programmer"' \
+	'"/usr/bin/stm32flash"' \
+	'"/usr/bin/bossac"' \
+	'"/usr/sbin/lpc21isp"' \
+	'"/usr/sbin/smartctl"' \
+	'"/usr/sbin/e2fsck"' \
+	'"/usr/sbin/badblocks"' \
+	'"/bin/dd"' \
+	'"/usr/sbin/unsquashfs"' \
+	'confirmation = { required = true' \
+	'@UPLOAD@/' \
+	'@ARTIFACT@/' \
+	'@WORK@/'
+do
+	rg -F -- "$phase3_guard" "$phase3_operator_module" >/dev/null || fail "Phase 3 Operator Mode validator/argv guard is missing: $phase3_guard"
+done
 for apple_guard in \
 	'defaults(schema, options, "Apple diagnostics")' \
 	'defaults(schema, options, "Apple management")' \
@@ -243,10 +283,33 @@ for apple_guard in \
 do
 	rg -F -- "$apple_guard" "$apple_operator_module" >/dev/null || fail "Apple Operator Mode validator/argv guard is missing: $apple_guard"
 done
-for structured_action in network.nmap_lan_discovery capture.lan_metadata_snapshot throughput.iperf3 radio.rtl433_snapshot camera.still_snapshot serial.session gps.snapshot android.adb_diagnostics android.adb_manage apple.mobile_diagnostics apple.mobile_capture apple.mobile_manage apple.recovery apple.restore; do
+for structured_action in network.nmap_lan_discovery capture.lan_metadata_snapshot throughput.iperf3 radio.rtl433_snapshot camera.still_snapshot serial.session gps.snapshot android.adb_diagnostics android.adb_manage apple.mobile_diagnostics apple.mobile_capture apple.mobile_manage apple.recovery apple.restore firmware.openocd firmware.avrdude firmware.dfu firmware.serial storage.inspect storage.repair storage.image storage.restore storage.squashfs; do
 	[[ "$(jq -r --arg id "$structured_action" '.actions[] | select(.id == $id) | .parameter_schema' files/usr/share/ddk-field-console/tools/*.json | head -n 1)" == 'operator-v1' ]] || fail "structured manifest marker is missing: $structured_action"
 	rg -F "[\"$structured_action\"]" files/usr/libexec/ddk-console >/dev/null || fail "structured backend mapping is missing: $structured_action"
 done
+phase3_worker=files/usr/libexec/ddk-phase3-worker
+for phase3_worker_guard in \
+	'phase3_openocd|phase3_avrdude|phase3_dfu|phase3_serial|phase3_storage|phase3_squashfs' \
+	'Prepared Phase 3 task does not match its exact action ID.' \
+	'Prepared Phase 3 argv selected an executable outside the exact worker allowlist.' \
+	'The Quectel EC25 modem ports are reserved and cannot be used for programming.' \
+	'Serial programming USB topology changed after review.' \
+	'The selected DFU bus/device address changed after review.' \
+	'Prepared dfu-programmer argv is not bound to the exact reviewed bus/device address.' \
+	'Selected storage disk backs the router system or active extroot.' \
+	'Selected storage disk backs active swap or system state.' \
+	'Prepared Phase 3 sealed input failed worker-side SHA-256 verification.' \
+	'Open On-Chip Debugger 0.11.0-v0.11.0-1-OpenWrt' \
+	'Post-write comparison did not match the sealed storage image.' \
+	'Phase 3 output exceeded the declared artifact/workspace ceiling.' \
+	'Phase 3 operation stopped before violating the protected 100 MiB extroot reserve.' \
+	'cleanup_partial_artifacts' \
+	'cleanup_workspace' \
+	'release_locks'
+do
+	rg -F -- "$phase3_worker_guard" "$phase3_worker" >/dev/null || fail "Phase 3 worker guard is missing: $phase3_worker_guard"
+done
+shellcheck "$phase3_worker"
 apple_worker=files/usr/libexec/ddk-apple-worker
 for apple_worker_guard in \
 	'apple_mobile|apple_recovery|apple_restore' \
@@ -375,7 +438,7 @@ rg -F '"/usr/libexec/ddk-console upload *": [ "exec" ]' files/usr/share/rpcd/acl
 for artifact_acl in nmap.nmap nmap.xml nmap.gnmap capture.pcap iperf3.json rtl433.jsonl rtl433.csv rtl433.txt rtl433.cu8 snapshot.jpg snapshot.png serial.bin gnss.raw gnss.decoded; do
 	rg -F "/tmp/ddk/jobs/job-[0-9]*-[0-9]*/$artifact_acl" files/usr/share/rpcd/acl.d/ddk-field-console.json >/dev/null || fail "Operator artifact ACL is missing: $artifact_acl"
 done
-for artifact_acl in android-logcat.txt android-bugreport.txt android-pull.bin android-backup.ab apple-screenshot.tiff apple-syslog.txt apple-restore.log; do
+for artifact_acl in android-logcat.txt android-bugreport.txt android-pull.bin android-backup.ab apple-screenshot.tiff apple-syslog.txt apple-restore.log firmware-read.hex firmware-read.bin firmware-dfu-read.bin firmware-serial-read.bin storage-badblocks.txt storage-image.raw recovered-files.tar; do
 	rg -F "/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/$artifact_acl" files/usr/share/rpcd/acl.d/ddk-field-console.json >/dev/null || fail "Extroot Operator artifact ACL is missing: $artifact_acl"
 done
 

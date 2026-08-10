@@ -64,6 +64,8 @@ The first supported files are:
 | Serial | `serial.bin` | bounded raw received bytes |
 | GPS/GNSS | `gnss.raw`, `gnss.decoded` | bounded receiver and decoder output |
 | Android ADB | `android-logcat.txt`, `android-bugreport.txt`, `android-pull.bin`, `android-backup.ab` | 8 MiB log, 256 MiB bugreport/pull, 1 GiB validated backup |
+| Firmware | `firmware-read.hex`, `firmware-read.bin`, `firmware-dfu-read.bin`, `firmware-serial-read.bin` | 256 MiB action-owned backup ceiling |
+| Storage | `storage-badblocks.txt`, `storage-image.raw`, `storage-image.sha256`, `recovered-files.tar` | 1 MiB list, selected image length up to 16 GiB, 8 GiB recovery archive ceiling |
 | Apple | `apple-screenshot.tiff`, `apple-syslog.txt`, `apple-restore.log` | 64 MiB TIFF, 32 MiB syslog, 16 MiB restore log |
 
 The browser validates the generated job ID and accepts only metadata-provided fixed names matching its own safe-name grammar. Files up to 16 MiB are fetched and byte-count verified in memory; larger reviewed files use native authenticated POST download streaming so a 121 MiB router page does not buffer them. There is no arbitrary router-file read or write API.
@@ -78,7 +80,7 @@ Workflows that need a local package or image use a separate exact-ID lifecycle r
 4. `upload finalize` requires a regular file with the exact declared size, atomically renames it to `sealed.bin`, closes the former write path with a directory sentinel, validates ZIP magic for Android/Apple archives, computes SHA-256, and writes mode-0600 metadata.
 5. Native actions select the generated upload ID. Their backend and worker must revalidate kind, sealed path, size, hash, lifetime, and target binding before use; they never accept the original filename as an execution path.
 
-Firmware/device, Android package, and Apple recovery inputs are limited to 256 MiB; Android backups are limited to 1 GiB; Apple AP tickets to 1 MiB; and IPSW archives to 12 GiB based on the 28 GiB extroot, extraction workspace, and protected free-space reserve. At most 10 inputs are retained. Reservations expire after one hour and sealed files after 24 hours. Active input locks prevent expiry cleanup while a job owns a file. Listing and deletion accept only generated upload IDs. No file is published below `/www`, and there is no arbitrary router path selector.
+Firmware/device, Android package, and Apple recovery inputs are limited to 256 MiB; Android backups are limited to 1 GiB; Apple AP tickets to 1 MiB; IPSW archives to 12 GiB; and storage/recovery images to 16 GiB based on the 28 GiB extroot, extraction workspace, and protected free-space reserve. At most 10 inputs are retained. Reservations expire after one hour and sealed files after 24 hours. Active input locks prevent expiry cleanup while a job owns a file. Listing and deletion accept only generated upload IDs. No file is published below `/www`, and there is no arbitrary router path selector.
 
 The installed `cgi-upload` writes before DDK finalization, so its native transport cannot abort at the declared per-kind ceiling mid-stream. The browser enforces the ceiling before upload and finalization rejects a mismatch. A future custom streaming CGI would be required for a hard server-side byte cutoff during transfer itself.
 
@@ -124,8 +126,14 @@ The exact target suite is libimobiledevice 1.3.0, usbmuxd 1.1.1, irecovery 1.0.0
 
 Normal-mode jobs start a DDK-owned foreground usbmuxd only on demand, require an exact fresh `idevice_id -l` UDID match, and terminate only the helper PID they own. Recovery/DFU jobs require a sysfs-derived ECID and successful exact `irecovery -i ECID -q` preflight. Restore uses an isolated mode-0700 extroot cache workspace, checks the 100 MiB free-space reserve throughout the job, and removes cache/helper/locks on every exit. See [APPLE-OPERATOR.md](APPLE-OPERATOR.md).
 
+### Firmware programming and storage recovery
+
+Four firmware actions cover exact installed OpenOCD, AVRDUDE, dfu-util/dfu-programmer, STM32Flash, BOSSA, and LPC21ISP functionality. They select only reviewed live USB or non-EC25 serial targets, use server-selected installed configs/part lists, bind sealed image IDs and hashes, produce fixed backup artifacts, and require exact confirmation for program/write/erase/reset/boot/security operations. OpenOCD's command file is generated server-side and disables its three listener ports.
+
+Five storage actions cover SMART/read-only filesystem/media inspection, confirmed repair/non-destructive media testing, byte-range raw imaging, confirmed raw restore with optional comparison, and file-only SquashFS stat/list/recovery. The inventory and worker both exclude system, extroot, swap, non-USB, wrong-size, or impermissibly mounted media. See [FIRMWARE-STORAGE-OPERATOR.md](FIRMWARE-STORAGE-OPERATOR.md).
+
 ## Compatibility and remaining migrations
 
 The existing fixed Nmap, tcpdump, RTL-433, camera, and GPS workers remain for backward compatibility and regression tests, but the v2.1 UI uses the structured workflows. Existing CAN, cellular, identity, report, deployment, rollback, GL.iNet, LuCI, Tailscale, extroot, and swap behavior remains preserved until each family is deliberately migrated.
 
-The v2 SSH handoff documents are retained as historical/fallback references. They no longer define the product boundary. Firmware/programming, CAN, Modbus/industrial, Bluetooth, smartcard, storage/recovery, monitoring, and automation still require their exact installed-help audit, schemas, builders, workers, target checks, artifacts, and tests. Some installed Apple subtools still need additional archive/secret/PTY protocols documented in [APPLE-OPERATOR.md](APPLE-OPERATOR.md). Missing hardware or executable payloads remain honest blockers; the action class by itself is not one.
+The v2 SSH handoff documents are retained as historical/fallback references. They no longer define the product boundary. CAN, Modbus/industrial, Bluetooth, smartcard, monitoring, automation, and other remaining families still require their exact installed-help audit, schemas, builders, workers, target checks, artifacts, and tests. Some installed Apple and firmware subtools still need additional target-specific archive/secret/PTY/config protocols documented in [APPLE-OPERATOR.md](APPLE-OPERATOR.md) and [FIRMWARE-STORAGE-OPERATOR.md](FIRMWARE-STORAGE-OPERATOR.md). Missing hardware or executable payloads remain honest blockers; the action class by itself is not one.

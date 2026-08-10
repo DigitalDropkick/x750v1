@@ -143,6 +143,8 @@ local function classify_apple(device)
 end
 
 local function classify_programmer(device)
+	if has_signature(device, "fe:01:01") then return "USB DFU RUNTIME INTERFACE" end
+	if has_signature(device, "fe:01:02") then return "USB DFU MODE INTERFACE" end
 	if device.vendor_id == "1366" then return "SEGGER J-Link" end
 	local exact = programmer_ids[device.usb_id]
 	if exact then return exact end
@@ -187,6 +189,8 @@ function M.scan(root)
 				manufacturer = read_text(base .. "/manufacturer", 96),
 				product = read_text(base .. "/product", 96),
 				serial = read_text(base .. "/serial", 128),
+				busnum = read_text(base .. "/busnum", 4),
+				devnum = read_text(base .. "/devnum", 4),
 				speed = read_text(base .. "/speed", 16),
 				interfaces = {}
 			}

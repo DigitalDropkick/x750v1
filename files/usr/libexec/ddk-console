@@ -9,6 +9,7 @@ local nixio = require "nixio"
 local usb_identity = dofile("/usr/share/ddk-field-console/usb-identity.lua")
 local operator_actions = dofile("/usr/share/ddk-field-console/operator-actions.lua")
 local operator_apple = dofile("/usr/share/ddk-field-console/operator-apple.lua")
+local operator_phase3 = dofile("/usr/share/ddk-field-console/operator-phase3.lua")
 
 local TOOL_ROOT = "/usr/share/ddk-field-console/tools"
 local JOB_ROOT = "/tmp/ddk/jobs"
@@ -22,7 +23,7 @@ local MAX_CAPTURE = 131072
 local MAX_STDERR = 32768
 local MAX_CAMERA_ARTIFACT = 262144
 local MAX_OPERATOR_ENVELOPE = 24576
-local MAX_OPERATOR_ARTIFACT = 1073741824
+local MAX_OPERATOR_ARTIFACT = 17179869184
 local MAX_TMP_OPERATOR_ARTIFACT = 16777216
 local MAX_OPERATOR_WORKSPACE_RESERVE = 17179869184
 local MIN_OVERLAY_RESERVE = 104857600
@@ -37,6 +38,7 @@ local MAX_RETAINED_UPLOADS = 10
 local USB_SYSFS_ROOT = "/sys/bus/usb/devices"
 local DEFAULT_JOB_WORKER = "/usr/libexec/ddk-job-worker"
 local APPLE_JOB_WORKER = "/usr/libexec/ddk-apple-worker"
+local PHASE3_JOB_WORKER = "/usr/libexec/ddk-phase3-worker"
 
 local function trim(value)
 	return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
@@ -717,10 +719,10 @@ end
 
 local operator_guides = {
 	android = {
-		title = "ANDROID / ADB FULL CLI HANDOFF",
+		title = "ANDROID / ADB NATIVE TOOL REFERENCE",
 		binaries = { "adb", "fastboot" },
 		lines = {
-			"Connect: ssh root@192.168.8.1",
+			"Supplemental SSH connection: ssh root@192.168.8.1",
 			"Discovery: adb devices -l",
 			"Interactive device shell: adb shell",
 			"Copy from device: adb pull REMOTE_PATH LOCAL_PATH",
@@ -733,10 +735,10 @@ local operator_guides = {
 		warning = "ADB may start its local server and can change customer-device data. Confirm authorization, unlock/trust state, backups, and the exact target before any shell, push, install, reboot, backup, or restore operation. The inspected 1.0.32 help does not advertise sideload."
 	},
 	apple_mobile = {
-		title = "APPLE MOBILE FULL CLI HANDOFF",
+		title = "APPLE MOBILE NATIVE TOOL REFERENCE",
 		binaries = { "idevice_id", "ideviceinfo", "idevicepair", "irecovery", "idevicerestore", "usbmuxd" },
 		lines = {
-			"Connect: ssh root@192.168.8.1",
+			"Supplemental SSH connection: ssh root@192.168.8.1",
 			"Normal-mode inventory: idevice_id -l",
 			"Normal-mode details: ideviceinfo -u DEVICE_UDID",
 			"Pairing status: idevicepair -u DEVICE_UDID validate",
@@ -749,10 +751,11 @@ local operator_guides = {
 		warning = "Pairing records and device identifiers are private. Recovery and restore commands can reboot or erase a customer device; verify mode, model, signed firmware, backup state, power, and written authorization first."
 	},
 	programmer = {
-		title = "FIRMWARE / EMBEDDED FULL CLI HANDOFF",
+		title = "FIRMWARE / EMBEDDED NATIVE TOOL REFERENCE",
 		binaries = { "flashrom", "openocd", "avrdude", "dfu-util", "dfu-programmer", "stm32flash", "bossac", "lpc21isp", "ftdi_eeprom" },
 		lines = {
-			"Connect: ssh root@192.168.8.1",
+			"GUI actions: firmware.openocd, firmware.avrdude, firmware.dfu, firmware.serial",
+			"Supplemental SSH connection for functionality not represented by those schemas: ssh root@192.168.8.1",
 			"OpenOCD reference: openocd --help",
 			"AVRDUDE reference: avrdude -?",
 			"USB DFU inventory: dfu-util -l",
@@ -763,7 +766,7 @@ local operator_guides = {
 			"LPC ISP reference: lpc21isp",
 			"FTDI EEPROM reference: ftdi_eeprom --help"
 		},
-		warning = "Before target access, document voltage, target power ownership, cable/pinout, part number, interface, reset/boot straps, flash geometry, image source and hash, verified backup/readback plan, and recovery path. Read, erase, write, fuse, lock, debug, and reset operations are intentionally operator-controlled over SSH."
+		warning = "Before target access, document voltage, target power ownership, cable/pinout, part number, interface, reset/boot straps, flash geometry, image source and hash, verified backup/readback plan, and recovery path. Structured read, erase, write, verify, reset, and boot operations are available through the exact GUI actions when reviewed hardware is present."
 	}
 }
 
@@ -772,8 +775,8 @@ local function operator_guide_text(kind)
 	if not guide then return "Unknown operator guide.\n" end
 	local lines = {
 		"DIGITAL DROPKICK — " .. guide.title,
-		"Policy: these are copyable operator references only. The browser does not execute any displayed command.",
-		"The installed CLI tools retain their full native functionality when you invoke them through SSH.",
+		"Policy: these are supplemental copyable references only. The browser does not execute any displayed command.",
+		"Structured GUI Operator Mode is the primary interface for represented native workflows; SSH remains available for installed capability not yet modeled by an exact schema.",
 		"",
 		"[EXECUTABLE READINESS]"
 	}
@@ -781,13 +784,13 @@ local function operator_guide_text(kind)
 		lines[#lines + 1] = string.format("  %-18s %s", binary, binary_exists(binary) and "INSTALLED" or "UNAVAILABLE")
 	end
 	lines[#lines + 1] = ""
-	lines[#lines + 1] = "[SSH WORKFLOW REFERENCE]"
+	lines[#lines + 1] = "[SUPPLEMENTAL NATIVE CLI REFERENCE]"
 	for _, line in ipairs(guide.lines) do lines[#lines + 1] = "  " .. line end
 	lines[#lines + 1] = ""
 	lines[#lines + 1] = "[OPERATOR WARNING]"
 	lines[#lines + 1] = "  " .. guide.warning
 	lines[#lines + 1] = ""
-	lines[#lines + 1] = "No command above was run by this request."
+	lines[#lines + 1] = "No native command above was run by this reference request."
 	return table.concat(lines, "\n") .. "\n"
 end
 
@@ -908,6 +911,157 @@ local function serial_attribution_text()
 	return table.concat(lines, "\n") .. "\n"
 end
 
+local function safe_label(value, limit)
+	value = trim(value):gsub("[%z\1-\31\127]", " "):gsub("[^A-Za-z0-9 _%.%-%+%:/%(%),#%[%]]", "?"):gsub("%s+", " ")
+	return value:sub(1, limit or 96)
+end
+
+local function storage_source_disk(source)
+	local name = tostring(source or ""):match("^/dev/(sd[a-z]+)%d*$")
+	return name
+end
+
+local function protected_storage_disks()
+	local protected = {}
+	for line in (fs.readfile("/proc/mounts") or ""):gmatch("[^\n]+") do
+		local source, mountpoint = line:match("^(%S+)%s+(%S+)")
+		if mountpoint == "/" or mountpoint == "/overlay" or mountpoint == "/rom" or mountpoint == "/mnt/extroot" then
+			local disk = storage_source_disk(source)
+			if disk then protected[disk] = true end
+		end
+	end
+	for line in (fs.readfile("/proc/swaps") or ""):gmatch("[^\n]+") do
+		local source = line:match("^(%S+)")
+		local disk = storage_source_disk(source)
+		if disk then protected[disk] = true end
+	end
+	return protected
+end
+
+local function mounted_block_sources()
+	local mounted = {}
+	for line in (fs.readfile("/proc/mounts") or ""):gmatch("[^\n]+") do
+		local source, mountpoint = line:match("^(%S+)%s+(%S+)")
+		if source and source:match("^/dev/sd[a-z]+%d*$") then mounted[source] = mountpoint or "mounted" end
+	end
+	return mounted
+end
+
+local function storage_inventory()
+	local devices, protected, mounted = {}, protected_storage_disks(), mounted_block_sources()
+	local iterator = fs.dir("/sys/class/block")
+	if not iterator then return devices end
+	for name in iterator do
+		if #devices >= 64 then break end
+		local disk = name:match("^(sd[a-z]+)%d+$") or name:match("^(sd[a-z]+)$")
+		local disk_path = disk and fs.realpath("/sys/class/block/" .. disk) or ""
+		if disk and not protected[disk] and disk_path:find("/usb", 1, true) then
+			local node = "/dev/" .. name
+			local stat = fs.stat(node)
+			local sectors = tonumber(trim(fs.readfile("/sys/class/block/" .. name .. "/size"))) or 0
+			local size = sectors * 512
+			if stat and stat.type == "blk" and size > 0 then
+				local kind = trim(fs.readfile("/sys/class/block/" .. name .. "/partition")) ~= "" and "partition" or "disk"
+				local fs_type = trim(capture("/usr/sbin/blkid -o value -s TYPE " .. node, 128, 3)):lower()
+				if not fs_type:match("^[a-z0-9+_.-]*$") then fs_type = "" end
+				local model = safe_label(fs.readfile("/sys/class/block/" .. disk .. "/device/model"), 64)
+				local vendor = safe_label(fs.readfile("/sys/class/block/" .. disk .. "/device/vendor"), 32)
+				local mountpoint = mounted[node] or ""
+				devices[#devices + 1] = {
+					value = node, node = node, disk = disk, kind = kind, size = size, fs_type = fs_type,
+					mounted = mountpoint ~= "", mountpoint = mountpoint,
+					label = node .. " / " .. kind .. " / " .. tostring(size) .. " bytes" .. (fs_type ~= "" and (" / " .. fs_type) or "") ..
+						(trim(vendor .. " " .. model) ~= "" and (" / " .. trim(vendor .. " " .. model)) or "") .. (mountpoint ~= "" and (" / MOUNTED " .. mountpoint) or " / UNMOUNTED")
+				}
+			end
+		end
+	end
+	table.sort(devices, function(a, b) return a.value < b.value end)
+	return devices
+end
+
+local function firmware_inventories()
+	local programmers, debug_adapters, dfu, serials, connections = {}, {}, {}, {}, {}
+	for _, device in ipairs(identity_inventory().programmer or {}) do
+		if device.topology:match("^[A-Za-z0-9_.:%-]+$") and device.usb_id:match("^[0-9a-f]+:[0-9a-f]+$") then
+			local value = "usb:" .. device.topology
+			local stable_serial = type(device.serial) == "string" and #device.serial <= 128 and device.serial:match("^[A-Za-z0-9._-]+$") and device.serial or ""
+			local record = { value = value, label = value .. " / " .. device.usb_id .. " / " .. (device.identity or "reviewed programmer"), kind = "usb", topology = device.topology, usb_id = device.usb_id, serial = stable_serial, busnum = tonumber(device.busnum), devnum = tonumber(device.devnum), identity = device.identity or "" }
+			programmers[#programmers + 1] = record
+			connections[#connections + 1] = record
+			local is_dfu = false
+			for _, interface in ipairs(device.interfaces or {}) do if interface.signature == "fe:01:01" or interface.signature == "fe:01:02" then is_dfu = true; break end end
+			if is_dfu and record.busnum and record.devnum then dfu[#dfu + 1] = record else debug_adapters[#debug_adapters + 1] = record end
+		end
+	end
+	for _, device in ipairs((serial_attribution())) do
+		if device.generic_use_allowed and not device_open_by_process(device.node) then
+			local usb_id = device.usb.vendor_id .. ":" .. device.usb.product_id
+			local record = { value = device.node, node = device.node, label = device.node .. " / " .. usb_id .. " / " .. device.owner, kind = "serial", topology = device.usb.parent, usb_id = usb_id }
+			serials[#serials + 1] = record
+			connections[#connections + 1] = record
+		end
+	end
+	local function sorter(a, b) return a.value < b.value end
+	table.sort(programmers, sorter); table.sort(debug_adapters, sorter); table.sort(dfu, sorter); table.sort(serials, sorter); table.sort(connections, sorter)
+	return { programmer_devices = programmers, debug_adapter_devices = debug_adapters, dfu_devices = dfu, serial_devices = serials, connection_devices = connections,
+		action_ready = #programmers + #serials > 0,
+		reason = (#programmers + #serials > 0) and string.format("READY - %d USB PROGRAMMER(S), %d SERIAL BOOTLOADER PORT(S)", #programmers, #serials) or "READY / NO DEVICE - NO REVIEWED PROGRAMMER OR NON-EC25 SERIAL TARGET" }
+end
+
+local function config_choices(group, maximum)
+	local choices = {}
+	if not ({ interface=true, target=true, board=true })[group] then return choices end
+	local output = capture("find /usr/share/openocd/scripts/" .. group .. " -type f -name '*.cfg' | sort", 131072, 10)
+	for line in output:gmatch("[^\r\n]+") do
+		if #choices >= (maximum or 512) then break end
+		local relative = line:match("^/usr/share/openocd/scripts/(" .. group .. "/[A-Za-z0-9_./+%-]+[.]cfg)$")
+		if relative and not relative:find("..", 1, true) then choices[#choices + 1] = { value = relative, label = relative } end
+	end
+	return choices
+end
+
+local function parse_native_choices(command, pattern, maximum)
+	local choices, seen = {}, {}
+	for line in capture(command, 131072, 15):gmatch("[^\r\n]+") do
+		local value, label = line:match(pattern)
+		if value and not seen[value] and #choices < (maximum or 512) then
+			seen[value] = true
+			choices[#choices + 1] = { value = value, label = value .. (label and label ~= "" and (" / " .. safe_label(label, 96)) or "") }
+		end
+	end
+	table.sort(choices, function(a, b) return a.value < b.value end)
+	return choices
+end
+
+local function phase3_context(action_id)
+	local result = {
+		programmer_devices = {}, dfu_devices = {}, firmware_serial_devices = {}, firmware_connection_devices = {},
+		openocd_interface_configs = {}, openocd_target_configs = {}, openocd_board_configs = {},
+		avrdude_programmers = {}, avrdude_parts = {}, dfu_programmer_targets = {}, storage_devices = {}
+	}
+	if type(action_id) == "string" and action_id:match("^firmware[.]") then
+		local firmware = firmware_inventories()
+		result.programmer_devices = action_id == "firmware.openocd" and firmware.debug_adapter_devices or firmware.programmer_devices
+		result.dfu_devices = firmware.dfu_devices
+		result.firmware_serial_devices = firmware.serial_devices
+		result.firmware_connection_devices = firmware.connection_devices
+		if action_id == "firmware.openocd" then
+			result.openocd_interface_configs = config_choices("interface", 256)
+			result.openocd_target_configs = config_choices("target", 512)
+			result.openocd_board_configs = config_choices("board", 512)
+		elseif action_id == "firmware.avrdude" then
+			result.avrdude_programmers = parse_native_choices("/usr/bin/avrdude -c '?'", "^%s+([A-Za-z0-9_-]+)%s+=%s*(.*)$", 256)
+			result.avrdude_parts = parse_native_choices("/usr/bin/avrdude -p '?'", "^%s+([A-Za-z0-9_-]+)%s+=%s*(.*)$", 512)
+		elseif action_id == "firmware.dfu" then
+			result.dfu_programmer_targets = parse_native_choices("/usr/bin/dfu-programmer --targets", "^%s+([A-Za-z0-9_-]+)%s*$", 256)
+		end
+	elseif type(action_id) == "string" and action_id:match("^storage[.]") then
+		result.storage_devices = storage_inventory()
+	end
+	return result
+end
+
 local function hardware_snapshot()
 	local usb, usb_text = usb_lines()
 	local rtl_sdr = rtl_sdr_probe()
@@ -917,6 +1071,8 @@ local function hardware_snapshot()
 	local android = identity_probe("android")
 	local apple_mobile = identity_probe("apple_mobile")
 	local programmer = identity_probe("programmer")
+	local firmware = firmware_inventories()
+	local storage = storage_inventory()
 	local serial, serial_summary = serial_attribution()
 	local serial_nodes = {}
 	for _, device in ipairs(serial) do serial_nodes[#serial_nodes + 1] = device.node end
@@ -941,8 +1097,8 @@ local function hardware_snapshot()
 		android = android.hardware_present,
 		apple_mobile = apple_mobile.hardware_present,
 		smartcard = usb_text:match("smart card") ~= nil or usb_text:match("yubico") ~= nil or usb_text:match("yubikey") ~= nil or usb_text:match("ccid") ~= nil,
-		programmer = programmer.hardware_present,
-		usb_storage = fs.stat("/sys/block/sda") ~= nil
+		programmer = firmware.action_ready,
+		usb_storage = #storage > 0
 	}
 
 	return {
@@ -959,6 +1115,8 @@ local function hardware_snapshot()
 			apple_mobile = apple_mobile,
 			programmer = programmer
 		},
+		firmware = { action_ready = firmware.action_ready, reason = firmware.reason, programmer_count = #firmware.programmer_devices, debug_adapter_count = #firmware.debug_adapter_devices, dfu_count = #firmware.dfu_devices, serial_count = #firmware.serial_devices, connection_count = #firmware.connection_devices },
+		storage = { action_ready = #storage > 0, reason = #storage > 0 and string.format("READY - %d NON-SYSTEM USB BLOCK TARGET(S)", #storage) or "READY / NO DEVICE - ACTIVE EXTROOT AND SYSTEM MEDIA ARE EXCLUDED", count = #storage },
 		can_interfaces = can_interfaces,
 		i2c_devices = i2c,
 		spi_devices = spi,
@@ -1140,8 +1298,11 @@ local function load_capabilities()
 				action_ready = hardware.identity.apple_mobile.action_ready
 				readiness_reason = hardware.identity.apple_mobile.reason
 			elseif manifest.id == "firmware-programming" and manifest.enabled == true then
-				action_ready = hardware.identity.programmer.action_ready
-				readiness_reason = hardware.identity.programmer.reason
+				action_ready = hardware.firmware.action_ready
+				readiness_reason = hardware.firmware.reason
+			elseif manifest.id == "storage-recovery" and manifest.enabled == true then
+				action_ready = hardware.storage.action_ready
+				readiness_reason = hardware.storage.reason
 			end
 			modules[#modules + 1] = {
 				id = manifest.id,
@@ -1160,6 +1321,11 @@ local function load_capabilities()
 					normal = hardware.identity.apple_mobile.normal_count or 0,
 					recovery = hardware.identity.apple_mobile.recovery_count or 0,
 					dfu = hardware.identity.apple_mobile.dfu_count or 0
+				} or manifest.id == "firmware-programming" and {
+					openocd = hardware.firmware.debug_adapter_count or 0,
+					avrdude = hardware.firmware.connection_count or 0,
+					dfu = hardware.firmware.dfu_count or 0,
+					serial_programmer = hardware.firmware.serial_count or 0
 				} or nil,
 				actions = type(manifest.actions) == "table" and manifest.actions or {},
 				help_text = manifest.help_text or "",
@@ -1189,11 +1355,11 @@ local info_actions = {
 	["hardware.serial"] = { label = "Serial Device Attribution", render = serial_attribution_text },
 	["serial.inspect"] = { label = "Serial Device Attribution", render = serial_attribution_text },
 	["android.identify"] = { label = "Android USB Identity", render = function() return identity_snapshot_text("android") end },
-	["android.operator_guide"] = { label = "Android Full CLI Handoff", render = function() return operator_guide_text("android") end },
+	["android.operator_guide"] = { label = "Android Native Tool Reference", render = function() return operator_guide_text("android") end },
 	["apple.identify"] = { label = "Apple Mobile USB Identity", render = function() return identity_snapshot_text("apple_mobile") end },
-	["apple.operator_guide"] = { label = "Apple Mobile Full CLI Handoff", render = function() return operator_guide_text("apple_mobile") end },
+	["apple.operator_guide"] = { label = "Apple Mobile Native Tool Reference", render = function() return operator_guide_text("apple_mobile") end },
 	["firmware.identify"] = { label = "Firmware Programmer USB Identity", render = function() return identity_snapshot_text("programmer") end },
-	["firmware.operator_guide"] = { label = "Firmware Programmer Full CLI Handoff", render = function() return operator_guide_text("programmer") end },
+	["firmware.operator_guide"] = { label = "Firmware Programmer Native Tool Reference", render = function() return operator_guide_text("programmer") end },
 	["remote.tailscale"] = { label = "Tailscale Status", command = "tailscale version; tailscale ip -4; pidof tailscaled >/dev/null && echo 'tailscaled: running' || echo 'tailscaled: not running'" },
 	["storage.mounts"] = { label = "Storage and Mounts", command = "df -hT; printf '\\nMounts:\\n'; mount" },
 	["system.memory"] = { label = "Memory and Swap", command = "free; printf '\\n/proc/swaps:\\n'; cat /proc/swaps" },
@@ -1207,6 +1373,7 @@ local upload_policies = {
 	apple_restore = { maximum = 12884901888, extensions = { ipsw = true, zip = true } },
 	apple_recovery_input = { maximum = 268435456, extensions = { bin = true, img = true, dfu = true, ibss = true, ibec = true, payload = true, txt = true, script = true, cfg = true } },
 	apple_ticket = { maximum = 1048576, extensions = { shsh = true, ticket = true, bin = true, plist = true } },
+	storage_image = { maximum = 17179869184, extensions = { raw = true, img = true, bin = true, dd = true, squashfs = true, sqfs = true } },
 	device_input = { maximum = 268435456, extensions = { bin = true, hex = true, elf = true, uf2 = true, dfu = true, fw = true, rom = true, img = true, cfg = true, json = true, zip = true, tar = true, gz = true } }
 }
 
@@ -1568,6 +1735,7 @@ local function operator_context(action_id)
 		table.sort(apple_recovery_devices, function(a, b) return a.value < b.value end)
 		table.sort(apple_restore_devices, function(a, b) return a.value < b.value end)
 	end
+	local phase3 = phase3_context(action_id)
 	return {
 		interfaces = interface_list(),
 		lan_interface = lan.l3_device or lan.device or "",
@@ -1583,6 +1751,17 @@ local function operator_context(action_id)
 		apple_normal_devices = apple_normal_devices,
 		apple_recovery_devices = apple_recovery_devices,
 		apple_restore_devices = apple_restore_devices,
+		programmer_devices = phase3.programmer_devices,
+		dfu_devices = phase3.dfu_devices,
+		firmware_serial_devices = phase3.firmware_serial_devices,
+		firmware_connection_devices = phase3.firmware_connection_devices,
+		openocd_interface_configs = phase3.openocd_interface_configs,
+		openocd_target_configs = phase3.openocd_target_configs,
+		openocd_board_configs = phase3.openocd_board_configs,
+		avrdude_programmers = phase3.avrdude_programmers,
+		avrdude_parts = phase3.avrdude_parts,
+		dfu_programmer_targets = phase3.dfu_programmer_targets,
+		storage_devices = phase3.storage_devices,
 		uploads = list_uploads()
 	}
 end
@@ -1617,8 +1796,14 @@ local function cleanup_prepared()
 	end
 end
 
+local function operator_module_for(action_id)
+	if type(action_id) == "string" and action_id:match("^apple[.]") then return operator_apple end
+	if type(action_id) == "string" and (action_id:match("^firmware[.]") or action_id:match("^storage[.]")) then return operator_phase3 end
+	return operator_actions
+end
+
 local function describe_operator_action(action_id)
-	local module = type(action_id) == "string" and action_id:match("^apple[.]") and operator_apple or operator_actions
+	local module = operator_module_for(action_id)
 	local schema, err = module.describe(action_id, operator_context(action_id))
 	if not schema then return nil, err end
 	local executables = type(schema.native) == "table" and schema.native.executables or nil
@@ -1643,7 +1828,16 @@ local operator_backends = {
 	["apple.mobile_manage"] = { worker = "apple_mobile", worker_executable = "/usr/libexec/ddk-apple-worker", executables = { "/usr/bin/idevicepair", "/usr/bin/idevicename", "/usr/bin/idevicedate", "/usr/bin/idevicediagnostics", "/usr/bin/ideviceenterrecovery", "/usr/bin/idevicesetlocation" } },
 	["apple.mobile_capture"] = { worker = "apple_mobile", worker_executable = "/usr/libexec/ddk-apple-worker", executables = { "/usr/bin/idevicescreenshot", "/usr/bin/idevicesyslog" } },
 	["apple.recovery"] = { worker = "apple_recovery", worker_executable = "/usr/libexec/ddk-apple-worker", executable = "/usr/bin/irecovery" },
-	["apple.restore"] = { worker = "apple_restore", worker_executable = "/usr/libexec/ddk-apple-worker", executable = "/usr/bin/idevicerestore" }
+	["apple.restore"] = { worker = "apple_restore", worker_executable = "/usr/libexec/ddk-apple-worker", executable = "/usr/bin/idevicerestore" },
+	["firmware.openocd"] = { worker = "phase3_openocd", worker_executable = "/usr/libexec/ddk-phase3-worker", executable = "/usr/bin/openocd" },
+	["firmware.avrdude"] = { worker = "phase3_avrdude", worker_executable = "/usr/libexec/ddk-phase3-worker", executable = "/usr/bin/avrdude" },
+	["firmware.dfu"] = { worker = "phase3_dfu", worker_executable = "/usr/libexec/ddk-phase3-worker", executables = { "/usr/bin/dfu-util", "/usr/bin/dfu-programmer" } },
+	["firmware.serial"] = { worker = "phase3_serial", worker_executable = "/usr/libexec/ddk-phase3-worker", executables = { "/usr/bin/stm32flash", "/usr/bin/bossac", "/usr/sbin/lpc21isp" } },
+	["storage.inspect"] = { worker = "phase3_storage", worker_executable = "/usr/libexec/ddk-phase3-worker", executables = { "/usr/sbin/smartctl", "/usr/sbin/e2fsck", "/usr/sbin/badblocks" } },
+	["storage.repair"] = { worker = "phase3_storage", worker_executable = "/usr/libexec/ddk-phase3-worker", executables = { "/usr/sbin/e2fsck", "/usr/sbin/badblocks" } },
+	["storage.image"] = { worker = "phase3_storage", worker_executable = "/usr/libexec/ddk-phase3-worker", executable = "/bin/dd" },
+	["storage.restore"] = { worker = "phase3_storage", worker_executable = "/usr/libexec/ddk-phase3-worker", executable = "/bin/dd" },
+	["storage.squashfs"] = { worker = "phase3_squashfs", worker_executable = "/usr/libexec/ddk-phase3-worker", executable = "/usr/sbin/unsquashfs" }
 }
 
 local function backend_allows_executable(backend, executable)
@@ -1657,7 +1851,7 @@ local function prepare_operator_action(action_id, encoded)
 	local options, err = parse_operator_envelope(encoded)
 	if not options then return nil, err end
 	local plan
-	local module = type(action_id) == "string" and action_id:match("^apple[.]") and operator_apple or operator_actions
+	local module = operator_module_for(action_id)
 	plan, err = module.prepare(action_id, options, operator_context(action_id))
 	if not plan then return nil, err end
 	local backend = operator_backends[action_id]
@@ -1917,7 +2111,7 @@ local function job_process_active(job_id)
 		return status == "queued" and stat ~= nil and os.time() - (stat.mtime or 0) <= 30
 	end
 	local cmdline = (fs.readfile("/proc/" .. pid .. "/cmdline") or ""):gsub("%z", " ")
-	return (cmdline:find(DEFAULT_JOB_WORKER, 1, true) ~= nil or cmdline:find(APPLE_JOB_WORKER, 1, true) ~= nil) and cmdline:find(job_id, 1, true) ~= nil
+	return (cmdline:find(DEFAULT_JOB_WORKER, 1, true) ~= nil or cmdline:find(APPLE_JOB_WORKER, 1, true) ~= nil or cmdline:find(PHASE3_JOB_WORKER, 1, true) ~= nil) and cmdline:find(job_id, 1, true) ~= nil
 end
 
 local function cleanup_transient()
@@ -2074,6 +2268,15 @@ local job_actions = {
 		worker = "apple_restore", label = "Apple IPSW Restore Operator", class = "DISRUPTIVE", singleton = true,
 		operator_only = true, required_hardware = "apple_any", resource = "apple_mobile"
 	},
+	["firmware.openocd"] = { worker = "phase3_openocd", label = "OpenOCD Target Operator", class = "DISRUPTIVE", singleton = true, operator_only = true, required_hardware = "firmware_openocd", resource = "firmware" },
+	["firmware.avrdude"] = { worker = "phase3_avrdude", label = "AVRDUDE Programmer", class = "DISRUPTIVE", singleton = true, operator_only = true, required_hardware = "firmware_avrdude", resource = "firmware" },
+	["firmware.dfu"] = { worker = "phase3_dfu", label = "USB DFU Operator", class = "DISRUPTIVE", singleton = true, operator_only = true, required_hardware = "firmware_dfu", resource = "firmware" },
+	["firmware.serial"] = { worker = "phase3_serial", label = "Serial Bootloader Programmer", class = "DISRUPTIVE", singleton = true, operator_only = true, required_hardware = "firmware_serial", resource = "firmware" },
+	["storage.inspect"] = { worker = "phase3_storage", label = "Storage Health & Read-Only Checks", class = "ACTION", singleton = true, operator_only = true, required_hardware = "storage", resource = "storage" },
+	["storage.repair"] = { worker = "phase3_storage", label = "Storage Repair Operator", class = "DISRUPTIVE", singleton = true, operator_only = true, required_hardware = "storage", resource = "storage" },
+	["storage.image"] = { worker = "phase3_storage", label = "Raw Storage Image / Recovery", class = "ACTION", singleton = true, operator_only = true, required_hardware = "storage", resource = "storage" },
+	["storage.restore"] = { worker = "phase3_storage", label = "Raw Storage Restore", class = "DISRUPTIVE", singleton = true, operator_only = true, required_hardware = "storage", resource = "storage" },
+	["storage.squashfs"] = { worker = "phase3_squashfs", label = "SquashFS Recovery", class = "ACTION", singleton = true, operator_only = true, resource = "storage-recovery" },
 	["can.capture"] = {
 		worker = "can_capture",
 		label = "Passive CAN Frame Snapshot",
@@ -2231,7 +2434,7 @@ local function start_job(action_id, operator_plan)
 		resource = operator_plan.resource
 		singleton = operator_plan.singleton
 		worker_executable = backend.worker_executable or DEFAULT_JOB_WORKER
-		if worker_executable ~= DEFAULT_JOB_WORKER and worker_executable ~= APPLE_JOB_WORKER then return nil, "Prepared action selected an invalid DDK worker" end
+		if worker_executable ~= DEFAULT_JOB_WORKER and worker_executable ~= APPLE_JOB_WORKER and worker_executable ~= PHASE3_JOB_WORKER then return nil, "Prepared action selected an invalid DDK worker" end
 	end
 	if spec.required_hardware == "rtl_sdr" then
 		local probe = rtl_sdr_probe()
@@ -2265,6 +2468,15 @@ local function start_job(action_id, operator_plan)
 	elseif spec.required_hardware == "apple_any" then
 		local probe = identity_probe("apple_mobile")
 		if not probe.action_ready then return nil, "Reviewed Apple USB hardware with a selectable UDID or ECID is not present" end
+	elseif type(spec.required_hardware) == "string" and spec.required_hardware:match("^firmware_") then
+		local probe = firmware_inventories()
+		local ready = spec.required_hardware == "firmware_openocd" and #probe.debug_adapter_devices > 0 or
+			spec.required_hardware == "firmware_avrdude" and #probe.connection_devices > 0 or
+			spec.required_hardware == "firmware_dfu" and #probe.dfu_devices > 0 or
+			spec.required_hardware == "firmware_serial" and #probe.serial_devices > 0
+		if not ready then return nil, "No reviewed target is present for this exact firmware workflow" end
+	elseif spec.required_hardware == "storage" then
+		if #storage_inventory() < 1 then return nil, "No selectable non-system USB block target is present; active extroot and system media remain excluded" end
 	end
 	fs.mkdirr(JOB_ROOT)
 	fs.mkdirr(REPORT_ROOT)
@@ -2402,9 +2614,14 @@ local function start_job(action_id, operator_plan)
 			local lines = {}
 			for _, original in ipairs(source or {}) do
 				local argument = original
-				local artifact_name = type(argument) == "string" and argument:match("^@JOB@/([A-Za-z0-9][A-Za-z0-9_.-]+)$") or nil
-				local extroot_artifact_name = type(argument) == "string" and argument:match("^@ARTIFACT@/([A-Za-z0-9][A-Za-z0-9_.-]+)$") or nil
-				local upload_id = type(argument) == "string" and argument:match("^@UPLOAD@/(upload%-%d+%-%d+%-%d+)$") or nil
+				local job_prefix, artifact_name, job_suffix
+				local extroot_prefix, extroot_artifact_name, extroot_suffix
+				local upload_prefix, upload_id, upload_suffix
+				if type(argument) == "string" then
+					job_prefix, artifact_name, job_suffix = argument:match("^([A-Za-z0-9_:,=+.-]*)@JOB@/([A-Za-z0-9][A-Za-z0-9_.-]+)([A-Za-z0-9_:,=+.-]*)$")
+					extroot_prefix, extroot_artifact_name, extroot_suffix = argument:match("^([A-Za-z0-9_:,=+.-]*)@ARTIFACT@/([A-Za-z0-9][A-Za-z0-9_.-]+)([A-Za-z0-9_:,=+.-]*)$")
+					upload_prefix, upload_id, upload_suffix = argument:match("^([A-Za-z0-9_:,=+.-]*)@UPLOAD@/(upload%-%d+%-%d+%-%d+)([A-Za-z0-9_:,=+.-]*)$")
+				end
 				local workspace_name = type(argument) == "string" and argument:match("^@WORK@/([A-Za-z0-9][A-Za-z0-9-]+)$") or nil
 				if type(argument) == "string" and argument:find("@JOB@", 1, true) and not artifact_name then
 					return nil, "Prepared argv contains an invalid artifact placeholder"
@@ -2420,15 +2637,15 @@ local function start_job(action_id, operator_plan)
 					local registered = allowed_artifacts[artifact_name]
 					if artifact_name == "nmap" and allowed_artifacts["nmap.nmap"] == "tmp" and allowed_artifacts["nmap.xml"] == "tmp" and allowed_artifacts["nmap.gnmap"] == "tmp" then registered = "tmp" end
 					if registered ~= "tmp" then return nil, "Prepared argv references an unregistered temporary artifact" end
-					argument = job_dir .. "/" .. artifact_name
+					argument = job_prefix .. job_dir .. "/" .. artifact_name .. job_suffix
 				end
 				if extroot_artifact_name then
 					if allowed_artifacts[extroot_artifact_name] ~= "extroot" then return nil, "Prepared argv references an unregistered extroot artifact" end
-					argument = ARTIFACT_ROOT .. "/" .. job_id .. "/" .. extroot_artifact_name
+					argument = extroot_prefix .. ARTIFACT_ROOT .. "/" .. job_id .. "/" .. extroot_artifact_name .. extroot_suffix
 				end
 				if upload_id then
 					if not upload_map[upload_id] then return nil, "Prepared argv references an undeclared input upload" end
-					argument = upload_map[upload_id].sealed_path
+					argument = upload_prefix .. upload_map[upload_id].sealed_path .. upload_suffix
 				end
 				if workspace_name then
 					if not allowed_workspaces[workspace_name] then return nil, "Prepared argv references an undeclared isolated workspace" end
@@ -2503,7 +2720,7 @@ local function stop_job(job_id)
 	if not pid or pid < 2 then return nil, "Worker PID is unavailable" end
 	local cmdline = fs.readfile("/proc/" .. pid .. "/cmdline") or ""
 	cmdline = cmdline:gsub("%z", " ")
-	if (not cmdline:find(DEFAULT_JOB_WORKER, 1, true) and not cmdline:find(APPLE_JOB_WORKER, 1, true)) or not cmdline:find(job_id, 1, true) then
+	if (not cmdline:find(DEFAULT_JOB_WORKER, 1, true) and not cmdline:find(APPLE_JOB_WORKER, 1, true) and not cmdline:find(PHASE3_JOB_WORKER, 1, true)) or not cmdline:find(job_id, 1, true) then
 		return nil, "PID does not belong to this DDK job"
 	end
 	write_file(JOB_ROOT .. "/" .. job_id .. "/status", "stopping\n")

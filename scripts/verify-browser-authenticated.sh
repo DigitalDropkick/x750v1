@@ -6,14 +6,20 @@ umask 077
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 target="${DDK_TARGET:-root@192.168.8.1}"
 control_path="${DDK_SSH_CONTROL_PATH:-}"
+target_host="${target#root@}"
+browser_base="${DDK_BROWSER_BASE:-http://$target_host}"
 session=''
 csrf_token=''
 artifact_probe_id=''
 
-if [[ "$target" != "root@192.168.8.1" ]]; then
+if [[ "$target" != "root@192.168.8.1" && "$target" != "root@100.122.115.85" ]]; then
 	printf 'Refusing unexpected target: %s\n' "$target" >&2
 	exit 64
 fi
+[[ "$browser_base" == "http://$target_host" ]] || {
+	printf 'Refusing browser base that does not match the exact target: %s\n' "$browser_base" >&2
+	exit 64
+}
 
 [[ -n "$control_path" && -S "$control_path" ]] || {
 	printf '%s\n' 'A live DDK_SSH_CONTROL_PATH is required for transient browser-session creation.' >&2
@@ -60,7 +66,7 @@ jq -nc --arg session "$session" --arg token "$csrf_token" '{ ubus_rpc_session: $
 unset csrf_token
 jq -nc --arg session "$session" '{ ubus_rpc_session: $session, scope: "access-group", objects: [ [ "ddk-field-console", "read" ] ] }' |
 	ssh "${ssh_args[@]}" "$target" 'payload="$(read -r line; printf "%s" "$line")"; ubus call session grant "$payload" >/dev/null'
-jq -nc --arg session "$session" '{ ubus_rpc_session: $session, scope: "cgi-io", objects: [ [ "exec", "read" ], [ "download", "read" ] ] }' |
+jq -nc --arg session "$session" '{ ubus_rpc_session: $session, scope: "cgi-io", objects: [ [ "exec", "read" ], [ "download", "read" ], [ "upload", "write" ] ] }' |
 	ssh "${ssh_args[@]}" "$target" 'payload="$(read -r line; printf "%s" "$line")"; ubus call session grant "$payload" >/dev/null'
 jq -nc --arg session "$session" '{
 	ubus_rpc_session: $session,
@@ -70,13 +76,16 @@ jq -nc --arg session "$session" '{
 		[ "/usr/libexec/ddk-console capabilities", "exec" ],
 		[ "/usr/libexec/ddk-console packages", "exec" ],
 		[ "/usr/libexec/ddk-console info *", "exec" ],
+		[ "/usr/libexec/ddk-console action *", "exec" ],
+		[ "/usr/libexec/ddk-console upload *", "exec" ],
 		[ "/usr/libexec/ddk-console job *", "exec" ],
 		[ "/usr/libexec/ddk-console report *", "exec" ],
+		[ "/overlay/ddk-field-console/uploads/upload-[0-9]*-[0-9]*-[0-9]*/payload.bin", "write" ],
 		[ "/tmp/ddk/jobs/job-[0-9]*-[0-9]*/snapshot.jpg", "read" ]
 	]
 }' | ssh "${ssh_args[@]}" "$target" 'payload="$(read -r line; printf "%s" "$line")"; ubus call session grant "$payload" >/dev/null'
 
-auth_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 --cookie "sysauth_http=$session" http://192.168.8.1/cgi-bin/luci/admin/ddk/overview || true)"
+auth_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 --cookie "sysauth_http=$session" "$browser_base/cgi-bin/luci/admin/ddk/overview" || true)"
 [[ "$auth_http" == '200' ]] || {
 	printf 'Transient LuCI session preflight returned HTTP %s.\n' "$auth_http" >&2
 	exit 1
@@ -98,7 +107,7 @@ artifact_reply="$(curl -sS --max-time 8 --cookie "sysauth_http=$session" \
 	--data-urlencode "path=/tmp/ddk/jobs/$artifact_probe_id/snapshot.jpg" \
 	--data-urlencode "filename=ddk-camera-$artifact_probe_id.jpg" \
 	--write-out $'\nDDK_HTTP_STATUS:%{http_code}' \
-	http://192.168.8.1/cgi-bin/cgi-download)"
+	"$browser_base/cgi-bin/cgi-download")"
 artifact_http="${artifact_reply##*DDK_HTTP_STATUS:}"
 artifact_payload="${artifact_reply%$'\n'DDK_HTTP_STATUS:*}"
 unset artifact_reply
@@ -108,14 +117,14 @@ unset artifact_reply
 }
 outside_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 --cookie "sysauth_http=$session" \
 	--data-urlencode "sessionid=$session" --data-urlencode 'path=/etc/shadow' \
-	http://192.168.8.1/cgi-bin/cgi-download || true)"
+	"$browser_base/cgi-bin/cgi-download" || true)"
 [[ "$outside_http" != '200' ]] || {
 	printf '%s\n' 'Camera-artifact ACL unexpectedly permitted an outside path.' >&2
 	exit 1
 }
 printf '%s\n' 'Authenticated camera-artifact ACL proof passed; an outside path was denied.'
 
-DDK_BROWSER_SESSION="$session" node "$project_root/scripts/verify-browser.mjs"
+DDK_BROWSER_BASE="$browser_base" DDK_BROWSER_SESSION="$session" node "$project_root/scripts/verify-browser.mjs"
 destroy_session
 trap - EXIT HUP INT TERM
 printf '%s\n' 'Transient LuCI browser session destroyed.'

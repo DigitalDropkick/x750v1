@@ -166,11 +166,19 @@ Relevant confirmed paths:
 - `adb` 1.0.32 is installed at `/usr/bin/adb`. `fastboot` is unavailable.
 - `idevice_id`, `ideviceinfo`, and `idevicepair` are installed at `/usr/bin`; `irecovery` and `idevicerestore` are installed; `usbmuxd` exists at `/usr/sbin/usbmuxd`.
 - `openocd`, `avrdude`, `dfu-util`, `dfu-programmer`, `stm32flash`, `bossac`, `lpc21isp`, and `ftdi_eeprom` are executable in the standard paths.
+- Exact firmware versions are OpenOCD `0.11.0-v0.11.0-1-OpenWrt`, AVRDUDE `6.3`, dfu-util `0.11`, dfu-programmer `0.7.2`, BOSSA package `1.9.1-4`, and LPC21ISP `1.97`. OpenOCD provides 120 interface, 268 target, and 330 board config files on this image.
 - The `flashrom-usb` package record exists, but `flashrom` is unavailable in the executable paths. The console reports that state and does not install a substitute.
 - The exact installed help output was inspected for ADB, idevicepair, irecovery, idevicerestore, OpenOCD, AVRDUDE, both DFU tools, STM32Flash, BOSSA, and FTDI EEPROM. Help-only inspection left all related process and listener state unchanged.
 - No reviewed Android, Apple mobile, or firmware-programmer USB identity was attached. The live topology remained the Quectel modem, USB storage, hub, and USB/IP virtual host controllers.
-- Synthetic fixtures on the router's actual Lua 5.1/nixio stack accepted Android ADB `18d1:4ee7`, Apple recovery `05ac:12a8`, and SEGGER `1366:0105` identities while rejecting Apple Bluetooth `05ac:8290` and generic FTDI `0403:6001` examples.
+- Synthetic fixtures on the router's actual Lua 5.1/nixio stack accepted Android ADB `18d1:4ee7`, Apple recovery `05ac:12a8`, SEGGER `1366:0105`, and a USB DFU `fe:01:02` interface while rejecting Apple Bluetooth `05ac:8290` and generic FTDI `0403:6001` programmer examples.
 - A staged v2 backend against live sysfs completed all six new INFO actions with zero DDK jobs, device-tool processes, or ADB/mobile listener changes. Production v1.9 files remained untouched during that pre-deployment proof.
+
+## Storage/recovery capability
+
+- Exact installed tools are smartctl `7.2`, e2fsck/badblocks `1.46.5`, unsquashfs `4.5`, util-linux blkid/lsblk `2.37.4`, and BusyBox `1.35.0` dd/tar/cmp.
+- The installed dd advertises `skip_bytes`, `count_bytes`, `fullblock`, `direct`, and `seek_bytes`; these are the byte-range primitives used by structured imaging and restore.
+- The only current `sdX` disk is `sda`; `/dev/sda1` is the active extroot mounted at `/overlay` and `/mnt/extroot`. The entire `sda` disk and partition are protected and must never appear in a storage Operator selector.
+- No safe non-system media is attached. Target-safe Phase 3 validation therefore covers planner behavior, exact runtime checks, system-media exclusion, and failure/cleanup before native access; live image/repair/restore acceptance requires separately approved attached media.
 
 ## Network and remote-access baseline
 

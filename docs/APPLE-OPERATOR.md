@@ -1,6 +1,6 @@
 # Apple Operator Mode
 
-Version 2.1 replaces Apple identity plus SSH handoff as the primary browser workflow with five exact structured actions. This source remains undeployed; production stays on the accepted v2.0 baseline until Addam explicitly approves deployment.
+Version 2.1 replaces Apple identity plus SSH handoff as the primary browser workflow with five exact structured actions. The workflow is deployed in production; the production no-device path and helper cleanup passed without invoking an Apple device operation.
 
 ## Reviewed target software
 
@@ -115,4 +115,4 @@ Completed without an attached customer device:
 - temporary `usbmuxd` no-device failure and cleanup proof;
 - no remaining Apple process, DDK resource lock, or port 27015 listener after testing.
 
-Live normal-mode, recovery/DFU, screenshot, pairing, device-changing, restore, cancellation-under-load, and measured CPU/RAM acceptance remain pending approved Apple hardware, a non-customer test device or explicit authorization, and deployment approval.
+Live normal-mode, recovery/DFU, screenshot, pairing, device-changing, restore, cancellation-under-load, and measured CPU/RAM acceptance remain pending approved Apple hardware and a non-customer test device or explicit authorization.

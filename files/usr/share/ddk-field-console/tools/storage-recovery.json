@@ -2,16 +2,20 @@
   "id": "storage-recovery",
   "name": "Storage / Recovery",
   "category": "Storage / Recovery",
-  "description": "External-storage health, recovery, and filesystem utilities.",
+  "description": "Non-system USB media health, filesystem checks/repair, bad-block work, raw imaging/restore, and SquashFS artifact recovery.",
   "package_names": ["e2fsprogs", "badblocks", "smartmontools", "squashfs-tools-unsquashfs"],
   "expected_binaries": ["e2fsck", "badblocks", "smartctl", "unsquashfs"],
-  "required_hardware": ["usb_storage"],
+  "required_hardware": [],
   "status_probe": "usb_storage",
   "risk_level": "DISRUPTIVE",
-  "enabled": false,
+  "enabled": true,
+  "no_device_state": "READY / NO DEVICE",
   "actions": [
-    {"id": "storage.health", "class": "INFO", "enabled": false},
-    {"id": "storage.repair", "class": "DISRUPTIVE", "enabled": false}
+    {"id": "storage.inspect", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "storage", "enabled": true},
+    {"id": "storage.repair", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "storage", "enabled": true},
+    {"id": "storage.image", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "storage", "enabled": true},
+    {"id": "storage.restore", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "storage", "enabled": true},
+    {"id": "storage.squashfs", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "none", "enabled": true}
   ],
-  "help_text": "The active extroot remains excluded. Structured health/image/recovery workflows need server-attributed non-system media, authenticated artifacts, mount-state checks, read/write confirmation, capacity bounds, and recovery tests."
+  "help_text": "Active extroot, system media, mounted repair/image targets, and swap remain excluded. Read-only SMART can inspect mounted non-system media; writes require exact target/size/hash confirmation. Artifacts remain in generated DDK extroot paths."
 }

@@ -62,7 +62,7 @@ json_ok() {
 }
 
 base64url() {
-	base64 | tr '+/' '-_' | tr -d '=\r\n'
+	/usr/bin/openssl base64 -A | tr '+/' '-_' | tr -d '=\r\n'
 }
 
 model="$(ubus call system board | jsonfilter -e '@.model')"
@@ -87,9 +87,11 @@ for file in \
 	/usr/libexec/ddk-console \
 	/usr/libexec/ddk-job-worker \
 	/usr/libexec/ddk-apple-worker \
+	/usr/libexec/ddk-phase3-worker \
 	/usr/share/ddk-field-console/usb-identity.lua \
 	/usr/share/ddk-field-console/operator-actions.lua \
 	/usr/share/ddk-field-console/operator-apple.lua \
+	/usr/share/ddk-field-console/operator-phase3.lua \
 	/usr/lib/lua/luci/view/ddk/shell.htm \
 	/www/luci-static/resources/ddk/console-app.js \
 	/www/luci-static/resources/ddk/console.css \
@@ -115,9 +117,11 @@ DDK_LUA_FILE=/usr/libexec/ddk-console lua -e 'assert(loadfile(os.getenv("DDK_LUA
 DDK_IDENTITY_FILE=/usr/share/ddk-field-console/usb-identity.lua lua -e 'assert(loadfile(os.getenv("DDK_IDENTITY_FILE")))' || fail 'USB identity module syntax check failed'
 DDK_OPERATOR_FILE=/usr/share/ddk-field-console/operator-actions.lua lua -e 'assert(loadfile(os.getenv("DDK_OPERATOR_FILE")))' || fail 'Operator Mode action module syntax check failed'
 DDK_APPLE_OPERATOR_FILE=/usr/share/ddk-field-console/operator-apple.lua lua -e 'assert(loadfile(os.getenv("DDK_APPLE_OPERATOR_FILE")))' || fail 'Apple Operator Mode action module syntax check failed'
+DDK_PHASE3_OPERATOR_FILE=/usr/share/ddk-field-console/operator-phase3.lua lua -e 'assert(loadfile(os.getenv("DDK_PHASE3_OPERATOR_FILE")))' || fail 'Phase 3 Operator Mode action module syntax check failed'
 DDK_TEMPLATE_FILE=/usr/lib/lua/luci/view/ddk/shell.htm lua -e 'local parser = require "luci.template.parser"; assert(parser.parse(os.getenv("DDK_TEMPLATE_FILE")))' || fail 'LuCI template syntax check failed'
 sh -n /usr/libexec/ddk-job-worker || fail 'job worker syntax check failed'
 sh -n /usr/libexec/ddk-apple-worker || fail 'Apple worker syntax check failed'
+sh -n /usr/libexec/ddk-phase3-worker || fail 'Phase 3 worker syntax check failed'
 find /usr/share/ddk-field-console/tools -type f -name '*.json' | while IFS= read -r file; do jsonfilter -i "$file" -e '@' >/dev/null; done
 pass 'router-side Lua, shell, and JSON syntax'
 
@@ -131,6 +135,16 @@ LC_ALL=C /usr/bin/ideviceinfo --version 2>&1 | grep -Fq '1.3.0' || fail 'libimob
 LC_ALL=C /usr/bin/irecovery --version 2>&1 | grep -Fq '1.0.0' || fail 'irecovery version is not reviewed 1.0.0'
 LC_ALL=C /usr/bin/idevicerestore --version 2>&1 | grep -Fq '1.0.0' || fail 'idevicerestore version is not reviewed 1.0.0'
 LC_ALL=C /usr/sbin/usbmuxd --version 2>&1 | grep -Fqx 'usbmuxd 1.1.1' || fail 'usbmuxd version is not reviewed 1.1.1'
+LC_ALL=C /usr/bin/openocd --version 2>&1 | grep -Fq 'Open On-Chip Debugger 0.11.0-v0.11.0-1-OpenWrt' || fail 'OpenOCD version is not reviewed 0.11.0'
+LC_ALL=C /usr/bin/avrdude -? 2>&1 | grep -Fq 'avrdude version 6.3' || fail 'AVRDUDE version is not reviewed 6.3'
+[ "$(LC_ALL=C /usr/bin/dfu-util --version 2>&1 | sed -n '1p')" = 'dfu-util 0.11' ] || fail 'dfu-util version is not reviewed 0.11'
+[ "$(LC_ALL=C /usr/bin/dfu-programmer --version 2>&1 | sed -n '1p')" = 'dfu-programmer 0.7.2' ] || fail 'dfu-programmer version is not reviewed 0.7.2'
+LC_ALL=C /usr/bin/bossac --help 2>&1 | grep -Fq 'BOSSA' || fail 'BOSSA runtime is not reviewed 1.9.1'
+LC_ALL=C /usr/sbin/lpc21isp 2>&1 | grep -Fq 'Version 1.97' || fail 'LPC21ISP version is not reviewed 1.97'
+LC_ALL=C /usr/sbin/smartctl --version 2>&1 | grep -Fq 'smartctl 7.2 ' || fail 'smartctl version is not reviewed 7.2'
+LC_ALL=C /usr/sbin/e2fsck -V 2>&1 | grep -Fq 'e2fsck 1.46.5' || fail 'e2fsprogs version is not reviewed 1.46.5'
+LC_ALL=C /usr/sbin/unsquashfs -version 2>&1 | grep -Fq 'unsquashfs version 4.5' || fail 'unsquashfs version is not reviewed 4.5'
+/bin/dd --help 2>&1 | grep -Fq 'iflag=skip_bytes' || fail 'BusyBox dd lacks reviewed byte-count support'
 LC_ALL=C /usr/bin/socat -V 2>&1 | grep -Fq 'socat version 1.7.4.1 ' || fail 'socat version is not reviewed 1.7.4.1'
 LC_ALL=C /bin/stty --version 2>&1 | grep -Fq 'stty (GNU coreutils) 9.0' || fail 'stty version is not reviewed 9.0'
 pass 'exact Operator Mode native versions'
@@ -250,6 +264,7 @@ mkdir "$serial_worker_probe_dir"
 chmod 700 "$serial_worker_probe_dir"
 printf '%s\n' queued > "$serial_worker_probe_dir/status"
 printf '%s\n' '{"action_id":"serial.session","operator_mode":true,"options":{"device":"/dev/ttyUSB0","mode":"receive","read_kib":1,"output_view":"hex","transmit_bytes":0}}' > "$serial_worker_probe_dir/metadata.json"
+: > "$serial_worker_probe_dir/argv"
 : > "$serial_worker_probe_dir/stdout"
 : > "$serial_worker_probe_dir/stderr"
 serial_worker_result=0
@@ -257,7 +272,8 @@ serial_worker_result=0
 serial_worker_status="$(cat "$serial_worker_probe_dir/status" 2>/dev/null || true)"
 serial_worker_error="$(cat "$serial_worker_probe_dir/stderr" 2>/dev/null || true)"
 rm -f "$serial_worker_probe_dir/pid" "$serial_worker_probe_dir/status" "$serial_worker_probe_dir/metadata.json" \
-	"$serial_worker_probe_dir/stdout" "$serial_worker_probe_dir/stderr" "$serial_worker_probe_dir/serial.bin" "$serial_worker_probe_dir/serial-input.bin" "$serial_worker_probe_dir/stdin-hex"
+	"$serial_worker_probe_dir/argv" "$serial_worker_probe_dir/stdout" "$serial_worker_probe_dir/stderr" \
+	"$serial_worker_probe_dir/serial.bin" "$serial_worker_probe_dir/serial-input.bin" "$serial_worker_probe_dir/stdin-hex"
 rmdir "$serial_worker_probe_dir"
 [ "$serial_worker_result" -eq 65 ] || fail "independent serial EC25 gate returned $serial_worker_result instead of 65"
 [ "$serial_worker_status" = 'failed' ] || fail "independent serial EC25 gate ended in state: $serial_worker_status"
@@ -265,15 +281,31 @@ printf '%s' "$serial_worker_error" | grep -Fq 'Quectel EC25 modem ports are rese
 if pidof socat picocom >/dev/null 2>&1; then fail 'serial rejection started or left a serial client'; fi
 pass 'EC25 ownership, structured serial controls, private-input boundary, and independent modem-reserved worker gate'
 
-for identity_manifest in apple-repair firmware-programming; do
+for identity_contract in 'apple-repair:apple.identify:apple.operator_guide' 'firmware-programming:firmware.identify:firmware.operator_guide'; do
+	identity_manifest="${identity_contract%%:*}"
+	identity_remainder="${identity_contract#*:}"
+	identity_action="${identity_remainder%%:*}"
+	guide_action="${identity_remainder#*:}"
 	manifest="/usr/share/ddk-field-console/tools/$identity_manifest.json"
 	[ "$(jsonfilter -i "$manifest" -e '@.enabled')" = 'true' ] || fail "identity module is not enabled: $identity_manifest"
 	[ "$(jsonfilter -i "$manifest" -e '@.no_device_state')" = 'READY / NO DEVICE' ] || fail "identity no-device state is incorrect: $identity_manifest"
-	[ "$(jsonfilter -i "$manifest" -e '@.actions[0].class')" = 'INFO' ] || fail "identity action lost INFO classification: $identity_manifest"
-	[ "$(jsonfilter -i "$manifest" -e '@.actions[0].enabled')" = 'true' ] || fail "identity action is disabled: $identity_manifest"
-	[ "$(jsonfilter -i "$manifest" -e '@.actions[1].class')" = 'INFO' ] || fail "operator guide lost INFO classification: $identity_manifest"
-	[ "$(jsonfilter -i "$manifest" -e '@.actions[1].enabled')" = 'true' ] || fail "operator guide is disabled: $identity_manifest"
-	[ "$(jsonfilter -i "$manifest" -e '@.actions[2].class')" = 'DISRUPTIVE' ] || fail "device-changing placeholder lost its risk class: $identity_manifest"
+	[ "$(jsonfilter -i "$manifest" -e "@.actions[@.id=\"$identity_action\"].class")" = 'INFO' ] || fail "identity action lost INFO classification: $identity_manifest"
+	[ "$(jsonfilter -i "$manifest" -e "@.actions[@.id=\"$identity_action\"].enabled")" = 'true' ] || fail "identity action is disabled: $identity_manifest"
+	[ "$(jsonfilter -i "$manifest" -e "@.actions[@.id=\"$guide_action\"].class")" = 'INFO' ] || fail "operator guide lost INFO classification: $identity_manifest"
+	[ "$(jsonfilter -i "$manifest" -e "@.actions[@.id=\"$guide_action\"].enabled")" = 'true' ] || fail "operator guide is disabled: $identity_manifest"
+done
+firmware_manifest=/usr/share/ddk-field-console/tools/firmware-programming.json
+for firmware_index in 2 3 4 5; do
+	[ "$(jsonfilter -i "$firmware_manifest" -e "@.actions[$firmware_index].enabled")" = 'true' ] || fail "firmware Operator action is disabled at index $firmware_index"
+	[ "$(jsonfilter -i "$firmware_manifest" -e "@.actions[$firmware_index].execution")" = 'job' ] || fail "firmware Operator action is not a job at index $firmware_index"
+	[ "$(jsonfilter -i "$firmware_manifest" -e "@.actions[$firmware_index].parameter_schema")" = 'operator-v1' ] || fail "firmware structured schema marker is missing at index $firmware_index"
+done
+storage_manifest=/usr/share/ddk-field-console/tools/storage-recovery.json
+[ "$(jsonfilter -i "$storage_manifest" -e '@.enabled')" = 'true' ] || fail 'storage/recovery module is not enabled'
+for storage_index in 0 1 2 3 4; do
+	[ "$(jsonfilter -i "$storage_manifest" -e "@.actions[$storage_index].enabled")" = 'true' ] || fail "storage Operator action is disabled at index $storage_index"
+	[ "$(jsonfilter -i "$storage_manifest" -e "@.actions[$storage_index].execution")" = 'job' ] || fail "storage Operator action is not a job at index $storage_index"
+	[ "$(jsonfilter -i "$storage_manifest" -e "@.actions[$storage_index].parameter_schema")" = 'operator-v1' ] || fail "storage structured schema marker is missing at index $storage_index"
 done
 android_manifest=/usr/share/ddk-field-console/tools/android-repair.json
 [ "$(jsonfilter -i "$android_manifest" -e '@.enabled')" = 'true' ] || fail 'Android module is not enabled'
@@ -290,7 +322,7 @@ done
 
 identity_fixture="$(mktemp -d /tmp/ddk-usb-identity-test.XXXXXX)"
 fixture="$identity_fixture/fixture"
-mkdir -p "$fixture/7-1" "$fixture/7-1:1.0" "$fixture/7-2" "$fixture/7-3" "$fixture/7-4" "$fixture/7-5"
+mkdir -p "$fixture/7-1" "$fixture/7-1:1.0" "$fixture/7-2" "$fixture/7-3" "$fixture/7-4" "$fixture/7-5" "$fixture/7-6" "$fixture/7-6:1.0"
 printf %s 18d1 > "$fixture/7-1/idVendor"
 printf %s 4ee7 > "$fixture/7-1/idProduct"
 printf %s Google > "$fixture/7-1/manufacturer"
@@ -319,6 +351,17 @@ printf %s 0403 > "$fixture/7-5/idVendor"
 printf %s 6001 > "$fixture/7-5/idProduct"
 printf %s FTDI > "$fixture/7-5/manufacturer"
 printf %s 'FT232R USB UART' > "$fixture/7-5/product"
+printf %s 0483 > "$fixture/7-6/idVendor"
+printf %s df11 > "$fixture/7-6/idProduct"
+printf %s STMicroelectronics > "$fixture/7-6/manufacturer"
+printf %s 'STM32 BOOTLOADER' > "$fixture/7-6/product"
+printf %s TEST-DFU > "$fixture/7-6/serial"
+printf %s 1 > "$fixture/7-6/busnum"
+printf %s 6 > "$fixture/7-6/devnum"
+printf %s fe > "$fixture/7-6:1.0/bInterfaceClass"
+printf %s 01 > "$fixture/7-6:1.0/bInterfaceSubClass"
+printf %s 02 > "$fixture/7-6:1.0/bInterfaceProtocol"
+printf %s 00 > "$fixture/7-6:1.0/bInterfaceNumber"
 DDK_FIXTURE="$fixture" lua - <<'LUA'
 local identity = dofile("/usr/share/ddk-field-console/usb-identity.lua")
 local result = identity.scan(os.getenv("DDK_FIXTURE"))
@@ -326,9 +369,11 @@ assert(#result.android == 1, "Android fixture count")
 assert(result.android[1].identity == "ADB USB INTERFACE", "Android fixture mode")
 assert(#result.apple_mobile == 1, "Apple fixture count")
 assert(result.apple_mobile[1].identity == "RECOVERY MODE DESCRIPTOR", "Apple fixture mode")
-assert(#result.programmer == 1, "programmer fixture count")
+assert(#result.programmer == 2, "programmer fixture count")
 assert(result.programmer[1].identity == "SEGGER J-Link", "programmer fixture identity")
-assert(result.inspected_count == 5, "fixture inspection count")
+assert(result.programmer[2].identity == "USB DFU MODE INTERFACE", "DFU interface fixture identity")
+assert(result.programmer[2].busnum == "1" and result.programmer[2].devnum == "6", "DFU bus/device attribution")
+assert(result.inspected_count == 6, "fixture inspection count")
 LUA
 cleanup_identity_fixture
 pass 'positive USB identity fixtures and conservative false-positive rejection'
@@ -346,17 +391,17 @@ for identity_action in android.identify apple.identify firmware.identify; do
 done
 for guide_action in android.operator_guide apple.operator_guide firmware.operator_guide; do
 	payload="$(/usr/libexec/ddk-console info "$guide_action")"
-	printf '%s' "$payload" | json_ok || fail "full CLI handoff failed: $guide_action"
+	printf '%s' "$payload" | json_ok || fail "native tool reference failed: $guide_action"
 	output="$(printf '%s' "$payload" | jsonfilter -e '@.data.output')"
-	printf '%s' "$output" | grep -Fq 'The installed CLI tools retain their full native functionality' || fail "full CLI assurance is missing: $guide_action"
+	printf '%s' "$output" | grep -Fq 'Structured GUI Operator Mode is the primary interface' || fail "GUI-primary assurance is missing: $guide_action"
 	printf '%s' "$output" | grep -Fq 'The browser does not execute any displayed command' || fail "non-execution declaration is missing: $guide_action"
-	printf '%s' "$output" | grep -Fq 'No command above was run by this request.' || fail "handoff completion declaration is missing: $guide_action"
+	printf '%s' "$output" | grep -Fq 'No native command above was run by this reference request.' || fail "reference completion declaration is missing: $guide_action"
 done
 identity_jobs_after="$(find /tmp/ddk/jobs -maxdepth 1 -type d -name 'job-*' 2>/dev/null | wc -l)"
 [ "$identity_jobs_before" = "$identity_jobs_after" ] || fail 'an immediate identity/guide action created a DDK job'
 [ "$identity_processes_before" = "$(pidof adb usbmuxd idevice_id ideviceinfo idevicepair irecovery idevicerestore openocd avrdude dfu-util dfu-programmer flashrom stm32flash bossac lpc21isp ftdi_eeprom 2>/dev/null || true)" ] || fail 'identity actions changed a mobile/programmer process state'
 [ "$identity_listeners_before" = "$(netstat -lntup 2>/dev/null | grep -E ':(5037|27015)[[:space:]]' || true)" ] || fail 'identity actions changed an ADB/mobile listener state'
-pass 'private transient identity and full native-CLI handoff actions'
+pass 'private transient identity and supplemental native-tool reference actions'
 
 injection_marker=/tmp/ddk-injection-marker
 rm -f "$injection_marker"
@@ -374,7 +419,7 @@ if /usr/libexec/ddk-console job stop 1 2>/dev/null | json_ok; then fail 'generic
 if /usr/libexec/ddk-console report view ../../etc/shadow 2>/dev/null | json_ok; then fail 'report path traversal was accepted'; fi
 pass 'action injection, generic PID, and traversal rejection'
 
-for operator_action in network.nmap_lan_discovery capture.lan_metadata_snapshot throughput.iperf3 android.adb_diagnostics android.adb_manage apple.mobile_diagnostics apple.mobile_capture apple.mobile_manage apple.recovery apple.restore; do
+for operator_action in network.nmap_lan_discovery capture.lan_metadata_snapshot throughput.iperf3 android.adb_diagnostics android.adb_manage apple.mobile_diagnostics apple.mobile_capture apple.mobile_manage apple.recovery apple.restore firmware.openocd firmware.avrdude firmware.dfu firmware.serial storage.inspect storage.repair storage.image storage.restore storage.squashfs; do
 	operator_schema="$(/usr/libexec/ddk-console action describe "$operator_action")"
 	printf '%s' "$operator_schema" | json_ok || fail "Operator Mode schema failed: $operator_action"
 	[ "$(printf '%s' "$operator_schema" | jsonfilter -e '@.data.action_id')" = "$operator_action" ] || fail "Operator Mode schema action mismatch: $operator_action"
@@ -385,6 +430,10 @@ done
 [ "$(printf '%s' "$(/usr/libexec/ddk-console action describe apple.mobile_diagnostics)" | jsonfilter -e '@.data.native.version')" = 'libimobiledevice 1.3.0' ] || fail 'Apple diagnostics schema lost the exact libimobiledevice version contract'
 [ "$(printf '%s' "$(/usr/libexec/ddk-console action describe apple.recovery)" | jsonfilter -e '@.data.native.version')" = '1.0.0' ] || fail 'Apple recovery schema lost the exact irecovery version contract'
 [ "$(printf '%s' "$(/usr/libexec/ddk-console action describe apple.restore)" | jsonfilter -e '@.data.native.version')" = '1.0.0' ] || fail 'Apple restore schema lost the exact idevicerestore version contract'
+[ "$(printf '%s' "$(/usr/libexec/ddk-console action describe firmware.openocd)" | jsonfilter -e '@.data.native.version')" = 'OpenOCD 0.11.0-v0.11.0-1-OpenWrt' ] || fail 'OpenOCD schema lost the exact installed version contract'
+[ "$(printf '%s' "$(/usr/libexec/ddk-console action describe firmware.avrdude)" | jsonfilter -e '@.data.native.version')" = 'AVRDUDE 6.3' ] || fail 'AVRDUDE schema lost the exact installed version contract'
+[ "$(printf '%s' "$(/usr/libexec/ddk-console action describe storage.image)" | jsonfilter -e '@.data.native.version')" = 'BusyBox 1.35.0 dd' ] || fail 'storage imaging schema lost the exact installed version contract'
+[ "$(printf '%s' "$(/usr/libexec/ddk-console action describe storage.squashfs)" | jsonfilter -e '@.data.native.version')" = 'unsquashfs 4.5' ] || fail 'SquashFS schema lost the exact installed version contract'
 if netstat -lntp 2>/dev/null | grep -Eq '(^|[.:])5038[[:space:]]'; then fail 'Android schema discovery left or encountered a listener on DDK port 5038'; fi
 adb_unknown_payload="$(printf '%s' '{"version":1,"options":{"device":"","shell":"id"}}' | base64url)"
 adb_unknown_result="$(/usr/libexec/ddk-console action prepare android.adb_diagnostics "$adb_unknown_payload" 2>/dev/null || true)"
@@ -394,6 +443,66 @@ if /usr/libexec/ddk-console job start android.adb_manage 2>/dev/null | json_ok; 
 for apple_action in apple.mobile_diagnostics apple.mobile_capture apple.mobile_manage apple.recovery apple.restore; do
 	if /usr/libexec/ddk-console job start "$apple_action" 2>/dev/null | json_ok; then fail "Apple Operator Mode action started without a prepared request: $apple_action"; fi
 done
+for phase3_action in firmware.openocd firmware.avrdude firmware.dfu firmware.serial storage.inspect storage.repair storage.image storage.restore storage.squashfs; do
+	if /usr/libexec/ddk-console job start "$phase3_action" 2>/dev/null | json_ok; then fail "Phase 3 Operator Mode action started without a prepared request: $phase3_action"; fi
+done
+phase3_unknown_payload="$(printf '%s' '{"version":1,"options":{"device":"/dev/sda1","executable":"/bin/sh"}}' | base64url)"
+phase3_unknown_result="$(/usr/libexec/ddk-console action prepare storage.image "$phase3_unknown_payload" 2>/dev/null || true)"
+printf '%s' "$phase3_unknown_result" | jsonfilter -e '@.message' | grep -Fq 'Unknown storage image option' || fail 'unknown Phase 3 executable option was not rejected before target evaluation'
+protected_storage_payload="$(printf '%s' '{"version":1,"options":{"device":"/dev/sda","length":4096}}' | base64url)"
+protected_storage_result="$(/usr/libexec/ddk-console action prepare storage.image "$protected_storage_payload" 2>/dev/null || true)"
+printf '%s' "$protected_storage_result" | jsonfilter -e '@.message' | grep -Fq 'not an unprotected server-attributed block device' || fail 'active extroot disk entered the storage Operator inventory'
+empty_phase3_payload="$(printf '%s' '{"version":1,"options":{}}' | base64url)"
+firmware_no_device_result="$(/usr/libexec/ddk-console action prepare firmware.openocd "$empty_phase3_payload" 2>/dev/null || true)"
+printf '%s' "$firmware_no_device_result" | jsonfilter -e '@.message' | grep -Fq 'not in the reviewed live inventory' || fail 'OpenOCD prepared without a reviewed live debug adapter'
+lua - <<'LUA' || fail 'pure Phase 3 planner safety proof failed'
+local phase3 = assert(dofile('/usr/share/ddk-field-console/operator-phase3.lua'))
+local context = {
+	programmer_devices = { { value='usb:9-9', label='synthetic', topology='9-9', usb_id='1366:0105' } },
+	openocd_interface_configs = { { value='interface/jlink.cfg', label='jlink' } },
+	openocd_target_configs = { { value='target/stm32f4x.cfg', label='stm32f4x' } },
+	openocd_board_configs = {},
+	storage_devices = { { value='/dev/sdz', label='synthetic', size=67108864, kind='disk', disk='sdz', fs_type='', mounted=false } },
+	uploads = {
+		{ id='upload-1700000000-100-1', kind='firmware_image', original_name='firmware.bin', size=1048576, sha256=string.rep('a', 64) },
+		{ id='upload-1700000000-100-2', kind='storage_image', original_name='storage.img', size=8388608, sha256=string.rep('b', 64) }
+	}
+}
+local openocd = assert(phase3.prepare('firmware.openocd', { device='usb:9-9', operation='program', upload='upload-1700000000-100-1' }, context))
+assert(openocd.confirmation.required and #openocd.input_uploads == 1 and openocd.argv[1] == '/usr/bin/openocd')
+local image = assert(phase3.prepare('storage.image', { device='/dev/sdz', offset=4096, length=8388608 }, context))
+assert(image.argv[1] == '/bin/dd' and image.artifacts[1].name == 'storage-image.raw' and not image.confirmation.required)
+local restore = assert(phase3.prepare('storage.restore', { device='/dev/sdz', upload='upload-1700000000-100-2' }, context))
+assert(restore.confirmation.required and restore.confirmation.phrase:find(string.rep('b', 64), 1, true))
+assert(not phase3.prepare('storage.image', { device='/dev/sda1', length=4096 }, context))
+assert(not phase3.prepare('firmware.openocd', { device='usb:9-9', interface_config='../../etc/passwd' }, context))
+assert(not phase3.prepare('storage.squashfs', { upload='upload-1700000000-100-2', operation='extract', paths={'../etc/shadow'} }, context))
+LUA
+phase3_probe_id="job-$(date +%s)-$$"
+phase3_probe_dir="/tmp/ddk/jobs/$phase3_probe_id"
+phase3_lock_dir=/tmp/ddk/locks/resource-firmware
+if [ -e "$phase3_probe_dir" ] || [ -e "$phase3_lock_dir" ]; then fail 'Phase 3 no-device cleanup proof path collided'; fi
+mkdir -p "$phase3_probe_dir" "$phase3_lock_dir"
+chmod 700 "$phase3_probe_dir" "$phase3_lock_dir"
+printf '%s\n' "$phase3_probe_id" > "$phase3_lock_dir/owner"
+printf '%s\n' queued > "$phase3_probe_dir/status"
+printf '%s\n' resource-firmware > "$phase3_probe_dir/lock-keys"
+printf '%s\n' 10 > "$phase3_probe_dir/wall-timeout"
+printf '%s\n' /usr/bin/openocd -f /usr/share/openocd/scripts/interface/jlink.cfg -f /usr/share/openocd/scripts/target/stm32f4x.cfg > "$phase3_probe_dir/argv"
+printf '%s\n' "{\"id\":\"$phase3_probe_id\",\"action_id\":\"firmware.openocd\",\"options\":{\"device\":\"usb:9-9\",\"device_topology\":\"9-9\",\"device_usb_id\":\"1366:0105\",\"operation\":\"probe\",\"adapter_speed\":0},\"artifacts\":[]}" > "$phase3_probe_dir/metadata.json"
+chmod 600 "$phase3_probe_dir"/*
+phase3_probe_result=0
+/usr/libexec/ddk-phase3-worker "$phase3_probe_id" phase3_openocd >/dev/null 2>&1 || phase3_probe_result=$?
+phase3_probe_status="$(cat "$phase3_probe_dir/status" 2>/dev/null || true)"
+rm -f "$phase3_probe_dir/argv" "$phase3_probe_dir/lock-keys" "$phase3_probe_dir/metadata.json" "$phase3_probe_dir/pid" \
+	"$phase3_probe_dir/status" "$phase3_probe_dir/stderr" "$phase3_probe_dir/stdout" "$phase3_probe_dir/wall-timeout"
+rmdir "$phase3_probe_dir"
+[ "$phase3_probe_result" -eq 65 ] || fail "Phase 3 no-device worker proof returned $phase3_probe_result instead of 65"
+[ "$phase3_probe_status" = failed ] || fail "Phase 3 no-device worker proof ended in state: $phase3_probe_status"
+[ ! -e "$phase3_lock_dir" ] || fail 'Phase 3 resource lock remained after no-device rejection'
+if pidof openocd >/dev/null 2>&1; then fail 'Phase 3 no-device rejection started OpenOCD'; fi
+if netstat -lntp 2>/dev/null | grep -Eq ':(3333|4444|6666)[[:space:]]'; then fail 'Phase 3 no-device rejection left an OpenOCD listener'; fi
+pass 'Phase 3 schemas, pure planners, protected-target rejection, independent worker target gate, and cleanup'
 if /usr/libexec/ddk-console action prepare network.nmap_lan_discovery not-base64 2>/dev/null | json_ok; then
 	fail 'malformed structured action envelope was accepted'
 fi
@@ -937,6 +1046,7 @@ else
 	chmod 700 "$radio_worker_probe_dir"
 	printf '%s\n' queued > "$radio_worker_probe_dir/status"
 	printf '%s\n' '{"action_id":"radio.rtl433_snapshot","operator_mode":true,"options":{"device":":DDKTEST","output_format":"json","raw_iq":false}}' > "$radio_worker_probe_dir/metadata.json"
+	: > "$radio_worker_probe_dir/argv"
 	: > "$radio_worker_probe_dir/stdout"
 	: > "$radio_worker_probe_dir/stderr"
 	radio_worker_result=0
@@ -944,7 +1054,8 @@ else
 	radio_worker_status="$(cat "$radio_worker_probe_dir/status" 2>/dev/null || true)"
 	radio_worker_error="$(cat "$radio_worker_probe_dir/stderr" 2>/dev/null || true)"
 	rm -f "$radio_worker_probe_dir/pid" "$radio_worker_probe_dir/status" "$radio_worker_probe_dir/metadata.json" \
-		"$radio_worker_probe_dir/stdout" "$radio_worker_probe_dir/stderr" "$radio_worker_probe_dir/rtl433.output" "$radio_worker_probe_dir/rtl433.stderr"
+		"$radio_worker_probe_dir/argv" "$radio_worker_probe_dir/stdout" "$radio_worker_probe_dir/stderr" \
+		"$radio_worker_probe_dir/rtl433.output" "$radio_worker_probe_dir/rtl433.stderr"
 	rmdir "$radio_worker_probe_dir"
 	[ "$radio_worker_result" -eq 65 ] || fail "independent RTL-433 worker gate returned $radio_worker_result instead of 65"
 	[ "$radio_worker_status" = 'failed' ] || fail "independent RTL-433 worker gate ended in state: $radio_worker_status"
@@ -1013,6 +1124,7 @@ else
 	chmod 700 "$camera_worker_probe_dir"
 	printf '%s\n' queued > "$camera_worker_probe_dir/status"
 	printf '%s\n' '{"action_id":"camera.still_snapshot","operator_mode":true,"options":{"device":"/dev/video987654","format":"jpeg"}}' > "$camera_worker_probe_dir/metadata.json"
+	: > "$camera_worker_probe_dir/argv"
 	: > "$camera_worker_probe_dir/stdout"
 	: > "$camera_worker_probe_dir/stderr"
 	camera_worker_result=0
@@ -1020,7 +1132,7 @@ else
 	camera_worker_status="$(cat "$camera_worker_probe_dir/status" 2>/dev/null || true)"
 	camera_worker_error="$(cat "$camera_worker_probe_dir/stderr" 2>/dev/null || true)"
 	rm -f "$camera_worker_probe_dir/pid" "$camera_worker_probe_dir/status" "$camera_worker_probe_dir/metadata.json" \
-		"$camera_worker_probe_dir/stdout" "$camera_worker_probe_dir/stderr" "$camera_worker_probe_dir/camera.info" \
+		"$camera_worker_probe_dir/argv" "$camera_worker_probe_dir/stdout" "$camera_worker_probe_dir/stderr" "$camera_worker_probe_dir/camera.info" \
 		"$camera_worker_probe_dir/camera.stderr" "$camera_worker_probe_dir/snapshot.jpg" "$camera_worker_probe_dir/snapshot.jpg.next"
 	rmdir "$camera_worker_probe_dir"
 	[ "$camera_worker_result" -eq 65 ] || fail "independent camera worker gate returned $camera_worker_result instead of 65"
@@ -1249,8 +1361,9 @@ pass 'network, firewall, wireless, uhttpd, rpcd, radio, camera, and gpsd configu
 if netstat -lntup 2>/dev/null | grep -q 'ddk'; then fail 'a DDK listener exists'; fi
 # BusyBox on this target has no standalone pgrep.
 # shellcheck disable=SC2009
-if ps w | grep '[d]dk-job-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
+if ps w | grep -E '[d]dk-(job|apple|phase3)-worker' >/dev/null 2>&1; then fail 'a DDK job worker is unexpectedly active'; fi
 if pidof nmap tcpdump iperf3 uqmi qmicli qmi-proxy ModemManager rtl_433 rtl_tcp rtl_fm rtl_power rtl_sdr rtl_test rtl_adsb rtl_ais readsb dump1090 fswebcam mjpg_streamer motion v4l2rtspserver socat picocom gpsd gpsdecode candump cansend cangen canplayer adb usbmuxd idevice_id ideviceinfo idevicepair irecovery idevicerestore openocd avrdude dfu-util dfu-programmer flashrom stm32flash bossac lpc21isp ftdi_eeprom >/dev/null 2>&1; then fail 'a bounded-operation or device-management client is unexpectedly active'; fi
+if netstat -lntup 2>/dev/null | grep -Eq ':(3333|4444|5038|6666|27015)[[:space:]]'; then fail 'an Operator Mode temporary listener remained'; fi
 pass 'no DDK listener or idle operation worker exists'
 
 available_kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"

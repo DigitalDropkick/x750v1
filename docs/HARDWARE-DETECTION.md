@@ -20,8 +20,9 @@ Hardware probes are read-only, on-demand, and conservative. They never start a d
 | Android | A reviewed mobile vendor plus ADB `ff:42:01`, fastboot `ff:42:03`, MTP `06:01:01`, or a mobile descriptor. |
 | Apple mobile | Vendor `05ac` plus an iPhone, iPad, iPod, Apple Mobile Device, recovery, or DFU descriptor. |
 | Smart card/token | USB descriptor contains smart-card, CCID, Yubico, or YubiKey indicators. |
-| Programmer/debugger | Conservative exact VID:PID and descriptor table for reviewed J-Link, ST-LINK, CMSIS-DAP/DAPLink, Atmel/Microchip, Olimex, USB-Blaster, Bus Pirate, Black Magic, and Debug Probe identities. |
-| USB storage | `/sys/block/sda` exists. |
+| Programmer/debugger | Conservative exact VID:PID and descriptor table for reviewed J-Link, ST-LINK, CMSIS-DAP/DAPLink, Atmel/Microchip, Olimex, USB-Blaster, Bus Pirate, Black Magic, and Debug Probe identities. USB DFU runtime/mode interface signatures `fe:01:01` and `fe:01:02` are also reviewed. |
+| Firmware workflow | Per-action counts distinguish OpenOCD debug adapters, AVRDUDE USB/serial connections, DFU interfaces with bus/address, and non-EC25 serial bootloader ports. |
+| USB storage | Enumerated from `/sys/class/block`; only USB-attributed `sdX` disks/partitions not backing root, rom, overlay, extroot, or swap enter the Operator inventory. Size, type, filesystem, and mount state are reported. |
 
 ## Important limitations
 
@@ -37,6 +38,8 @@ Hardware probes are read-only, on-demand, and conservative. They never start a d
 - Android detection does not run `adb devices`, because doing so may start the ADB server. A vendor match alone is insufficient.
 - Apple detection does not start `usbmuxd`, create a pairing record, or invoke normal/recovery/restore clients. Vendor `05ac` alone is insufficient.
 - Programmer detection does not open a USB node or invoke any debugger/programmer. Generic FTDI and USB-serial devices are rejected unless a reviewed descriptor identifies a programmer role.
+- A firmware action is enabled only for its specific target class. OpenOCD uses debug-adapter choices, DFU uses current DFU interfaces, and serial programming uses reviewed idle non-EC25 nodes; attaching one class does not authorize another.
+- Storage status does not equate “USB storage exists” with “safe target.” The active `/dev/sda1` extroot protects the whole `sda` disk, and system/swap media never appear in a storage action selector.
 - Identity output is sanitized and bounded; USB serials appear only in the explicitly confirmed authenticated response, not status, reports, jobs, logs, or persistent storage. See [DEVICE-IDENTITY.md](DEVICE-IDENTITY.md).
 - GPS detection does not infer GNSS from an arbitrary serial port. Multiple receivers/nodes, a busy node, an unreviewed driver, or the EC25-AF fail closed. The snapshot does not start `gpsd` or reconfigure the port.
 - Cellular capability presence alone cannot authorize a query; the snapshot independently validates the exact EC25-AF management topology before opening the device.

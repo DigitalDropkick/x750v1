@@ -7,7 +7,7 @@ Version 2.1 adds two structured actions for the installed `/usr/bin/adb` 1.0.32:
 - `android.adb_diagnostics` (`ACTION`)
 - `android.adb_manage` (`DISRUPTIVE`)
 
-The exact target `adb help` and `adb version` output were inspected on the GL-X750. This source is not deployed; production remains on accepted v2.0 until Addam explicitly approves deployment. No reviewed Android device was attached during development, so live device operation, consent prompts, transfer performance, and cancellation remain hardware-acceptance items.
+The exact target `adb help` and `adb version` output were inspected on the GL-X750, and the structured workflow is deployed in production. No reviewed Android device was attached during development or production acceptance, so live device operation, consent prompts, transfer performance, and cancellation remain hardware-acceptance items.
 
 ## Target selection and server lifecycle
 

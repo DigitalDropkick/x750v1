@@ -68,13 +68,13 @@ Not-yet-migrated actions remain visible as roadmap entries. The manifest cannot 
 4. A fixed read-only command runs with a timeout and output limit.
 5. The helper returns structured JSON for escaped text rendering.
 
-Base INFO IDs are system refresh, interfaces, routes, USB, serial attribution, Tailscale, storage/mounts, memory/swap, and installed-package count. Version 2 adds three private identity renderers and three static full-CLI handoff renderers. They run synchronously because they only traverse bounded sysfs metadata or server-side constant text; they create no job and invoke no device-management utility. Both serial aliases use one sysfs-only renderer; neither opens a serial device.
+Base INFO IDs are system refresh, interfaces, routes, USB, serial attribution, Tailscale, storage/mounts, memory/swap, and installed-package count. Version 2 adds three private identity renderers and three static supplemental native-reference renderers. They run synchronously because they only traverse bounded sysfs metadata or server-side constant text; they create no job and invoke no device-management utility. Both serial aliases use one sysfs-only renderer; neither opens a serial device.
 
 ## Mobile/programmer identity and fallback
 
 `usb-identity.lua` inspects at most 64 USB devices and 16 interfaces per device. Android requires a reviewed vendor plus protocol/descriptor evidence; Apple requires `05ac` plus a mobile-mode descriptor; programmer identities use a conservative reviewed table. The status API receives counts/reasons only. Full records, including sanitized serial identifiers, are generated only after browser confirmation and exist only in the immediate authenticated response.
 
-The companion `*.operator_guide` actions return static command references plus live `binary_exists()` readiness. Displayed commands are text, never a backend command string. They remain a v2 compatibility/fallback path. Android and Apple now have separate structured actions with on-demand helper lifecycle, correlated target selection, sealed inputs, artifacts/workspaces, and confirmation; programmer operations still await migration and hardware acceptance. See [ANDROID-ADB.md](ANDROID-ADB.md), [APPLE-OPERATOR.md](APPLE-OPERATOR.md), [DEVICE-IDENTITY.md](DEVICE-IDENTITY.md), [SSH-TOOL-HANDOFFS.md](SSH-TOOL-HANDOFFS.md), and [OPERATOR-MODE.md](OPERATOR-MODE.md).
+The companion `*.operator_guide` actions return static command references plus live `binary_exists()` readiness. Displayed commands are text, never a backend command string. They remain a v2 compatibility/fallback path. Android, Apple, firmware, and storage now have separate structured actions with correlated target selection, sealed inputs, artifacts/workspaces, confirmation, and dedicated workers. See [ANDROID-ADB.md](ANDROID-ADB.md), [APPLE-OPERATOR.md](APPLE-OPERATOR.md), [FIRMWARE-STORAGE-OPERATOR.md](FIRMWARE-STORAGE-OPERATOR.md), [DEVICE-IDENTITY.md](DEVICE-IDENTITY.md), [SSH-TOOL-HANDOFFS.md](SSH-TOOL-HANDOFFS.md), and [OPERATOR-MODE.md](OPERATOR-MODE.md).
 
 ## Serial ownership model
 
@@ -89,7 +89,7 @@ Long work never occupies a LuCI request:
 3. The client reviews the server-built plan and starts it by prepared ID. Consequential plans require the exact target-bound confirmation phrase.
 4. The helper atomically claims the plan, rechecks its exact action/worker/executable mapping, enforces a maximum of two active jobs, and atomically acquires global/action/resource locks.
 5. It creates `/tmp/ddk/jobs/<generated-job-id>/` with restrictive permissions, optionally creates the matching DDK extroot artifact directory and exact declared workspaces, resolves only registered fixed artifact/upload/workspace placeholders, and writes one literal argument per line.
-6. One exact allowlisted worker (`/usr/libexec/ddk-job-worker` or `/usr/libexec/ddk-apple-worker`) is detached with stdin, stdout, and stderr disconnected from the LuCI request.
+6. One exact allowlisted worker (`/usr/libexec/ddk-job-worker`, `/usr/libexec/ddk-apple-worker`, or `/usr/libexec/ddk-phase3-worker`) is detached with stdin, stdout, and stderr disconnected from the LuCI request.
 7. The worker independently rechecks its action, metadata, executable and material live target state, then atomically updates status while tracking the native child for cancellation.
 8. The browser polls the helper for that generated job ID.
 
@@ -104,7 +104,7 @@ Limits:
 - transient output only under `/tmp/ddk/`;
 - only `TERM` may be sent, and only after PID, job directory, and worker command line all match.
 
-The system includes an asynchronous read-only demo, a sanitized system-report task, and structured Nmap 7.91, tcpdump 4.9.3, iperf3 3.11, RTL-433 20.11, fswebcam 20140113, socat 1.7.4.1/stty 9.0, and gpsdecode 3.23.1 actions, plus the preserved passive CAN and cellular snapshots. Nmap supports validated targets and practical installed scan/output options without a `/24` clamp. tcpdump supports live interface selection, a validated one-element BPF filter, decoded/PCAP output, interface-state comparison, and PCAP validation. iperf3 supports client and temporary server workflows and revalidates server bind addresses immediately before launch. Hardware-bound structured actions use live server choices and independent worker revalidation. Each has its own wall/output/artifact controls and direct-child cancellation. Older fixed workers remain only for compatibility and regression coverage.
+The system includes an asynchronous read-only demo, a sanitized system-report task, and structured Nmap 7.91, tcpdump 4.9.3, iperf3 3.11, RTL-433 20.11, fswebcam 20140113, socat 1.7.4.1/stty 9.0, gpsdecode 3.23.1, Android, Apple, firmware-programming, and storage/recovery actions, plus the preserved passive CAN and cellular snapshots. Nmap supports validated targets and practical installed scan/output options without a `/24` clamp. tcpdump supports live interface selection, a validated one-element BPF filter, decoded/PCAP output, interface-state comparison, and PCAP validation. iperf3 supports client and temporary server workflows and revalidates server bind addresses immediately before launch. Firmware/storage use exact live USB/serial/block inventories, server-owned config/part choices, sealed images, and independent worker target/system-media gates. Each has its own wall/output/artifact controls and direct-child cancellation. Older fixed workers remain only for compatibility and regression coverage.
 
 CAN and cellular retain their v2 fixed-profile implementations until migrated. Their current bounds and missing-hardware/runtime gates remain enforced; action classification does not prevent future structured expansion.
 

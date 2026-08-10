@@ -2,7 +2,7 @@
 
 > Historical v2 roadmap: the fixed-profile and SSH-handoff limitations below record what was production-accepted in versions 1.x–2.0. Repository-root `AGENTS.md` and [Operator Mode](OPERATOR-MODE.md) supersede those limitations as product policy. Version 2.1 must migrate practical native functionality through structured schemas, exact backend argv builders, target validation, resource controls, artifacts, and appropriate confirmation. Classification as `ACTION`, `SECURITY`, or `DISRUPTIVE` is not a blocker.
 
-Version 2.0 completed the earlier base-console plan and remains the production-accepted baseline. Version 2.1 is an active local feature branch: the shared architecture plus Nmap, tcpdump, and iperf3 are implemented, while hardware/tool-family migrations and deployed acceptance remain outstanding.
+Version 2.0 completed the earlier base-console plan and remains the production-accepted baseline until the authorized 2.1 deployment passes. Version 2.1 now implements the shared architecture plus network/capture, radio/camera/GPS/serial, Android, Apple, firmware-programming, and storage/recovery migrations. Live acceptance remains conditional on approved attached hardware; industrial/Modbus, Bluetooth/smartcard, CAN expansion, monitoring, and automation remain outstanding.
 
 ## Release phases
 
@@ -86,20 +86,24 @@ The no-device/missing-runtime acceptance gate passed as part of the v1.9 Burn On
 
 ## 4. Android and Apple identification (implemented in 2.0.0)
 
-`android.identify` and `apple.identify` read bounded sanitized sysfs only. Customer USB serial identifiers exist only in the confirmed authenticated response; status, jobs, reports, logs, and persistent storage receive none. Positive synthetic ADB and Apple recovery fixtures plus negative Apple Bluetooth/generic FTDI fixtures prove the conservative classifier. `android.operator_guide` and `apple.operator_guide` preserve complete native CLI access through SSH without making the browser a shell.
+`android.identify` and `apple.identify` read bounded sanitized sysfs only. Customer USB serial identifiers exist only in the confirmed authenticated response; status, jobs, reports, logs, and persistent storage receive none. Positive synthetic ADB and Apple recovery fixtures plus negative Apple Bluetooth/generic FTDI fixtures prove the conservative classifier. `android.operator_guide` and `apple.operator_guide` remain supplemental non-executable native references; structured GUI actions are primary for represented workflows.
 
 Android is subsequently migrated in the local 2.1 source: `android.adb_diagnostics` and `android.adb_manage` use exact ADB 1.0.32 structured controls, live USB transport correlation, an isolated temporary port-5038 server, sealed inputs, bounded artifacts, cancellation, and exact target/material confirmation. Apple is also migrated through five normal/recovery/DFU/restore actions with on-demand usbmuxd, ECID/UDID correlation, sealed inputs, isolated restore cache, and confirmation. See [ANDROID-ADB.md](ANDROID-ADB.md) and [APPLE-OPERATOR.md](APPLE-OPERATOR.md).
 
-## 5. Firmware-programmer identification (implemented in 2.0.0)
+## 5. Firmware and storage Operator Mode (implemented in 2.1.0 source)
 
-`firmware.identify` identifies reviewed programmers without opening them or invoking a tool. `firmware.operator_guide` reports executable readiness and hands full use to SSH with voltage, targeting, backup, hashing, verification, and recovery guidance. Browser-based read/write/erase/debug remains disabled. Any future one-click operation still requires its own manifest, exact target selection, power model, image validation, rollback, and hardware acceptance.
+`firmware.identify` still identifies reviewed programmers without opening them or invoking a tool. Four separate structured jobs now cover OpenOCD, AVRDUDE, USB DFU, and STM32Flash/BOSSA/LPC serial bootloaders with exact target/config/part/input selection, backups, verify/write/erase/boot controls, confirmation, cancellation, and cleanup. The static guide is supplemental rather than primary.
+
+Five storage jobs now cover SMART/read-only checks, confirmed filesystem/media repair, bounded raw imaging, confirmed restore, and isolated SquashFS recovery. The active extroot/system/swap disk is excluded in both inventory and worker. See [FIRMWARE-STORAGE-OPERATOR.md](FIRMWARE-STORAGE-OPERATOR.md).
+
+`flashrom` remains genuinely unavailable because its package record has no executable payload. FTDI EEPROM write remains deferred pending an action-owned config serializer. Generic OpenOCD readback remains target-specific rather than pretending one address/length schema is reliable for every target. Live hardware-changing acceptance is pending an approved attached target.
 
 The combined v2 acceptance gate passed on 2026-08-09: 37 production checks completed with no warnings; authenticated browser validation passed at 320 px, 390 px, and desktop widths; every one of the 40 deployed files matched source; protected configurations and listener state remained unchanged; and no device utility, DDK worker, or new listener remained. Hardware-specific classification acceptance is intentionally still pending approved devices.
 
 ## Recommended next work
 
-1. Complete Phase 1 review of the shared input/artifact boundary and Android ADB migration.
-2. Audit and migrate the exact installed Apple/libimobiledevice and recovery tools using on-demand helper lifecycle and sealed restore inputs.
-3. Migrate firmware/programming, industrial/Modbus, storage/recovery, Bluetooth/smartcard, and automation families incrementally.
-4. Attach one approved hardware family at a time and verify device selection, native execution, cancellation, artifacts, cleanup, and consequential confirmation.
+1. Attach one approved firmware or non-system storage target at a time and verify native execution, readback/artifacts, cancellation, cleanup, and consequential confirmation.
+2. Audit and migrate exact installed industrial/Modbus tools with connection/unit/register/datatype schemas and confirmed writes.
+3. Audit Bluetooth, smartcard, monitoring, and automation families, including on-demand helper ownership where required.
+4. Revisit CAN only after an actual CAN interface and executable runtime are present; then add structured receive/filter/config/transmit with target-aware confirmation.
 5. Keep `candump`, fastboot, and flashrom unavailable until their genuine payload/runtime requirements are present under separate package/hardware authorization; do not install substitutes implicitly.

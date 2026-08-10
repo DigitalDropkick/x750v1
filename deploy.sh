@@ -6,7 +6,7 @@ project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 target="${DDK_TARGET:-root@192.168.8.1}"
 control_path="${DDK_SSH_CONTROL_PATH:-}"
 
-if [[ "$target" != "root@192.168.8.1" ]]; then
+if [[ "$target" != "root@192.168.8.1" && "$target" != "root@100.122.115.85" ]]; then
 	printf 'Refusing unexpected target: %s\n' "$target" >&2
 	printf 'Set DDK_TARGET only after updating the identity policy deliberately.\n' >&2
 	exit 64

@@ -2,7 +2,7 @@
 
 > v2 compatibility/fallback reference: this document describes the production-accepted 2.0 SSH workflows. It no longer defines the desired GUI boundary. Under [Operator Mode](OPERATOR-MODE.md), practical native functionality should move into exact structured actions when its targets, parameters, lifecycle, artifacts, and recovery behavior can be represented safely. The GUI will still never become a generic shell.
 
-The currently deployed v2 Field Console is a safe authenticated preflight and handoff layer. The local v2.1 feature branch adds structured Android ADB and Apple normal/recovery/DFU/restore workflows; firmware and native subflows that require a future PTY/archive/secret protocol still use this fallback reference.
+The production-accepted v2.0 console was a safe authenticated preflight and handoff layer. The v2.1 source adds structured Android ADB, Apple normal/recovery/DFU/restore, firmware programming, and storage/recovery workflows. Only native subflows that still require a future PTY/archive/secret/target-specific-config protocol use this fallback reference.
 
 - browser-safe identification and readiness;
 - full operator-controlled CLI use through SSH.
@@ -147,11 +147,11 @@ Do not copy a generic write example directly into a customer job. Tool syntax al
 
 ## Relationship to the browser
 
-Production v2 can request only six exact mobile/programmer INFO IDs: three identity snapshots and three static/full-CLI handoffs. The local v2.1 source preserves those INFO actions and adds exact structured controls; it still cannot submit a command string, executable path, router path, PID, or script.
+Production v2.0 could request only six exact mobile/programmer INFO IDs: three identity snapshots and three static CLI references. Version 2.1 preserves those INFO actions as supplemental references and adds exact structured controls; it still cannot submit a command string, executable path, router path, PID, or script.
 
-The remaining disabled v2 GUI placeholders record unimplemented work:
+The old disabled v2 GUI placeholders recorded unimplemented work:
 
 - `apple.restore`
-- `firmware.write`
+- `firmware.write` (replaced by `firmware.openocd`, `firmware.avrdude`, `firmware.dfu`, and `firmware.serial`)
 
-`android.shell` was removed rather than exposed as arbitrary command text; represented Android work now uses `android.adb_diagnostics` and `android.adb_manage`. Apple’s former disabled restore placeholder is now backed by five real structured actions; its fallback remains relevant only for the explicitly unrepresented PTY/archive/secret workflows in [APPLE-OPERATOR.md](APPLE-OPERATOR.md). Firmware placeholders do not restrict SSH and must not be enabled cosmetically: each needs structured target controls, an exact validator/argv builder, a fixed worker, on-demand helper cleanup, authenticated file input where relevant, consequential confirmation, artifacts, cancellation, and tests. Until that implementation exists, SSH remains the firmware fallback.
+`android.shell` was removed rather than exposed as arbitrary command text; represented Android work uses `android.adb_diagnostics` and `android.adb_manage`. Apple’s former disabled restore placeholder is backed by five real structured actions; its fallback remains relevant only for the explicitly unrepresented PTY/archive/secret workflows in [APPLE-OPERATOR.md](APPLE-OPERATOR.md). Firmware placeholders are now replaced by four fully wired action families documented in [FIRMWARE-STORAGE-OPERATOR.md](FIRMWARE-STORAGE-OPERATOR.md). SSH remains supplemental for exact native capability that those deliberate schemas do not yet represent.

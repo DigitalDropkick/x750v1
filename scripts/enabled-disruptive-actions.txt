@@ -3,3 +3,9 @@ android.adb_manage
 apple.mobile_manage
 apple.recovery
 apple.restore
+firmware.avrdude
+firmware.dfu
+firmware.openocd
+firmware.serial
+storage.repair
+storage.restore

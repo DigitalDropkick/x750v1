@@ -44,7 +44,7 @@ The current source accepts exact INFO/action IDs, generated job/report IDs, gene
 
 `throughput.iperf3` accepts typed client/server options for the exact installed `/usr/bin/iperf3`. Server bind addresses must be selected from currently assigned local addresses and are revalidated by the worker just before launch. The temporary listener is target-bound, wall-bounded, normally one-off, cancellation-aware, and absent after the job.
 
-RTL-433, camera, serial, GNSS, Android ADB, and Apple accept action-specific typed options populated from live reviewed hardware and are independently revalidated by their workers. Apple normal mode requires a fresh exact UDID match through a DDK-owned temporary usbmuxd; recovery/DFU requires a sysfs-derived ECID and exact irecovery preflight. CAN and cellular retain their v2 fixed server-derived profiles while structured migrations are pending. Android, Apple, and programmer INFO identity actions still pass only one source-code identity kind to a bounded sysfs classifier; their operator-guide text is constant and non-executable.
+RTL-433, camera, serial, GNSS, Android ADB, Apple, firmware, and storage accept action-specific typed options populated from live reviewed hardware and are independently revalidated by their workers. Apple normal mode requires a fresh exact UDID match through a DDK-owned temporary usbmuxd; recovery/DFU requires a sysfs-derived ECID and exact irecovery preflight. Firmware binds USB topology/serial or reviewed non-EC25 serial nodes, installed OpenOCD configs/native part lists, and sealed input hashes. Storage excludes every disk backing root/rom/overlay/extroot/swap and repeats USB ancestry, block type, mount, size, and argv-target checks in the worker. CAN and cellular retain their v2 fixed server-derived profiles while structured migrations are pending. Android, Apple, and programmer INFO identity actions still pass only one source-code identity kind to a bounded sysfs classifier; their operator-guide text is constant and non-executable.
 
 For `android.identify`, `apple.identify`, and `firmware.identify`, the backend passes one source-code identity kind to a bounded Lua classifier whose sysfs root is also a source-code constant. The browser supplies neither. The matching `*.operator_guide` responses are server-side constant text plus live executable-presence booleans; displaying a command cannot execute it.
 
@@ -68,6 +68,8 @@ At most 10 inputs are retained. Reservations expire after one hour and sealed fi
 - At most one GPS/GNSS workflow and one shared `gps` resource may be active.
 - At most one ADB workflow and one shared `adb` resource may be active; file-consuming jobs also lock each sealed input.
 - At most one Apple workflow and one shared `apple_mobile` resource may be active; recovery/restore inputs are separately locked.
+- At most one firmware workflow and one shared `firmware` resource may be active; each sealed image is separately locked.
+- Storage jobs lock their physical disk, while file-only SquashFS recovery uses a separate singleton; sealed inputs and extroot capacity are reserved before start.
 - At most one passive CAN workflow and one shared `can` resource may be active.
 - At most one cellular snapshot may be active.
 - A stop request supplies a generated job ID, not a PID.
@@ -83,10 +85,11 @@ At most 10 inputs are retained. Reservations expire after one hour and sealed fi
 - The GPS/GNSS worker tracks its byte-read and decoder children, applies 15-second/32-KiB raw and 32-KiB final limits, and deletes raw/decoded scratch files on completion, failure, or stop.
 - The ADB worker tracks its native child, revalidates target and any sealed input, applies operation/file ceilings, kills the temporary localhost server, and removes partial artifacts on completion, failure, or stop.
 - The Apple worker tracks its native child, revalidates UDID/ECID and sealed inputs, refuses ownership when usbmuxd is already live, kills only its temporary helper, validates artifacts, protects the extroot reserve, and removes its restore workspace on every exit.
+- The Phase 3 worker revalidates exact tool version, literal argv shape/target binding, programmer/DFU/serial/block identity, sealed input hash, artifact ceiling, and extroot reserve; it disables OpenOCD listeners and removes partial firmware/storage artifacts and SquashFS workspaces on every unsuccessful exit.
 - The CAN worker tracks its direct `candump` child, applies 128-frame/20-second capture limits, a 25-second independent wall limit, 56-KiB child and 64-KiB final limits, and verifies interface flags remain unchanged.
 - Each cellular query has a five-second client timeout, a seven-second worker wall limit, and direct-child cancellation.
 
-The mobile/programmer identity and operator-guide calls are not jobs: they run no external device tool, create no `/tmp/ddk` directory, and persist no output. Android and Apple's separate Operator actions are jobs and use the normal target/artifact/lock/cancellation controls. Future programmer migration must do the same rather than widening INFO execution.
+The mobile/programmer identity and operator-guide calls are not jobs: they run no external device tool, create no `/tmp/ddk` directory, and persist no output. Android, Apple, firmware, and storage Operator actions are jobs and use the normal target/artifact/lock/cancellation controls.
 
 ## Mobile device and programmer privacy boundary
 
@@ -96,7 +99,7 @@ The backend and worker contain exact ADB 1.0.32 execution paths for two structur
 
 Apple has five exact structured actions for libimobiledevice 1.3.0, irecovery 1.0.0, and idevicerestore 1.0.0. Device-changing plans require target-bound confirmation; read-only diagnostics/query do not. Recovery protocol commands are one bounded literal irecovery argument, never router shell syntax. IPSWs, recovery inputs, and AP tickets use sealed uploads; restore cache uses one declared isolated workspace and is not downloadable. The worker surfaces native output, bounds artifacts, cancels only tracked children, and leaves no idle usbmuxd or port 27015 listener. Interactive recovery shell, encrypted backup, developer-image, and debugger protocols remain explicitly deferred as documented in [APPLE-OPERATOR.md](APPLE-OPERATOR.md).
 
-The installed ADB documents `-a` as listening on all interfaces. DDK never invokes it. DDK uses `-P 5038`, verifies a localhost listener, refuses an occupied port, and kills the server after discovery or work. Network ADB targets are not selectable because the current authorization model requires USB/sysfs correlation. See [ANDROID-ADB.md](ANDROID-ADB.md), [APPLE-OPERATOR.md](APPLE-OPERATOR.md), [DEVICE-IDENTITY.md](DEVICE-IDENTITY.md), and [SSH-TOOL-HANDOFFS.md](SSH-TOOL-HANDOFFS.md).
+The installed ADB documents `-a` as listening on all interfaces. DDK never invokes it. DDK uses `-P 5038`, verifies a localhost listener, refuses an occupied port, and kills the server after discovery or work. Network ADB targets are not selectable because the current authorization model requires USB/sysfs correlation. See [ANDROID-ADB.md](ANDROID-ADB.md), [APPLE-OPERATOR.md](APPLE-OPERATOR.md), [FIRMWARE-STORAGE-OPERATOR.md](FIRMWARE-STORAGE-OPERATOR.md), [DEVICE-IDENTITY.md](DEVICE-IDENTITY.md), and [SSH-TOOL-HANDOFFS.md](SSH-TOOL-HANDOFFS.md).
 
 ## Packet-capture privacy boundary
 
@@ -175,4 +178,4 @@ Local validation checks enabled-action consistency, reviewed disruptive IDs, fix
 
 The target-safe v2.1 suite prepares and runs Nmap only against loopback, validates its native XML artifact, captures loopback traffic to a bounded PCAP, proves invalid BPF rejection, and exercises iperf3 through temporary loopback-only server/client flows with cleanup checks. Existing hardware workflows retain singleton/refusal/cancellation tests where hardware is available. Authenticated browser verification exercises reusable fields/review, downloads allowlisted transient artifacts, and proves an outside path is denied.
 
-These v2.1 tests are present in source but have not yet been run against a deployed v2.1 production tree. The v2.0 production evidence remains the accepted baseline. Injection tests require rejection and confirm that their marker is never created.
+These v2.1 tests ran against the deployed production tree. Comprehensive target verification passed 48 checks with no warnings, and authenticated browser acceptance covered structured controls, sealed-input upload/hash/delete, artifact ACL isolation, desktop/mobile layouts, and external-request/runtime-error rejection. Injection tests require rejection and confirm that their marker is never created.

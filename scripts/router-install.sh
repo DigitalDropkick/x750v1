@@ -24,7 +24,7 @@ allowed_target() {
 		/usr/lib/lua/luci/view/ddk/*) return 0 ;;
 		/www/luci-static/resources/ddk/*) return 0 ;;
 		/www/ddk/gl_home.html) return 0 ;;
-		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker) return 0 ;;
+		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker) return 0 ;;
 		/usr/share/ddk-field-console/*) return 0 ;;
 		*) return 1 ;;
 	esac
@@ -71,6 +71,7 @@ available_kb="$(df -Pk /overlay | awk 'NR == 2 {print $4}')"
 [ -d /usr/lib/lua/luci/view ] || fail 'LuCI template directory is missing'
 [ -x /usr/bin/lua ] || fail 'Lua 5.1 runtime is missing'
 [ -x /usr/bin/jsonfilter ] || fail 'jsonfilter is missing'
+[ -x /usr/bin/openssl ] || fail 'OpenSSL is missing for target-side structured validation'
 [ -x /usr/bin/nmap ] || fail 'the already-installed nmap-full executable is missing; no package will be installed'
 [ -x /usr/sbin/tcpdump ] || fail 'the already-installed tcpdump executable is missing; no package will be installed'
 [ -x /usr/bin/iperf3 ] || fail 'the already-installed iperf3 executable is missing; no package will be installed'
@@ -79,6 +80,9 @@ for apple_binary in idevice_id ideviceinfo idevicename idevicedate idevicepair i
 	[ -x "/usr/bin/$apple_binary" ] || fail "the already-installed $apple_binary executable is missing; no package will be installed"
 done
 [ -x /usr/sbin/usbmuxd ] || fail 'the already-installed usbmuxd executable is missing; no package will be installed'
+for phase3_binary in /usr/bin/openocd /usr/bin/avrdude /usr/bin/dfu-util /usr/bin/dfu-programmer /usr/bin/stm32flash /usr/bin/bossac /usr/sbin/lpc21isp /usr/sbin/smartctl /usr/sbin/e2fsck /usr/sbin/badblocks /usr/sbin/unsquashfs /usr/bin/cmp /bin/dd /bin/tar; do
+	[ -x "$phase3_binary" ] || fail "the already-installed Phase 3 executable is missing: $phase3_binary; no package will be installed"
+done
 LC_ALL=C /usr/bin/nmap --version 2>&1 | grep -Fq 'Nmap version 7.91 ' || fail 'the installed Nmap version drifted from reviewed 7.91 syntax'
 tcpdump_version="$(LC_ALL=C /usr/sbin/tcpdump --version 2>&1 || true)"
 printf '%s\n' "$tcpdump_version" | grep -Fq 'tcpdump version 4.9.3' || fail 'the installed tcpdump version drifted from reviewed 4.9.3 syntax'
@@ -89,6 +93,16 @@ LC_ALL=C /usr/bin/ideviceinfo --version 2>&1 | grep -Fq '1.3.0' || fail 'the ins
 LC_ALL=C /usr/bin/irecovery --version 2>&1 | grep -Fq '1.0.0' || fail 'the installed irecovery version drifted from reviewed 1.0.0 syntax'
 LC_ALL=C /usr/bin/idevicerestore --version 2>&1 | grep -Fq '1.0.0' || fail 'the installed idevicerestore version drifted from reviewed 1.0.0 syntax'
 LC_ALL=C /usr/sbin/usbmuxd --version 2>&1 | grep -Fqx 'usbmuxd 1.1.1' || fail 'the installed usbmuxd version drifted from reviewed 1.1.1 behavior'
+LC_ALL=C /usr/bin/openocd --version 2>&1 | grep -Fq 'Open On-Chip Debugger 0.11.0-v0.11.0-1-OpenWrt' || fail 'the installed OpenOCD version drifted from reviewed 0.11.0 syntax'
+LC_ALL=C /usr/bin/avrdude -? 2>&1 | grep -Fq 'avrdude version 6.3' || fail 'the installed AVRDUDE version drifted from reviewed 6.3 syntax'
+[ "$(LC_ALL=C /usr/bin/dfu-util --version 2>&1 | sed -n '1p')" = 'dfu-util 0.11' ] || fail 'the installed dfu-util version drifted from reviewed 0.11 syntax'
+[ "$(LC_ALL=C /usr/bin/dfu-programmer --version 2>&1 | sed -n '1p')" = 'dfu-programmer 0.7.2' ] || fail 'the installed dfu-programmer version drifted from reviewed 0.7.2 syntax'
+LC_ALL=C /usr/bin/bossac --help 2>&1 | grep -Fq 'BOSSA' || fail 'the installed BOSSA runtime drifted from reviewed 1.9.1 syntax'
+LC_ALL=C /usr/sbin/lpc21isp 2>&1 | grep -Fq 'Version 1.97' || fail 'the installed LPC21ISP version drifted from reviewed 1.97 syntax'
+LC_ALL=C /usr/sbin/smartctl --version 2>&1 | grep -Fq 'smartctl 7.2 ' || fail 'the installed smartctl version drifted from reviewed 7.2 syntax'
+LC_ALL=C /usr/sbin/e2fsck -V 2>&1 | grep -Fq 'e2fsck 1.46.5' || fail 'the installed e2fsprogs version drifted from reviewed 1.46.5 syntax'
+LC_ALL=C /usr/sbin/unsquashfs -version 2>&1 | grep -Fq 'unsquashfs version 4.5' || fail 'the installed unsquashfs version drifted from reviewed 4.5 syntax'
+/bin/dd --help 2>&1 | grep -Fq 'iflag=skip_bytes' || fail 'the installed BusyBox dd runtime lacks reviewed byte-count support'
 [ -x /usr/bin/rtl_433 ] || fail 'the already-installed rtl_433 executable is missing; no package will be installed'
 [ -x /usr/bin/fswebcam ] || fail 'the already-installed fswebcam executable is missing; no package will be installed'
 [ -x /usr/bin/v4l2-ctl ] || fail 'the already-installed v4l2-ctl executable is missing; no package will be installed'
@@ -137,10 +151,12 @@ printf '%s  %s\n' \
 DDK_LUA_FILE="$source_root/usr/libexec/ddk-console" lua -e 'assert(loadfile(os.getenv("DDK_LUA_FILE")))'
 DDK_OPERATOR_FILE="$source_root/usr/share/ddk-field-console/operator-actions.lua" lua -e 'assert(loadfile(os.getenv("DDK_OPERATOR_FILE")))'
 DDK_APPLE_OPERATOR_FILE="$source_root/usr/share/ddk-field-console/operator-apple.lua" lua -e 'assert(loadfile(os.getenv("DDK_APPLE_OPERATOR_FILE")))'
+DDK_PHASE3_OPERATOR_FILE="$source_root/usr/share/ddk-field-console/operator-phase3.lua" lua -e 'assert(loadfile(os.getenv("DDK_PHASE3_OPERATOR_FILE")))'
 DDK_IDENTITY_FILE="$source_root/usr/share/ddk-field-console/usb-identity.lua" lua -e 'assert(loadfile(os.getenv("DDK_IDENTITY_FILE")))'
 DDK_TEMPLATE_FILE="$source_root/usr/lib/lua/luci/view/ddk/shell.htm" lua -e 'local parser = require "luci.template.parser"; assert(parser.parse(os.getenv("DDK_TEMPLATE_FILE")))'
 sh -n "$source_root/usr/libexec/ddk-job-worker"
 sh -n "$source_root/usr/libexec/ddk-apple-worker"
+sh -n "$source_root/usr/libexec/ddk-phase3-worker"
 
 find "$source_root" -type f -name '*.json' | while IFS= read -r json_file; do
 	jsonfilter -i "$json_file" -e '@' >/dev/null
@@ -193,7 +209,7 @@ find "$source_root" -type f | sort | while IFS= read -r source_file; do
 	mkdir -p "$target_dir"
 	cp "$source_file" "$temporary"
 	case "$target" in
-		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker) chmod 755 "$temporary" ;;
+		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker) chmod 755 "$temporary" ;;
 		*) chmod 644 "$temporary" ;;
 	esac
 	mv "$temporary" "$target"

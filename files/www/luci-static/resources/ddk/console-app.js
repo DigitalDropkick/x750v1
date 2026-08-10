@@ -470,7 +470,7 @@
 		},
 		'firmware.identify': {
 			name: 'firmware programmer USB identity',
-			excluded: 'connect a probe, power a target, debug, read, write, erase, verify, reset, or invoke firmware utilities'
+			excluded: 'open a programmer transport or change device state; use the separate structured firmware actions for authorized native work'
 		}
 	};
 
@@ -547,7 +547,7 @@
 		var hardwareText = !module.hardware.required ? 'Not required' : module.hardware.present ? module.hardware.detected.join(', ') : 'Missing: ' + module.hardware.missing.join(', ');
 		var actions = (module.actions || []).map(function(action) {
 			var modeCounts = module.mode_counts || {};
-			var modeReady = action.hardware_mode === 'normal' ? Number(modeCounts.normal || 0) > 0 : action.hardware_mode === 'recovery' ? Number(modeCounts.recovery || 0) + Number(modeCounts.dfu || 0) > 0 : action.hardware_mode === 'any' ? Number(modeCounts.normal || 0) + Number(modeCounts.recovery || 0) + Number(modeCounts.dfu || 0) > 0 : true;
+			var modeReady = action.hardware_mode === 'normal' ? Number(modeCounts.normal || 0) > 0 : action.hardware_mode === 'recovery' ? Number(modeCounts.recovery || 0) + Number(modeCounts.dfu || 0) > 0 : action.hardware_mode === 'any' ? Number(modeCounts.normal || 0) + Number(modeCounts.recovery || 0) + Number(modeCounts.dfu || 0) > 0 : action.hardware_mode === 'storage' ? !!module.action_ready : action.hardware_mode === 'openocd' || action.hardware_mode === 'avrdude' || action.hardware_mode === 'dfu' || action.hardware_mode === 'serial_programmer' ? Number(modeCounts[action.hardware_mode] || 0) > 0 : true;
 			var operatorEnabled = module.console_enabled && action.enabled && action.parameter_schema === 'operator-v1' && module.software.installed && modeReady && (!module.hardware.required || module.action_ready || module.hardware.present);
 			var jobEnabled = module.console_enabled && action.enabled && action.class === 'INFO' && action.execution === 'job' && action.id === 'cellular.snapshot';
 			var infoEnabled = module.console_enabled && action.enabled && action.class === 'INFO' && action.execution !== 'job';
@@ -682,6 +682,17 @@
 		var appleRecoveryReady = !!(appleModule && appleModule.console_enabled && Number(appleModes.recovery || 0) + Number(appleModes.dfu || 0) > 0);
 		var appleAnyReady = appleNormalReady || appleRecoveryReady;
 		var appleReason = appleModule && appleModule.readiness_reason ? appleModule.readiness_reason : 'UNAVAILABLE';
+		var firmwareModule = modules.find(function(module) { return module.id === 'firmware-programming'; });
+		var firmwareModes = firmwareModule && firmwareModule.mode_counts ? firmwareModule.mode_counts : {};
+		var openocdReady = !!(firmwareModule && firmwareModule.console_enabled && firmwareModule.software.installed && Number(firmwareModes.openocd || 0) > 0);
+		var avrdudeReady = !!(firmwareModule && firmwareModule.console_enabled && firmwareModule.software.installed && Number(firmwareModes.avrdude || 0) > 0);
+		var dfuReady = !!(firmwareModule && firmwareModule.console_enabled && firmwareModule.software.installed && Number(firmwareModes.dfu || 0) > 0);
+		var firmwareSerialReady = !!(firmwareModule && firmwareModule.console_enabled && firmwareModule.software.installed && Number(firmwareModes.serial_programmer || 0) > 0);
+		var firmwareReady = openocdReady || avrdudeReady || dfuReady || firmwareSerialReady;
+		var firmwareReason = firmwareModule && firmwareModule.readiness_reason ? firmwareModule.readiness_reason : 'UNAVAILABLE';
+		var storageModule = modules.find(function(module) { return module.id === 'storage-recovery'; });
+		var storageReady = !!(storageModule && storageModule.console_enabled && storageModule.software.installed && storageModule.action_ready);
+		var storageReason = storageModule && storageModule.readiness_reason ? storageModule.readiness_reason : 'UNAVAILABLE';
 		function saveBlob(blob, filename) {
 			var url = URL.createObjectURL(blob);
 			var link = h('a', { href: url, download: filename });
@@ -733,7 +744,7 @@
 				if (typeof artifact.filename !== 'string' || !/^ddk-job-\d+-\d+-[A-Za-z0-9][A-Za-z0-9_.-]+$/.test(artifact.filename) || artifact.filename.indexOf('..') >= 0)
 					throw new Error('The artifact download name did not match the DDK client allowlist.');
 				var expectedSize = Number(artifact.size || 0);
-				if (!Number.isInteger(expectedSize) || expectedSize <= 0 || expectedSize > 1073741824)
+				if (!Number.isInteger(expectedSize) || expectedSize <= 0 || expectedSize > 17179869184)
 					throw new Error('The artifact metadata failed its size boundary.');
 				var storage = artifact.storage || 'tmp';
 				if (storage !== 'tmp' && storage !== 'extroot') throw new Error('The artifact storage class was not recognized.');
@@ -793,15 +804,59 @@
 		}
 		async function refresh() { var jobs = await exec([ 'job', 'list' ]); var reports = await exec([ 'report', 'list' ]); renderJobList(jobs); renderReportList(reports); return jobs; }
 		function poll(id) { if (pollers[id]) return; pollers[id] = setTimeout(async function tick() { try { var job = await exec([ 'job', 'status', id ]); await refresh(); if ([ 'queued', 'running', 'stopping' ].indexOf(job.status) >= 0) pollers[id] = setTimeout(tick, 1200); else delete pollers[id]; } catch (_) { delete pollers[id]; } }, 1200); }
-		async function start(action) { if ([ 'network.nmap_lan_discovery', 'capture.lan_metadata_snapshot', 'throughput.iperf3', 'radio.rtl433_snapshot', 'camera.still_snapshot', 'serial.session', 'gps.snapshot', 'android.adb_diagnostics', 'android.adb_manage', 'apple.mobile_diagnostics', 'apple.mobile_capture', 'apple.mobile_manage', 'apple.recovery', 'apple.restore' ].indexOf(action) >= 0) { openOperatorAction(action, async function(job) { await refresh(); poll(job.id); }); return; } try { var job = action === 'can.capture' ? await startCanCapture() : await exec([ 'job', 'start', action ]); if (!job) return; await refresh(); poll(job.id); } catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); } }
+		async function start(action) { if ([ 'network.nmap_lan_discovery', 'capture.lan_metadata_snapshot', 'throughput.iperf3', 'radio.rtl433_snapshot', 'camera.still_snapshot', 'serial.session', 'gps.snapshot', 'android.adb_diagnostics', 'android.adb_manage', 'apple.mobile_diagnostics', 'apple.mobile_capture', 'apple.mobile_manage', 'apple.recovery', 'apple.restore', 'firmware.openocd', 'firmware.avrdude', 'firmware.dfu', 'firmware.serial', 'storage.inspect', 'storage.repair', 'storage.image', 'storage.restore', 'storage.squashfs' ].indexOf(action) >= 0) { openOperatorAction(action, async function(job) { await refresh(); poll(job.id); }); return; } try { var job = action === 'can.capture' ? await startCanCapture() : await exec([ 'job', 'start', action ]); if (!job) return; await refresh(); poll(job.id); } catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); } }
 		async function stopJob(id) { try { await exec([ 'job', 'stop', id ]); await refresh(); poll(id); } catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); } }
-		app.replaceChildren(brand('JOBS & REPORTS', 'Bounded asynchronous work without blocking LuCI'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'Only two DDK jobs may run at once. Structured native jobs use atomic resource locks; artifacts are authenticated, size-bounded, stored in DDK-owned transient or extroot paths, and removed by retention cleanup.'), h('div', { class: 'ddk-alert' + (rtlReady ? ' ddk-alert-info' : '') }, 'RTL-433 receiver state: ' + rtlReason + '. Operator receive opens when a reviewed selectable tuner is ready.'), h('div', { class: 'ddk-alert' + (cameraReady ? ' ddk-alert-info' : '') }, 'Camera state: ' + cameraReason + '. Operator still capture opens when a reviewed UVC primary node is ready; streaming stays disabled.'), h('div', { class: 'ddk-alert' + (serialReady ? ' ddk-alert-info' : '') }, 'Serial state: ' + serialReason + '. Only reviewed non-EC25 USB serial nodes are selectable.'), h('div', { class: 'ddk-alert' + (gpsReady ? ' ddk-alert-info' : '') }, 'GPS / GNSS state: ' + gpsReason + '. Operator receive opens when an idle reviewed receiver node is selectable; gpsd remains off.'), h('div', { class: 'ddk-alert' + (androidReady ? ' ddk-alert-info' : '') }, 'Android ADB state: ' + androidReason + '. Opening a structured form performs a fresh authorized transport correlation before any job can start.'), h('div', { class: 'ddk-alert' + (appleAnyReady ? ' ddk-alert-info' : '') }, 'Apple state: ' + appleReason + ' · normal ' + Number(appleModes.normal || 0) + ' · recovery ' + Number(appleModes.recovery || 0) + ' · DFU ' + Number(appleModes.dfu || 0) + '. Normal workflows start a temporary owned usbmuxd; recovery/DFU uses exact ECID selection.'), h('div', { class: 'ddk-alert' + (canReady ? ' ddk-alert-info' : '') }, 'CAN state: ' + canReason + '. Capture remains disabled until one physical canN interface is already up and candump exists.'), sectionHeading('Start Bounded Job', 'Exact action IDs plus server-validated Operator Mode parameters'), h('div', { class: 'ddk-action-row' }, button('Run Async Proof', '', function() { start('diagnostic.demo'); }), button('Generate DDK System Report', '', function() { start('report.system'); }), button('Cellular Snapshot', 'ddk-button-secondary', function() { start('cellular.snapshot'); }), button('Open Nmap Operator', 'ddk-button-security', function() { start('network.nmap_lan_discovery'); }), button('Open Packet Capture', 'ddk-button-security', function() { start('capture.lan_metadata_snapshot'); }), button('Open iperf3 Operator', 'ddk-button-action', function() { start('throughput.iperf3'); }), button('Open RTL-433 Operator', 'ddk-button-action', function() { start('radio.rtl433_snapshot'); }, !rtlReady), button('Open Camera Still Operator', 'ddk-button-action', function() { start('camera.still_snapshot'); }, !cameraReady), button('Open Serial Operator', 'ddk-button-action', function() { start('serial.session'); }, !serialReady), button('Open GPS / GNSS Operator', 'ddk-button-action', function() { start('gps.snapshot'); }, !gpsReady), button('Open ADB Diagnostics', 'ddk-button-action', function() { start('android.adb_diagnostics'); }, !androidReady), button('Open ADB Device Management', 'ddk-button-action', function() { start('android.adb_manage'); }, !androidReady), button('Open Apple Diagnostics', 'ddk-button-action', function() { start('apple.mobile_diagnostics'); }, !appleNormalReady), button('Open Apple Capture', 'ddk-button-action', function() { start('apple.mobile_capture'); }, !appleNormalReady), button('Open Apple Device Management', 'ddk-button-action', function() { start('apple.mobile_manage'); }, !appleNormalReady), button('Open Apple Recovery / DFU', 'ddk-button-action', function() { start('apple.recovery'); }, !appleRecoveryReady), button('Open Apple IPSW Restore', 'ddk-button-action', function() { start('apple.restore'); }, !appleAnyReady), button('Passive CAN Frame Snapshot', 'ddk-button-action', function() { start('can.capture'); }, !canReady), button('Refresh', 'ddk-button-secondary', refresh)), sectionHeading('Jobs', 'Only DDK-owned worker PIDs can be stopped · artifacts require authenticated access'), jobsNode, sectionHeading('Reports', 'Authenticated view/download · 24-hour retention'), reportsNode);
+		app.replaceChildren(
+			brand('JOBS & REPORTS', 'Bounded asynchronous work without blocking LuCI'),
+			h('div', { class: 'ddk-alert ddk-alert-info' }, 'Only two DDK jobs may run at once. Structured native jobs use atomic resource locks; artifacts are authenticated, size-bounded, stored in DDK-owned transient or extroot paths, and removed by retention cleanup.'),
+			h('div', { class: 'ddk-alert' + (rtlReady ? ' ddk-alert-info' : '') }, 'RTL-433 receiver state: ' + rtlReason + '. Operator receive opens when a reviewed selectable tuner is ready.'),
+			h('div', { class: 'ddk-alert' + (cameraReady ? ' ddk-alert-info' : '') }, 'Camera state: ' + cameraReason + '. Operator still capture opens when a reviewed UVC primary node is ready; streaming stays disabled.'),
+			h('div', { class: 'ddk-alert' + (serialReady ? ' ddk-alert-info' : '') }, 'Serial state: ' + serialReason + '. Only reviewed non-EC25 USB serial nodes are selectable.'),
+			h('div', { class: 'ddk-alert' + (gpsReady ? ' ddk-alert-info' : '') }, 'GPS / GNSS state: ' + gpsReason + '. Operator receive opens when an idle reviewed receiver node is selectable; gpsd remains off.'),
+			h('div', { class: 'ddk-alert' + (androidReady ? ' ddk-alert-info' : '') }, 'Android ADB state: ' + androidReason + '. Opening a structured form performs a fresh authorized transport correlation before any job can start.'),
+			h('div', { class: 'ddk-alert' + (appleAnyReady ? ' ddk-alert-info' : '') }, 'Apple state: ' + appleReason + ' · normal ' + Number(appleModes.normal || 0) + ' · recovery ' + Number(appleModes.recovery || 0) + ' · DFU ' + Number(appleModes.dfu || 0) + '. Normal workflows start a temporary owned usbmuxd; recovery/DFU uses exact ECID selection.'),
+			h('div', { class: 'ddk-alert' + (firmwareReady ? ' ddk-alert-info' : '') }, 'Firmware programmer state: ' + firmwareReason + ' · OpenOCD ' + Number(firmwareModes.openocd || 0) + ' · AVRDUDE connections ' + Number(firmwareModes.avrdude || 0) + ' · DFU ' + Number(firmwareModes.dfu || 0) + ' · serial ' + Number(firmwareModes.serial_programmer || 0) + '. Each form opens only for its exact reviewed target class.'),
+			h('div', { class: 'ddk-alert' + (storageReady ? ' ddk-alert-info' : '') }, 'Storage target state: ' + storageReason + '. Router system, extroot, mounted router filesystems, and swap devices are excluded server-side.'),
+			h('div', { class: 'ddk-alert' + (canReady ? ' ddk-alert-info' : '') }, 'CAN state: ' + canReason + '. Capture remains disabled until one physical canN interface is already up and candump exists.'),
+			sectionHeading('Start Bounded Job', 'Exact action IDs plus server-validated Operator Mode parameters'),
+			h('div', { class: 'ddk-action-row' },
+				button('Run Async Proof', '', function() { start('diagnostic.demo'); }),
+				button('Generate DDK System Report', '', function() { start('report.system'); }),
+				button('Cellular Snapshot', 'ddk-button-secondary', function() { start('cellular.snapshot'); }),
+				button('Open Nmap Operator', 'ddk-button-security', function() { start('network.nmap_lan_discovery'); }),
+				button('Open Packet Capture', 'ddk-button-security', function() { start('capture.lan_metadata_snapshot'); }),
+				button('Open iperf3 Operator', 'ddk-button-action', function() { start('throughput.iperf3'); }),
+				button('Open RTL-433 Operator', 'ddk-button-action', function() { start('radio.rtl433_snapshot'); }, !rtlReady),
+				button('Open Camera Still Operator', 'ddk-button-action', function() { start('camera.still_snapshot'); }, !cameraReady),
+				button('Open Serial Operator', 'ddk-button-action', function() { start('serial.session'); }, !serialReady),
+				button('Open GPS / GNSS Operator', 'ddk-button-action', function() { start('gps.snapshot'); }, !gpsReady),
+				button('Open ADB Diagnostics', 'ddk-button-action', function() { start('android.adb_diagnostics'); }, !androidReady),
+				button('Open ADB Device Management', 'ddk-button-action', function() { start('android.adb_manage'); }, !androidReady),
+				button('Open Apple Diagnostics', 'ddk-button-action', function() { start('apple.mobile_diagnostics'); }, !appleNormalReady),
+				button('Open Apple Capture', 'ddk-button-action', function() { start('apple.mobile_capture'); }, !appleNormalReady),
+				button('Open Apple Device Management', 'ddk-button-action', function() { start('apple.mobile_manage'); }, !appleNormalReady),
+				button('Open Apple Recovery / DFU', 'ddk-button-action', function() { start('apple.recovery'); }, !appleRecoveryReady),
+				button('Open Apple IPSW Restore', 'ddk-button-action', function() { start('apple.restore'); }, !appleAnyReady),
+				button('Open OpenOCD Operator', 'ddk-button-action', function() { start('firmware.openocd'); }, !openocdReady),
+				button('Open AVRDUDE Operator', 'ddk-button-action', function() { start('firmware.avrdude'); }, !avrdudeReady),
+				button('Open DFU Operator', 'ddk-button-action', function() { start('firmware.dfu'); }, !dfuReady),
+				button('Open Serial Programmer', 'ddk-button-action', function() { start('firmware.serial'); }, !firmwareSerialReady),
+				button('Inspect Storage Target', 'ddk-button-action', function() { start('storage.inspect'); }, !storageReady),
+				button('Repair Storage Target', 'ddk-button-action', function() { start('storage.repair'); }, !storageReady),
+				button('Image Storage Target', 'ddk-button-action', function() { start('storage.image'); }, !storageReady),
+				button('Restore Storage Target', 'ddk-button-action', function() { start('storage.restore'); }, !storageReady),
+				button('Inspect / Recover SquashFS', 'ddk-button-action', function() { start('storage.squashfs'); }),
+				button('Passive CAN Frame Snapshot', 'ddk-button-action', function() { start('can.capture'); }, !canReady),
+				button('Refresh', 'ddk-button-secondary', refresh)),
+			sectionHeading('Jobs', 'Only DDK-owned worker PIDs can be stopped · artifacts require authenticated access'), jobsNode,
+			sectionHeading('Reports', 'Authenticated view/download · 24-hour retention'), reportsNode);
 		var jobs = await refresh(); jobs.forEach(function(job) { if ([ 'queued', 'running', 'stopping' ].indexOf(job.status) >= 0) poll(job.id); });
 	}
 
 	async function renderSettings() {
 		var uploadKinds = {
 			firmware_image: { label: 'Firmware / programmer image', maximum: 268435456, extensions: '.bin, .hex, .elf, .uf2, .dfu, .fw, .rom, .img' },
+			storage_image: { label: 'Storage / recovery image', maximum: 17179869184, extensions: '.raw, .img, .bin, .dd, .squashfs, .sqfs' },
 			android_package: { label: 'Android package', maximum: 268435456, extensions: '.apk, .apks, .zip' },
 			android_backup: { label: 'Android ADB backup', maximum: 1073741824, extensions: '.ab' },
 			apple_restore: { label: 'Apple IPSW restore archive', maximum: 12884901888, extensions: '.ipsw, .zip' },
@@ -828,7 +883,7 @@
 				uploadsNode.replaceChildren(h('div', { class: 'ddk-empty' }, 'No sealed Operator Mode input files are retained.'));
 				return;
 			}
-			uploadsNode.replaceChildren(uploads.map(function(upload) {
+			var uploadNodes = uploads.map(function(upload) {
 				var removeButton;
 				return h('article', { class: 'ddk-job' },
 					h('div', { class: 'ddk-job-head' }, h('h4', {}, upload.original_name), statePill('SEALED')),
@@ -841,7 +896,8 @@
 						try { await exec([ 'upload', 'delete', upload.id ]); await refreshUploads(); }
 						catch (error) { removeButton.disabled = false; showModal('Upload Delete Rejected', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); }
 					})));
-			}));
+			});
+			uploadsNode.replaceChildren.apply(uploadsNode, uploadNodes);
 		}
 		async function refreshUploads() {
 			try { renderUploads(await exec([ 'upload', 'list' ])); }
@@ -888,11 +944,11 @@
 			[ 'Camera artifacts', 'One 256 KiB JPEG maximum, mode 0600 under its DDK job, authenticated native LuCI download only.' ],
 			[ 'Reports', 'Stored in /tmp, 128 KiB maximum view, 24-hour cleanup, no secret configuration dumps.' ],
 			[ 'Idle footprint', 'No DDK daemon, database, timer, analytics, or background poller runs on the router.' ],
-			[ 'Operator Mode', 'Typed controls are validated server-side into exact native argv. Apple workflows add per-mode target selection, temporary helper ownership, isolated workspaces, target-bound confirmation, and authenticated artifacts.' ]
+			[ 'Operator Mode', 'Typed controls are validated server-side into exact native argv. Mobile, firmware, and storage workflows add live target selection, isolated inputs/artifacts, resource ownership, target-bound confirmation, cancellation, and cleanup.' ]
 		];
 		kindSelect.addEventListener('change', updateUploadHint);
 		uploadButton = button('Upload & Seal Input', 'ddk-button-action', stageUpload);
-		app.replaceChildren(brand('SETTINGS', 'Production safety posture and operating limits'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'Operator Mode changes workflow inputs, not appliance networking or boot services. The approved swap boot entry remains managed only by guarded command-line tooling.'), h('div', { class: 'ddk-posture' }, posture.map(function(item) { return h('div', { class: 'ddk-posture-item' }, h('strong', {}, item[0]), h('span', {}, item[1])); })), sectionHeading('Authenticated Input Staging', 'For native operations that need a package, image, or device input file'), card('Upload to DDK-controlled storage', 'SEALED INPUT', [ h('div', { class: 'ddk-upload-grid' }, h('label', { class: 'ddk-operator-field' }, h('span', { class: 'ddk-operator-label' }, 'Input kind'), kindSelect), h('label', { class: 'ddk-operator-field' }, h('span', { class: 'ddk-operator-label' }, 'Local file'), fileInput)), uploadStatus, h('div', { class: 'ddk-action-row' }, uploadButton, button('Refresh Sealed Inputs', 'ddk-button-secondary', refreshUploads)), h('p', { class: 'ddk-job-meta' }, 'Reservations expire after 1 hour; sealed inputs expire after 24 hours. At most 10 are retained. A file is not available to a native action until final size, type signature where applicable, and SHA-256 validation succeed.'), uploadsNode ], 'ddk-card-full'), sectionHeading('Operator Mode Coverage', 'Native capability is enabled per exact installed tool'), card('Current Migration State', 'V2.1', [ row('Nmap 7.91', 'STRUCTURED OPERATOR SCANS + ARTIFACTS'), row('tcpdump 4.9.3', 'STRUCTURED BPF CAPTURE + DECODE + PCAP'), row('iperf3 3.11', 'STRUCTURED CLIENT + TEMPORARY SERVER'), row('rtl_433 20.11', 'STRUCTURED RECEIVE + DECODED/RAW ARTIFACTS'), row('fswebcam 20140113', 'STRUCTURED UVC STILL CAPTURE'), row('socat 1.7.4.1 / stty 9.0', 'STRUCTURED NON-EC25 SERIAL SESSIONS'), row('gpsdecode 3.23.1', 'STRUCTURED RECEIVE + RAW/DECODED ARTIFACTS'), row('ADB 1.0.32', 'STRUCTURED DIAGNOSTICS + BACKUP + FILE/PACKAGE/DEVICE MANAGEMENT'), row('Apple tools 1.3.0 / irecovery 1.0.0 / idevicerestore 1.0.0', 'STRUCTURED NORMAL + RECOVERY/DFU + RESTORE WORKFLOWS'), row('Legacy v2 actions', 'COMPATIBILITY PATHS PRESERVED'), row('Firmware programming', 'IDENTITY WORKFLOW PRESERVED; NATIVE ACTION MIGRATION NEXT'), row('CAN transmit / configuration', 'BLOCKED: NO CAN INTERFACE OR CANUTILS RUNTIME'), row('Fastboot', 'UNAVAILABLE ON TARGET'), row('Flashrom executable', 'UNAVAILABLE ON TARGET'), row('Arbitrary shell / executable paths', 'REJECTED BY DESIGN'), row('Optional boot daemons', 'REMAIN DISABLED'), row('WAN service exposure', 'NOT IMPLEMENTED') ], 'ddk-card-full'));
+		app.replaceChildren(brand('SETTINGS', 'Production safety posture and operating limits'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'Operator Mode changes workflow inputs, not appliance networking or boot services. The approved swap boot entry remains managed only by guarded command-line tooling.'), h('div', { class: 'ddk-posture' }, posture.map(function(item) { return h('div', { class: 'ddk-posture-item' }, h('strong', {}, item[0]), h('span', {}, item[1])); })), sectionHeading('Authenticated Input Staging', 'For native operations that need a package, image, or device input file'), card('Upload to DDK-controlled storage', 'SEALED INPUT', [ h('div', { class: 'ddk-upload-grid' }, h('label', { class: 'ddk-operator-field' }, h('span', { class: 'ddk-operator-label' }, 'Input kind'), kindSelect), h('label', { class: 'ddk-operator-field' }, h('span', { class: 'ddk-operator-label' }, 'Local file'), fileInput)), uploadStatus, h('div', { class: 'ddk-action-row' }, uploadButton, button('Refresh Sealed Inputs', 'ddk-button-secondary', refreshUploads)), h('p', { class: 'ddk-job-meta' }, 'Reservations expire after 1 hour; sealed inputs expire after 24 hours. At most 10 are retained. A file is not available to a native action until final size, type signature where applicable, and SHA-256 validation succeed.'), uploadsNode ], 'ddk-card-full'), sectionHeading('Operator Mode Coverage', 'Native capability is enabled per exact installed tool'), card('Current Migration State', 'V2.1', [ row('Nmap 7.91', 'STRUCTURED OPERATOR SCANS + ARTIFACTS'), row('tcpdump 4.9.3', 'STRUCTURED BPF CAPTURE + DECODE + PCAP'), row('iperf3 3.11', 'STRUCTURED CLIENT + TEMPORARY SERVER'), row('rtl_433 20.11', 'STRUCTURED RECEIVE + DECODED/RAW ARTIFACTS'), row('fswebcam 20140113', 'STRUCTURED UVC STILL CAPTURE'), row('socat 1.7.4.1 / stty 9.0', 'STRUCTURED NON-EC25 SERIAL SESSIONS'), row('gpsdecode 3.23.1', 'STRUCTURED RECEIVE + RAW/DECODED ARTIFACTS'), row('ADB 1.0.32', 'STRUCTURED DIAGNOSTICS + BACKUP + FILE/PACKAGE/DEVICE MANAGEMENT'), row('Apple tools 1.3.0 / irecovery 1.0.0 / idevicerestore 1.0.0', 'STRUCTURED NORMAL + RECOVERY/DFU + RESTORE WORKFLOWS'), row('OpenOCD 0.11 / AVRDUDE 6.3 / DFU / serial programmers', 'STRUCTURED PROBE + READ + VERIFY + WRITE + ERASE WORKFLOWS'), row('smartctl 7.2 / e2fsck / badblocks / BusyBox dd / unsquashfs 4.5', 'STRUCTURED INSPECT + REPAIR + IMAGE + RESTORE + RECOVERY ARTIFACTS'), row('Legacy v2 actions', 'COMPATIBILITY PATHS PRESERVED'), row('CAN transmit / configuration', 'BLOCKED: NO CAN INTERFACE OR CANUTILS RUNTIME'), row('Fastboot', 'UNAVAILABLE ON TARGET'), row('Flashrom executable', 'UNAVAILABLE ON TARGET'), row('Arbitrary shell / executable paths', 'REJECTED BY DESIGN'), row('Optional boot daemons', 'REMAIN DISABLED'), row('WAN service exposure', 'NOT IMPLEMENTED') ], 'ddk-card-full'));
 		updateUploadHint();
 		await refreshUploads();
 	}
