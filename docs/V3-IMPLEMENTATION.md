@@ -138,6 +138,50 @@ Protected extroot/swap/modem hub ports cannot be power-cycled by unrelated tools
 
 ## Publication and deployment evidence
 
-Pending the final release checks, GitHub publication, targeted CAN installation,
-backed-up application deployment and installed-runtime/browser verification.
+The release was published to GitHub `main`, `feature/field-console-v3` and the
+annotated `v3.0.0` tag at `6dd6e56db7979ba396f4a87c9351d7c72efef9c2` before
+installation. The final documentation commit advances main without changing
+any application files. The repository contains no GitHub Actions workflow;
+validation ran locally and on the actual router.
+
+The three CAN userspace packages (`canutils-candump`, `canutils-cansend`,
+`canutils-canplayer`, each 2021.08.0-2/mips_24kc) were installed from the inspected
+native feed after all checksums passed. No kernel or core library was replaced.
+
+Application installation completed on September 13, 2026. The fresh rollback
+snapshot is `/root/ddk-backups/20260913T224532Z-field-console-v3`. rpcd ACLs were
+reloaded; there was no reboot or network/service restart. All nine protected
+configuration files matched the pre-installation hashes. All 57 deployed files
+matched the published source by SHA-256. GL.iNet, LuCI, the /ddk shortcut,
+Tailscale, extroot and active swap passed post-installation checks.
+
+The installed `router-verify.sh` passed all 78 schemas, malformed target/PID
+rejection, native finite and continuous loopback jobs, stop/preserved artifacts,
+case save, exact test-job deletion, web endpoints and configuration preservation.
+Both isolated staging trees and their transfer archive were removed after native
+validation; the deployment staging tree and rollback snapshot were retained.
+
+The installed authenticated browser pass completed successfully: all 15 pages at
+1440/390/320 pixels, the 17 representative expanded forms, Android TCP transport,
+actual loopback start/stop/save/download/reuse, a real sealed upload, retention
+settings, file ACL rejection and the /ddk shortcut. The transient authentication
+session was destroyed. All 39 TCP/UDP listener entries matched the installation
+snapshot. The public browser proof job and its two inputs were removed using exact
+job identity, artifact inode and known fixture content, preserving operator data.
+The final audit again confirmed all 57 source hashes, protected configuration,
+management interfaces, Tailscale, extroot and swap, with zero active application
+workers or helpers.
+
+To restore the previous application, run from this checkout with the private
+router SSH connection open:
+
+```sh
+DDK_TARGET=root@100.122.115.85 \
+DDK_SSH_CONTROL_PATH=/run/user/1000/ddk-router-1000/control \
+./rollback.sh /root/ddk-backups/20260913T224532Z-field-console-v3
+```
+
+Application rollback retains saved cases/inputs and the separately installed CAN
+utilities. Those utilities add no boot services. The snapshot restores the previous
+application files, removes helpers introduced by v3 and reloads rpcd ACLs.
 The earlier deployment history is in `V2-DEPLOYMENT-HISTORY.md`.
