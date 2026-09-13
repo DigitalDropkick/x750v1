@@ -2,7 +2,7 @@
   "id": "monitoring",
   "name": "Monitoring",
   "category": "Monitoring",
-  "description": "On-demand historical interface and bounded live-flow monitoring snapshots.",
+  "description": "Interface traffic, bandwidth history, resource observations, and process snapshots.",
   "package_names": ["vnstat2", "prometheus-node-exporter-lua", "collectd", "bmon", "iftop", "htop", "nlbwmon"],
   "expected_binaries": ["vnstat", "bmon", "iftop", "htop", "nlbwmon"],
   "required_hardware": [],
@@ -10,7 +10,9 @@
   "risk_level": "INFO",
   "enabled": true,
   "actions": [
-    {"id": "monitoring.snapshot", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
+    {"id": "monitoring.snapshot", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "monitoring.bandwidth", "label": "Live bandwidth monitor", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "monitoring.resources", "label": "CPU and process observation", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Operator Mode selects a live interface and runs exact vnStat JSON history or bounded non-promiscuous iftop text mode with row/duration limits and an authenticated artifact. No collector, exporter, daemon, or boot service is enabled."
+  "help_text": "Choose interface history or a live bandwidth/resource session. Save completed observations as cases. Streaming output has an adjustable budget and a stop control."
 }

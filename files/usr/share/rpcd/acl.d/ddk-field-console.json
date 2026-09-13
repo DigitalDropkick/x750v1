@@ -12,6 +12,29 @@
 				"/usr/libexec/ddk-console upload *": [ "exec" ],
 				"/usr/libexec/ddk-console job *": [ "exec" ],
 				"/usr/libexec/ddk-console report *": [ "exec" ],
+				"/usr/libexec/ddk-console settings *": [ "exec" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/native-output.txt": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/rtkrcv.nav": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/gnss-solution.pos": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/case.tar": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/wireless-decrypted.pcap": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/wireless-corrupt.pcap": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/ftdi-eeprom.bin": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/ftdi-backup.bin": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/spi-flash.bin": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/serial-transfer.bin": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/syscalls.txt": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/capture.pcap[0-9]": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/capture.pcap[0-9][0-9]": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/camera.mjpg": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/camera.h264": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/camera.yuyv": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/recovery.raw": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/clone.map": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/recovery.map": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/android-file.bin": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/android-files.tar": [ "read" ],
+				"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/wireless.pcap": [ "read" ],
 				"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/snapshot.jpg": [ "read" ],
 				"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/snapshot.png": [ "read" ],
 				"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/rtl433.jsonl": [ "read" ],
@@ -50,6 +73,30 @@
 				,"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/bluetooth-scan.txt": [ "read" ]
 				,"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/modbus-read.txt": [ "read" ]
 				,"/tmp/ddk/jobs/job-[0-9]*-[0-9]*/smartcard-inventory.txt": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/snapshot.jpg": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/snapshot.png": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/rtl433.jsonl": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/rtl433.csv": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/rtl433.txt": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/rtl433.cu8": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/serial.bin": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/gnss.raw": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/gnss.decoded": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/storage-image.sha256": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/nmap.nmap": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/nmap.xml": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/nmap.gnmap": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/capture.pcap": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/iperf3.json": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/monitoring.txt": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/wireless-survey.txt": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/usb-inventory.txt": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/forensics-report.txt": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/adsb.txt": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/ais-nmea.txt": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/bluetooth-scan.txt": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/modbus-read.txt": [ "read" ]
+				,"/overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*/smartcard-inventory.txt": [ "read" ]
 			}
 		},
 		"write": {

@@ -2,7 +2,7 @@
   "id": "forensics",
   "name": "Forensics / File Analysis",
   "category": "Storage / Recovery",
-  "description": "Isolated sealed-file identification, hashing, similarity, hardening, and YARA inspection.",
+  "description": "File identification, hashing, YARA, hex inspection, and process tracing/debugging.",
   "package_names": ["yara", "ssdeep", "hashdeep", "checksec", "file", "xxd", "strace", "gdbserver", "squashfs-tools-unsquashfs"],
   "expected_binaries": ["yara", "ssdeep", "hashdeep", "checksec", "file", "xxd", "strace", "gdbserver", "unsquashfs"],
   "required_hardware": [],
@@ -10,7 +10,10 @@
   "risk_level": "SECURITY",
   "enabled": true,
   "actions": [
-    {"id": "forensics.inspect_file", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
+    {"id": "forensics.hex", "label": "Hex inspection", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "forensics.inspect_file", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "forensics.trace", "label": "Process syscall tracing", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "forensics.debug_server", "label": "Attach a GDB debugger", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Operator Mode binds one or two sealed DDK uploads by ID/hash and runs exact file, hashdeep, ssdeep, checksec, or YARA argv with time/output limits and an authenticated report artifact. Arbitrary router paths, process/PID scanning, tracing, and debugger attachment remain outside this file-only action."
+  "help_text": "Reuse a saved artifact or upload input for file tools. Process tracing and GDB attachment select a live PID and verify its executable and start time. GDB listens on loopback for an SSH-forwarded debugger connection."
 }

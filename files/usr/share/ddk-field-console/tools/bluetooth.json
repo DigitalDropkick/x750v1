@@ -2,7 +2,7 @@
   "id": "bluetooth",
   "name": "Bluetooth",
   "category": "Bluetooth",
-  "description": "Bounded classic and LE discovery through a live, already-up HCI controller.",
+  "description": "Adapter controls, discovery, pairing, connections, service discovery, and GATT operations.",
   "package_names": ["bluez-utils", "bluez-utils-extra", "bluez-daemon"],
   "expected_binaries": ["hciconfig", "hcitool"],
   "required_hardware": ["bluetooth"],
@@ -10,7 +10,9 @@
   "risk_level": "SECURITY",
   "enabled": true,
   "actions": [
-    {"id": "bluetooth.scan", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
+    {"id": "bluetooth.services", "label": "Bluetooth services and GATT", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "bluetooth.scan", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "bluetooth.pairing", "label": "Bluetooth pairing and connections", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Operator Mode exposes bounded classic/LE discovery only for an already-up server-selected HCI controller. It does not start bluetoothd, bring an interface up, pair, connect, or submit raw HCI commands."
+  "help_text": "Select the controller and remote address. Pairing can use a PIN, and connection/trust controls are explicit. The workflow reuses an existing Bluetooth service or owns a temporary one. GATT reads and writes use the selected handle and security level."
 }

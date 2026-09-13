@@ -2,7 +2,7 @@
   "id": "android-repair",
   "name": "Android / ADB",
   "category": "Device Repair",
-  "description": "Private USB identity plus structured ADB 1.0.32 diagnostics, artifacts, backup, file, package, and device-management workflows.",
+  "description": "Android diagnostics, files, applications, logs, backups, and device controls over USB or network ADB.",
   "package_names": ["adb"],
   "expected_binaries": ["adb"],
   "required_hardware": ["android"],
@@ -14,7 +14,8 @@
     {"id": "android.identify", "class": "INFO", "execution": "info", "enabled": true},
     {"id": "android.operator_guide", "class": "INFO", "execution": "info", "enabled": true},
     {"id": "android.adb_diagnostics", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "android.adb_manage", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
+    {"id": "android.adb_manage", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "android.operator", "label": "Android device tools", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Operator Mode uses exact ADB 1.0.32 syntax and a temporary localhost-only server on DDK-reserved port 5038, killed after every job. ADB shell remains unavailable because arbitrary remote shell text would violate the no-generic-web-shell boundary."
+  "help_text": "Use Android Tools for USB or TCP targets, file and directory transfers, single or split APK installation, logs, services, and device controls. Authorize debugging on the device. The router uses its own temporary ADB server; supported device operations depend on Android and the installed ADB build."
 }

@@ -154,7 +154,7 @@ local function mobile_diagnostics_schema(context)
 		fields = {
 			field("device", "Normal-mode Apple device", "enum", devices[1] and devices[1].value or "", { options = devices, help = "Only sysfs-reviewed normal-mode Apple identities are offered; the worker requires an exact usbmuxd UDID match again." }),
 			field("operation", "Native operation", "enum", "info", { options = copy_array(mobile_diagnostic_operations) }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 60, { min = 10, max = 900 }),
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 60, { min = 10, max = 2147480000 }),
 			field("info_domain", "ideviceinfo domain", "enum", "", { options = copy_array(info_domains), show_when = { field = "operation", equals = "info" } }),
 			field("info_key", "ideviceinfo key (empty = all)", "text", "", { show_when = { field = "operation", equals = "info" }, placeholder = "ProductType" }),
 			field("info_simple", "Avoid automatic pairing", "boolean", false, { show_when = { field = "operation", equals = "info" } }),
@@ -174,7 +174,7 @@ local function build_mobile_diagnostics(options, context)
 	local _, devices = choice_map(context.apple_normal_devices)
 	if type(normalized.device) ~= "string" or not devices[normalized.device] then return nil, "Selected normal-mode Apple device is not in the reviewed live inventory" end
 	normalized.operation, err = enum(normalized.operation, mobile_diagnostic_operations, "Apple diagnostics operation"); if not normalized.operation then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 900, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	normalized.info_domain, err = enum(normalized.info_domain, info_domains, "ideviceinfo domain"); if normalized.info_domain == nil then return nil, err end
 	normalized.info_key, err = text(normalized.info_key, "ideviceinfo key", 128, "^[A-Za-z0-9_.-]+$", false); if normalized.info_key == nil then return nil, err end
 	normalized.info_simple, err = boolean(normalized.info_simple, "Avoid automatic pairing"); if normalized.info_simple == nil then return nil, err end
@@ -223,7 +223,7 @@ local function mobile_manage_schema(context)
 		fields = {
 			field("device", "Normal-mode Apple device", "enum", devices[1] and devices[1].value or "", { options = devices }),
 			field("operation", "Device-changing operation", "enum", "pair", { options = copy_array(mobile_manage_operations) }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 120, { min = 10, max = 1800 }),
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 120, { min = 10, max = 2147480000 }),
 			field("device_name", "New device name", "text", "", { show_when = { field = "operation", equals = "set_name" } }),
 			field("timestamp", "Unix timestamp", "integer", 0, { min = 0, max = 4102444800, show_when = { field = "operation", equals = "set_timestamp" } }),
 			field("latitude", "Latitude", "number", 0, { min = -90, max = 90, step = 0.000001, show_when = { field = "operation", equals = "set_location" } }),
@@ -239,7 +239,7 @@ local function build_mobile_manage(options, context)
 	local _, devices = choice_map(context.apple_normal_devices)
 	if type(normalized.device) ~= "string" or not devices[normalized.device] then return nil, "Selected normal-mode Apple device is not in the reviewed live inventory" end
 	normalized.operation, err = enum(normalized.operation, mobile_manage_operations, "Apple management operation"); if not normalized.operation then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 1800, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	normalized.device_name, err = text(normalized.device_name, "Device name", 255, nil, normalized.operation == "set_name"); if normalized.device_name == nil then return nil, err end
 	normalized.timestamp, err = integer(normalized.timestamp, 0, 4102444800, "Unix timestamp"); if normalized.timestamp == nil then return nil, err end
 	normalized.latitude, err = number(normalized.latitude, -90, 90, "Latitude"); if normalized.latitude == nil then return nil, err end
@@ -274,7 +274,7 @@ local function mobile_capture_schema(context)
 		fields = {
 			field("device", "Normal-mode Apple device", "enum", devices[1] and devices[1].value or "", { options = devices }),
 			field("operation", "Capture operation", "enum", "screenshot", { options = copy_array(capture_operations) }),
-			field("duration", "Syslog duration (seconds)", "integer", 60, { min = 5, max = 3600, show_when = { field = "operation", equals = "syslog" } }),
+			field("duration", "Syslog duration (seconds)", "integer", 60, { min = 5, max = 2147480000, show_when = { field = "operation", equals = "syslog" } }),
 			field("match", "Message substring", "text", "", { show_when = { field = "operation", equals = "syslog" } }),
 			field("trigger", "Start trigger substring", "text", "", { show_when = { field = "operation", equals = "syslog" } }),
 			field("untrigger", "Stop trigger substring", "text", "", { show_when = { field = "operation", equals = "syslog" } }),
@@ -293,7 +293,7 @@ local function build_mobile_capture(options, context)
 	local _, devices = choice_map(context.apple_normal_devices)
 	if type(normalized.device) ~= "string" or not devices[normalized.device] then return nil, "Selected normal-mode Apple device is not in the reviewed live inventory" end
 	normalized.operation, err = enum(normalized.operation, capture_operations, "Capture operation"); if not normalized.operation then return nil, err end
-	normalized.duration, err = integer(normalized.duration, 5, 3600, "Syslog duration"); if not normalized.duration then return nil, err end
+	normalized.duration, err = integer(normalized.duration, 5, 2147480000, "Syslog duration"); if not normalized.duration then return nil, err end
 	for _, name in ipairs({ "match", "trigger", "untrigger" }) do normalized[name], err = text(normalized[name], name, 128, nil, false); if normalized[name] == nil then return nil, err end end
 	for _, name in ipairs({ "processes", "exclude_processes" }) do normalized[name], err = text(normalized[name], name, 256, "^[A-Za-z0-9_.+%-]+[|A-Za-z0-9_.+%-]*$", false); if normalized[name] == nil then return nil, err end end
 	normalized.quiet, err = boolean(normalized.quiet, "Quiet filter"); if normalized.quiet == nil then return nil, err end
@@ -332,7 +332,7 @@ local function recovery_schema(context)
 		fields = {
 			field("device", "Recovery / DFU target", "enum", devices[1] and devices[1].value or "", { options = devices, help = "A parseable ECID from one reviewed Apple recovery/DFU USB identity is required." }),
 			field("operation", "Native operation", "enum", "query", { options = copy_array(recovery_operations) }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 120, { min = 10, max = 1800 }),
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 120, { min = 10, max = 2147480000 }),
 			field("verbosity", "Native verbosity", "integer", 0, { min = 0, max = 3, advanced = true }),
 			field("recovery_command", "Recovery command", "text", "", { show_when = { field = "operation", equals = "send_command" }, help = "Sent as one literal irecovery protocol argument; it is never interpreted by the router shell." }),
 			field("input_upload_id", "Sealed recovery input (file/payload/script)", "enum", "", { options = inputs, help = "Used only by send_file, send_payload, and run_script." })
@@ -348,7 +348,7 @@ local function build_recovery(options, context)
 	local _, uploads = upload_choices(context, "apple_recovery_input")
 	if type(normalized.device) ~= "string" or not devices[normalized.device] then return nil, "Selected Apple recovery/DFU ECID is not in the reviewed live inventory" end
 	normalized.operation, err = enum(normalized.operation, recovery_operations, "Recovery operation"); if not normalized.operation then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 1800, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	normalized.verbosity, err = integer(normalized.verbosity, 0, 3, "Verbosity"); if normalized.verbosity == nil then return nil, err end
 	normalized.recovery_command, err = text(normalized.recovery_command, "Recovery command", 256, "^[A-Za-z0-9_.,:=+/%@%-%s]+$", normalized.operation == "send_command"); if normalized.recovery_command == nil then return nil, err end
 	if normalized.operation ~= "send_command" and normalized.recovery_command ~= "" then return nil, "Recovery command is accepted only for send_command" end
@@ -389,7 +389,7 @@ local function restore_schema(context)
 			field("source", "Firmware source", "enum", "sealed_ipsw", { options = copy_array(restore_sources) }),
 			field("restore_upload_id", "Sealed IPSW", "enum", "", { options = restores, show_when = { field = "source", equals = "sealed_ipsw" } }),
 			field("mode", "Restore mode", "enum", "update", { options = copy_array(restore_modes), help = "Update attempts to preserve data; erase explicitly requests a full data-erasing restore; no_action performs no restore action." }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 7200, { min = 600, max = 28800 }),
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 7200, { min = 600, max = 2147480000 }),
 			field("plain_progress", "Plain progress output", "boolean", true),
 			field("debug", "Communication debugging", "boolean", false, { advanced = true }),
 			field("custom", "Custom firmware", "boolean", false, { advanced = true }),
@@ -416,7 +416,7 @@ local function build_restore(options, context)
 	if not target then return nil, "Selected Apple restore target is not in the reviewed live inventory" end
 	normalized.source, err = enum(normalized.source, restore_sources, "Firmware source"); if not normalized.source then return nil, err end
 	normalized.mode, err = enum(normalized.mode, restore_modes, "Restore mode"); if not normalized.mode then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 600, 28800, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 600, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	for _, name in ipairs({ "plain_progress", "debug", "custom", "cydia", "exclude_baseband", "fetch_shsh", "no_restore", "keep_personalized", "pwn_dfu", "allow_restore_mode" }) do normalized[name], err = boolean(normalized[name], name); if normalized[name] == nil then return nil, err end end
 	if normalized.source == "sealed_ipsw" then if not restores[normalized.restore_upload_id] then return nil, "Sealed IPSW source requires one live Apple restore upload" end
 	elseif normalized.restore_upload_id ~= "" then return nil, "Restore upload is accepted only for the sealed IPSW source" end

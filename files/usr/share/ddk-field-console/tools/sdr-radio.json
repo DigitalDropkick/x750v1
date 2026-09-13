@@ -2,7 +2,7 @@
   "id": "sdr-radio",
   "name": "SDR / Radio",
   "category": "SDR / Radio",
-  "description": "Hardware-gated 433.92 MHz sensor snapshots plus installed SDR, AIS, and radio-control utilities.",
+  "description": "RTL-433 and AIS reception, tuner diagnostics, and temporary I/Q streaming.",
   "package_names": ["rtl-sdr", "rtl_433", "rtl-ais", "hamlib"],
   "expected_binaries": ["rtl_test", "rtl_433", "rtl_ais", "rigctl"],
   "required_hardware": ["rtl_sdr"],
@@ -11,7 +11,8 @@
   "enabled": true,
   "actions": [
     {"id": "radio.rtl433_snapshot", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "radio.ais", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
+    {"id": "radio.ais", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "radio.receiver_tools", "label": "SDR benchmark and I/Q stream", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "RTL-433 and AIS expose hardware-gated reviewed tuner selection. AIS maps the exact rtl_ais dual-frequency/sample/output/gain/PPM options, logs decoded NMEA locally, creates an authenticated artifact, and uses the shared tuner lock and bounded lifecycle."
+  "help_text": "Choose a tuner and native receive settings. Duration controls support long sessions; tuner locks apply to the selected receiver. I/Q streaming binds to a selected local management address and stops with its job."
 }

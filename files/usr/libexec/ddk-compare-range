@@ -1,0 +1,41 @@
+#!/usr/bin/python3
+"""Compare a sealed image with an exact destination byte range, without copying it."""
+import sys
+
+
+def compare(source, destination, offset, length):
+    if offset < 0 or length < 1:
+        raise ValueError("Invalid comparison range")
+    with open(source, "rb", buffering=0) as left, open(destination, "rb", buffering=0) as right:
+        right.seek(offset)
+        done = 0
+        while done < length:
+            size = min(262144, length - done)
+            # File/device reads may return short blocks; fill both buffers independently.
+            buffers = []
+            for stream in (left, right):
+                chunks, remaining = [], size
+                while remaining:
+                    part = stream.read(remaining)
+                    if not part:
+                        raise OSError("Unexpected end of comparison range")
+                    chunks.append(part)
+                    remaining -= len(part)
+                buffers.append(b"".join(chunks))
+            if buffers[0] != buffers[1]:
+                mismatch = next(i for i, values in enumerate(zip(*buffers)) if values[0] != values[1])
+                print("Verification mismatch at destination byte %d" % (offset + done + mismatch))
+                return 1
+            done += size
+    print("Verified %d bytes at destination offset %d" % (length, offset))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        if len(sys.argv) != 5:
+            raise ValueError("Expected source, destination, offset, and length")
+        sys.exit(compare(sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])))
+    except (OSError, ValueError) as error:
+        print("Range verification failed: %s" % error, file=sys.stderr)
+        sys.exit(2)

@@ -172,7 +172,7 @@ local function monitoring_schema(context)
 		fields = {
 			field("mode", "Snapshot mode", "enum", "history", { options = { "history", "live_flows" } }),
 			field("interface", "Live interface", "enum", interfaces[1] and interfaces[1].value or "", { options = interfaces }),
-			field("duration", "Live observation seconds", "integer", 10, { min = 2, max = 120, show_when = { field = "mode", equals = "live_flows" } }),
+			field("duration", "Live observation seconds", "integer", 10, { min = 2, max = 2147480000, show_when = { field = "mode", equals = "live_flows" } }),
 			field("lines", "Maximum flow rows", "integer", 40, { min = 10, max = 200, show_when = { field = "mode", equals = "live_flows" }, advanced = true }),
 			field("show_ports", "Show ports", "boolean", true, { show_when = { field = "mode", equals = "live_flows" } })
 		}
@@ -184,7 +184,7 @@ local function build_monitoring(options, context)
 	if not normalized then return nil, err end
 	normalized.mode, err = enum(normalized.mode, { "history", "live_flows" }, "Snapshot mode"); if not normalized.mode then return nil, err end
 	local interface = selected(context.interfaces, normalized.interface, "Selected interface"); if not interface then return nil, "Selected interface is not in the live inventory" end
-	normalized.duration, err = integer(normalized.duration, 2, 120, "Duration"); if not normalized.duration then return nil, err end
+	normalized.duration, err = integer(normalized.duration, 2, 2147480000, "Duration"); if not normalized.duration then return nil, err end
 	normalized.lines, err = integer(normalized.lines, 10, 200, "Maximum rows"); if not normalized.lines then return nil, err end
 	normalized.show_ports, err = boolean(normalized.show_ports, "Show ports"); if normalized.show_ports == nil then return nil, err end
 	local argv
@@ -207,7 +207,7 @@ local function wireless_schema(context)
 		fields = {
 			field("interface", "Wireless interface", "enum", interfaces[1] and interfaces[1].value or "", { options = interfaces }),
 			field("operation", "Operation", "enum", "info", { options = { "info", "scan", "stations" } }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 30, { min = 5, max = 120, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 30, { min = 5, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -217,7 +217,7 @@ local function build_wireless(options, context)
 	if not normalized then return nil, err end
 	if not selected(context.wireless_interfaces, normalized.interface, "Selected wireless interface") then return nil, "Selected wireless interface is not in the reviewed live inventory" end
 	normalized.operation, err = enum(normalized.operation, { "info", "scan", "stations" }, "Wireless operation"); if not normalized.operation then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 5, 120, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 5, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	local argv = normalized.operation == "stations" and { "/usr/sbin/iw", "dev", normalized.interface, "station", "dump" } or { "/usr/bin/iwinfo", normalized.interface, normalized.operation }
 	return { action_id = schema.action_id, worker = "phase4_wireless", label = "Wireless " .. normalized.operation, class = "INFO", resource = "wireless-" .. normalized.interface, singleton = true,
 		options = normalized, argv = argv, argv_preview = preview(argv), target_summary = normalized.interface .. " / " .. normalized.operation,
@@ -234,7 +234,7 @@ local function usb_inventory_schema(context)
 		fields = {
 			field("operation", "Inventory detail", "enum", "summary", { options = { "summary", "tree", "verbose" } }),
 			field("device", "USB device", "enum", "", { options = with_all, show_when = { field = "operation", equals = "verbose" } }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 20, { min = 5, max = 60, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 20, { min = 5, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -243,7 +243,7 @@ local function build_usb_inventory(options, context)
 	local schema = usb_inventory_schema(context); local normalized, err = defaults(schema, options, "USB inventory")
 	if not normalized then return nil, err end
 	normalized.operation, err = enum(normalized.operation, { "summary", "tree", "verbose" }, "Inventory detail"); if not normalized.operation then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 5, 60, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 5, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	local argv = { "/usr/bin/lsusb" }
 	if normalized.operation == "tree" then add(argv, "-t")
 	elseif normalized.operation == "verbose" then
@@ -270,7 +270,7 @@ local function forensics_schema(context)
 			field("rules", "Sealed YARA rules", "enum", "", { options = inputs, show_when = { field = "operation", equals = "yara" } }),
 			field("yara_strings", "Include matching strings", "boolean", false, { show_when = { field = "operation", equals = "yara" }, advanced = true }),
 			field("yara_max_rules", "Maximum YARA matches", "integer", 100, { min = 1, max = 1000, show_when = { field = "operation", equals = "yara" }, advanced = true }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 120, { min = 5, max = 1800, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 120, { min = 5, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -283,7 +283,7 @@ local function build_forensics(options, context)
 	normalized.operation, err = enum(normalized.operation, { "identify", "hashes", "similarity", "checksec", "yara" }, "Analysis"); if not normalized.operation then return nil, err end
 	normalized.yara_strings, err = boolean(normalized.yara_strings, "YARA strings"); if normalized.yara_strings == nil then return nil, err end
 	normalized.yara_max_rules, err = integer(normalized.yara_max_rules, 1, 1000, "Maximum YARA matches"); if not normalized.yara_max_rules then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 5, 1800, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 5, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	local target = "@UPLOAD@/" .. normalized.input
 	local argv, input_uploads = {}, { { id = normalized.input, kind = "forensics_input" } }
 	if normalized.operation == "identify" then argv = { "/usr/bin/file", "-b", "-k", "-i", target }
@@ -293,7 +293,7 @@ local function build_forensics(options, context)
 	else
 		if not uploads[normalized.rules] or normalized.rules == normalized.input then return nil, "YARA requires a separate sealed rules input" end
 		input_uploads[#input_uploads + 1] = { id = normalized.rules, kind = "forensics_input" }
-		argv = { "/usr/bin/yara", "--no-warnings", "--threads=1", "--timeout=" .. tostring(math.min(normalized.wall_timeout, 300)), "--max-rules=" .. tostring(normalized.yara_max_rules) }
+		argv = { "/usr/bin/yara", "--no-warnings", "--threads=1", "--timeout=" .. tostring(normalized.wall_timeout), "--max-rules=" .. tostring(normalized.yara_max_rules) }
 		if normalized.yara_strings then add(argv, "--print-strings") end
 		add(argv, "@UPLOAD@/" .. normalized.rules); add(argv, target)
 	end
@@ -314,10 +314,10 @@ local function replay_schema(context)
 			field("interface", "Output interface", "enum", interfaces[1] and interfaces[1].value or "", { options = interfaces }),
 			field("loop", "Replay loops", "integer", 1, { min = 1, max = 1000 }),
 			field("packet_limit", "Maximum packets (0 = native file count)", "integer", 10000, { min = 0, max = 1000000 }),
-			field("duration", "Maximum replay seconds", "integer", 60, { min = 1, max = 3600 }),
+			field("duration", "Maximum replay seconds", "integer", 60, { min = 1, max = 2147480000 }),
 			field("speed", "Replay speed", "enum", "original", { options = { "original", "multiplier", "pps", "mbps", "topspeed" } }),
 			field("rate", "Speed value", "number", 1, { min = 0.001, max = 1000000, show_when = { field = "speed", not_equals = "original" } }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 120, { min = 10, max = 7200, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 120, { min = 10, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -329,10 +329,10 @@ local function build_replay(options, context)
 	if not selected(context.interfaces, normalized.interface, "Selected output interface") then return nil, "Selected replay interface is not in the live inventory" end
 	normalized.loop, err = integer(normalized.loop, 1, 1000, "Replay loops"); if not normalized.loop then return nil, err end
 	normalized.packet_limit, err = integer(normalized.packet_limit, 0, 1000000, "Packet limit"); if normalized.packet_limit == nil then return nil, err end
-	normalized.duration, err = integer(normalized.duration, 1, 3600, "Replay duration"); if not normalized.duration then return nil, err end
+	normalized.duration, err = integer(normalized.duration, 1, 2147480000, "Replay duration"); if not normalized.duration then return nil, err end
 	normalized.speed, err = enum(normalized.speed, { "original", "multiplier", "pps", "mbps", "topspeed" }, "Replay speed"); if not normalized.speed then return nil, err end
 	normalized.rate, err = number(normalized.rate, 0.001, 1000000, "Speed value"); if not normalized.rate then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 7200, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	local argv = { "/usr/bin/tcpreplay", "--quiet", "--intf1=" .. normalized.interface, "--loop=" .. tostring(normalized.loop), "--duration=" .. tostring(normalized.duration) }
 	if normalized.packet_limit > 0 then add(argv, "--limit=" .. tostring(normalized.packet_limit)) end
 	if normalized.speed == "multiplier" then add(argv, "--multiplier=" .. tostring(normalized.rate))
@@ -361,7 +361,7 @@ local function adsb_schema(context)
 			field("output", "Decoded output", "enum", "raw", { options = { "raw", "addresses", "stats" } }),
 			field("mode_ac", "Decode Mode A/C", "boolean", false, { advanced = true }),
 			field("metric", "Metric units", "boolean", true, { advanced = true }),
-			field("duration", "Receive duration (seconds)", "integer", 60, { min = 10, max = 3600 })
+			field("duration", "Receive duration (seconds)", "integer", 60, { min = 10, max = 2147480000 })
 		}
 	}
 end
@@ -376,7 +376,7 @@ local function build_adsb(options, context)
 	normalized.output, err = enum(normalized.output, { "raw", "addresses", "stats" }, "Decoded output"); if not normalized.output then return nil, err end
 	normalized.mode_ac, err = boolean(normalized.mode_ac, "Mode A/C"); if normalized.mode_ac == nil then return nil, err end
 	normalized.metric, err = boolean(normalized.metric, "Metric"); if normalized.metric == nil then return nil, err end
-	normalized.duration, err = integer(normalized.duration, 10, 3600, "Duration"); if not normalized.duration then return nil, err end
+	normalized.duration, err = integer(normalized.duration, 10, 2147480000, "Duration"); if not normalized.duration then return nil, err end
 	normalized.device_topology, normalized.device_usb_id, normalized.device_serial = device.topology or "", device.usb_id or "", device.serial or ""
 	local argv = { "/usr/bin/readsb", "--device-type=rtlsdr", "--device=" .. normalized.device, "--freq=" .. tostring(normalized.frequency), "--gain=" .. tostring(normalized.gain), "--ppm=" .. tostring(normalized.ppm), "--no-interactive" }
 	if normalized.output == "raw" then add(argv, "--raw") elseif normalized.output == "addresses" then add(argv, "--onlyaddr") else add(argv, "--stats-every=" .. tostring(math.max(5, math.min(60, normalized.duration)))) end
@@ -398,7 +398,7 @@ local function ais_schema(context)
 			field("output_rate", "Output rate", "integer", 48000, { min = 24000, max = 384000 }),
 			field("gain", "Tuner gain (0 = automatic)", "number", 0, { min = 0, max = 49.6 }),
 			field("ppm", "Frequency correction PPM", "integer", 0, { min = -1000, max = 1000 }),
-			field("duration", "Receive duration (seconds)", "integer", 60, { min = 10, max = 3600 })
+			field("duration", "Receive duration (seconds)", "integer", 60, { min = 10, max = 2147480000 })
 		}
 	}
 end
@@ -407,7 +407,7 @@ local function build_ais(options, context)
 	local schema = ais_schema(context); local normalized, err = defaults(schema, options, "AIS")
 	if not normalized then return nil, err end
 	local device = selected(context.rtl_devices, normalized.device, "Selected RTL-SDR"); if not device then return nil, "Selected RTL-SDR is not in the reviewed live inventory" end
-	for _, item in ipairs({ { "left_frequency", 24000000, 1766000000, "Left frequency" }, { "right_frequency", 24000000, 1766000000, "Right frequency" }, { "sample_rate", 12000, 192000, "Sample rate" }, { "output_rate", 24000, 384000, "Output rate" }, { "ppm", -1000, 1000, "PPM correction" }, { "duration", 10, 3600, "Duration" } }) do
+	for _, item in ipairs({ { "left_frequency", 24000000, 1766000000, "Left frequency" }, { "right_frequency", 24000000, 1766000000, "Right frequency" }, { "sample_rate", 12000, 192000, "Sample rate" }, { "output_rate", 24000, 384000, "Output rate" }, { "ppm", -1000, 1000, "PPM correction" }, { "duration", 10, 2147480000, "Duration" } }) do
 		normalized[item[1]], err = integer(normalized[item[1]], item[2], item[3], item[4]); if normalized[item[1]] == nil then return nil, err end
 	end
 	normalized.gain, err = number(normalized.gain, 0, 49.6, "Gain"); if not normalized.gain then return nil, err end
@@ -430,7 +430,7 @@ local function bluetooth_schema(context)
 		fields = {
 			field("controller", "Active HCI controller", "enum", devices[1] and devices[1].value or "", { options = devices }),
 			field("mode", "Discovery mode", "enum", "classic", { options = { "classic", "le" } }),
-			field("duration", "Discovery duration (seconds)", "integer", 20, { min = 5, max = 120 })
+			field("duration", "Discovery duration (seconds)", "integer", 20, { min = 5, max = 2147480000 })
 		}
 	}
 end
@@ -440,7 +440,7 @@ local function build_bluetooth(options, context)
 	if not normalized then return nil, err end
 	local controller = selected(context.bluetooth_devices, normalized.controller, "Selected HCI controller"); if not controller then return nil, "Selected HCI controller is not active in the reviewed inventory" end
 	normalized.mode, err = enum(normalized.mode, { "classic", "le" }, "Discovery mode"); if not normalized.mode then return nil, err end
-	normalized.duration, err = integer(normalized.duration, 5, 120, "Duration"); if not normalized.duration then return nil, err end
+	normalized.duration, err = integer(normalized.duration, 5, 2147480000, "Duration"); if not normalized.duration then return nil, err end
 	local argv = { "/usr/bin/hcitool", "-i", normalized.controller, normalized.mode == "classic" and "scan" or "lescan" }
 	return { action_id = schema.action_id, worker = "phase4_bluetooth", label = "Bluetooth " .. normalized.mode .. " discovery", class = "SECURITY", resource = "bluetooth-" .. normalized.controller, singleton = true,
 		options = normalized, argv = argv, argv_preview = preview(argv), target_summary = normalized.controller .. " / " .. normalized.mode,
@@ -465,7 +465,7 @@ local function mqtt_schema()
 			field("password", "Password (not retained)", "secret", "", { advanced = true }),
 			field("repeat_count", "Publish count", "integer", 1, { min = 1, max = 100, advanced = true }),
 			field("repeat_delay", "Delay between publishes (seconds)", "number", 0, { min = 0, max = 60, advanced = true }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 30, { min = 5, max = 600, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 30, { min = 5, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -488,7 +488,7 @@ local function build_mqtt(options)
 	if (normalized.username == "") ~= (password == "") then return nil, "MQTT username and password must be supplied together" end
 	normalized.repeat_count, err = integer(normalized.repeat_count, 1, 100, "Publish count"); if not normalized.repeat_count then return nil, err end
 	normalized.repeat_delay, err = number(normalized.repeat_delay, 0, 60, "Repeat delay"); if normalized.repeat_delay == nil then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 5, 600, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 5, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	local argv = { "/usr/bin/mosquitto_pub", "-h", normalized.host, "-p", tostring(normalized.port), "-t", normalized.topic, "-q", normalized.qos, "-V", normalized.protocol, "--repeat", tostring(normalized.repeat_count), "--repeat-delay", tostring(normalized.repeat_delay), "-s" }
 	if normalized.tls then add(argv, "--tls-use-os-certs") end; if normalized.retain then add(argv, "-r") end
 	if normalized.username ~= "" then add(argv, "-u"); add(argv, normalized.username) end
@@ -510,7 +510,7 @@ local function relay_schema(context)
 			field("device", "Reviewed relay controller", "enum", devices[1] and devices[1].value or "", { options = devices }),
 			field("relay", "Relay channel", "integer", 1, { min = 1, max = 16 }),
 			field("operation", "Operation", "enum", "status", { options = { "status", "on", "off" } }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 15, { min = 5, max = 60, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 15, { min = 5, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -521,7 +521,7 @@ local function build_relay(options, context)
 	local device = selected(context.relay_devices, normalized.device, "Selected relay controller"); if not device then return nil, "Selected relay controller is not in the reviewed live inventory" end
 	normalized.relay, err = integer(normalized.relay, 1, math.min(16, tonumber(device.relays) or 16), "Relay channel"); if not normalized.relay then return nil, err end
 	normalized.operation, err = enum(normalized.operation, { "status", "on", "off" }, "Relay operation"); if not normalized.operation then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 5, 60, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 5, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	local argv = { "/usr/bin/crelay", "-s", normalized.device, tostring(normalized.relay) }; if normalized.operation ~= "status" then add(argv, normalized.operation:upper()) end
 	local phrase = normalized.operation ~= "status" and ("SET RELAY " .. normalized.device .. " CHANNEL " .. tostring(normalized.relay) .. " " .. normalized.operation:upper()) or nil
 	return { action_id = schema.action_id, worker = "phase4_relay", label = "Relay " .. normalized.operation, class = "DISRUPTIVE", resource = "relay-" .. normalized.device, singleton = true,
@@ -548,7 +548,7 @@ local function modbus_schema(context)
 			field("addresses", "Holding-register addresses", "integer_list", { 0 }, { rows = 4 }),
 			field("datatype", "Value type", "enum", "int", { options = { "int", "floatlsb", "floatmsb" } }),
 			field("interval", "Poll interval (seconds)", "integer", 1, { min = 1, max = 60 }),
-			field("duration", "Read duration (seconds)", "integer", 10, { min = 3, max = 300 })
+			field("duration", "Read duration (seconds)", "integer", 10, { min = 3, max = 2147480000 })
 		}
 	}
 end
@@ -561,7 +561,7 @@ local function build_modbus(options, context)
 	normalized.addresses, err = dense_integers(normalized.addresses, 0, 65535, 32, "Register addresses"); if not normalized.addresses then return nil, err end
 	normalized.datatype, err = enum(normalized.datatype, { "int", "floatlsb", "floatmsb" }, "Datatype"); if not normalized.datatype then return nil, err end
 	normalized.interval, err = integer(normalized.interval, 1, 60, "Poll interval"); if not normalized.interval then return nil, err end
-	normalized.duration, err = integer(normalized.duration, 3, 300, "Duration"); if not normalized.duration then return nil, err end
+	normalized.duration, err = integer(normalized.duration, 3, 2147480000, "Duration"); if not normalized.duration then return nil, err end
 	if normalized.transport == "tcp" then
 		normalized.host, err = validate_host(normalized.host, "Modbus host"); if not normalized.host then return nil, err end
 		normalized.port, err = integer(normalized.port, 1, 65535, "Modbus port"); if not normalized.port then return nil, err end
@@ -589,7 +589,7 @@ local function auth_inventory_schema()
 		fields = {
 			field("mode", "Inventory mode", "enum", "readers", { options = { "readers", "yubikey" } }),
 			field("device_index", "YubiKey index", "integer", 1, { min = 1, max = 16, show_when = { field = "mode", equals = "yubikey" } }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 20, { min = 5, max = 60, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 20, { min = 5, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -599,7 +599,7 @@ local function build_auth_inventory(options)
 	if not normalized then return nil, err end
 	normalized.mode, err = enum(normalized.mode, { "readers", "yubikey" }, "Inventory mode"); if not normalized.mode then return nil, err end
 	normalized.device_index, err = integer(normalized.device_index, 1, 16, "Device index"); if not normalized.device_index then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 5, 60, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 5, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	local argv = normalized.mode == "readers" and { "/usr/bin/pcsc_scan", "-r" } or { "/usr/bin/ykinfo", "-n", tostring(normalized.device_index), "-a" }
 	return { action_id = schema.action_id, worker = "phase4_auth_inventory", label = "Token " .. normalized.mode, class = "INFO", resource = "smartcard", singleton = true,
 		options = normalized, argv = argv, argv_preview = preview(argv), target_summary = normalized.mode == "readers" and "PC/SC readers" or ("YubiKey index " .. tostring(normalized.device_index)), wall_timeout = normalized.wall_timeout,
@@ -615,7 +615,7 @@ local function auth_program_schema()
 			field("operation", "Operation", "enum", "configure_hmac", { options = { "configure_hmac", "configure_hotp", "configure_static", "delete_slot", "swap_slots" } }),
 			field("secret", "Secret key hex (not retained)", "secret", "", { help = "40 hex characters for HMAC challenge-response; 32 or 40 for HOTP/static." }),
 			field("commit", "Commit to physical token", "boolean", false),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 60, { min = 10, max = 180, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 60, { min = 10, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -628,7 +628,7 @@ local function build_auth_program(options)
 	normalized.slot, err = enum(normalized.slot, { "1", "2" }, "Slot"); if not normalized.slot then return nil, err end
 	normalized.operation, err = enum(normalized.operation, { "configure_hmac", "configure_hotp", "configure_static", "delete_slot", "swap_slots" }, "Operation"); if not normalized.operation then return nil, err end
 	normalized.commit, err = boolean(normalized.commit, "Commit"); if normalized.commit == nil then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 180, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	local needs_secret = normalized.operation:match("^configure_") ~= nil
 	if needs_secret and (not secret:match("^[0-9A-Fa-f]+$") or (normalized.operation == "configure_hmac" and #secret ~= 40) or (normalized.operation ~= "configure_hmac" and #secret ~= 32 and #secret ~= 40)) then
 		return nil, "The selected YubiKey profile requires a 32/40-character hex key (40 for HMAC challenge-response)"
@@ -673,7 +673,7 @@ local function camera_stream_schema(context)
 			field("quality", "JPEG quality", "integer", 80, { min = 10, max = 100 }),
 			field("username", "Stream username", "text", "ddk", { required = true }),
 			field("password", "Stream password (not retained)", "secret", "", { required = true }),
-			field("duration", "Maximum stream duration (seconds)", "integer", 300, { min = 30, max = 3600 })
+			field("duration", "Maximum stream duration (seconds)", "integer", 300, { min = 30, max = 2147480000 })
 		}
 	}
 end
@@ -685,7 +685,7 @@ local function build_camera_stream(options, context)
 	if not selected(context.camera_devices, normalized.device, "Selected camera") then return nil, "Selected camera is not in the reviewed UVC inventory" end
 	local bind = selected(context.local_addresses, normalized.bind_address, "Selected bind address")
 	if not bind or bind.family ~= "inet" then return nil, "Stream bind address is not a current IPv4 address" end
-	for _, item in ipairs({ { "port", 1024, 65535, "Port" }, { "width", 160, 3840, "Width" }, { "height", 120, 2160, "Height" }, { "fps", 1, 30, "FPS" }, { "quality", 10, 100, "Quality" }, { "duration", 30, 3600, "Duration" } }) do
+	for _, item in ipairs({ { "port", 1024, 65535, "Port" }, { "width", 160, 3840, "Width" }, { "height", 120, 2160, "Height" }, { "fps", 1, 30, "FPS" }, { "quality", 10, 100, "Quality" }, { "duration", 30, 2147480000, "Duration" } }) do
 		normalized[item[1]], err = integer(normalized[item[1]], item[2], item[3], item[4]); if not normalized[item[1]] then return nil, err end
 	end
 	normalized.username, err = text(normalized.username, "Username", 64, "^[A-Za-z0-9_.-]+$", true); if not normalized.username then return nil, err end
@@ -716,7 +716,7 @@ local function ntrip_schema(context)
 			field("parity", "Parity", "enum", "N", { options = { "N", "E", "O" } }),
 			field("data_bits", "Data bits", "enum", "8", { options = { "7", "8" } }),
 			field("stop_bits", "Stop bits", "enum", "1", { options = { "1", "2" } }),
-			field("duration", "Correction session seconds", "integer", 300, { min = 30, max = 7200 })
+			field("duration", "Correction session seconds", "integer", 300, { min = 30, max = 2147480000 })
 		}
 	}
 end
@@ -736,7 +736,7 @@ local function build_ntrip(options, context)
 	normalized.parity, err = enum(normalized.parity, { "N", "E", "O" }, "Parity"); if not normalized.parity then return nil, err end
 	normalized.data_bits, err = enum(normalized.data_bits, { "7", "8" }, "Data bits"); if not normalized.data_bits then return nil, err end
 	normalized.stop_bits, err = enum(normalized.stop_bits, { "1", "2" }, "Stop bits"); if not normalized.stop_bits then return nil, err end
-	normalized.duration, err = integer(normalized.duration, 30, 7200, "Duration"); if not normalized.duration then return nil, err end
+	normalized.duration, err = integer(normalized.duration, 30, 2147480000, "Duration"); if not normalized.duration then return nil, err end
 	normalized.device_topology, normalized.device_usb_id = device.topology or "", device.usb_id or ""
 	local argv = { "/usr/bin/ntripclient", "-s", normalized.server, "-r", tostring(normalized.port), "-m", normalized.mountpoint, "-u", normalized.username, "-p", "[PRIVATE_NTRIP_PASSWORD]", "-M", normalized.mode, "-D", normalized.device, "-B", normalized.baud, "-Y", normalized.parity, "-A", normalized.data_bits, "-T", normalized.stop_bits }
 	normalized.password = "[REDACTED]"; local shown = copy(argv); for index, item in ipairs(shown) do if item == "[PRIVATE_NTRIP_PASSWORD]" then shown[index] = "[PRIVATE]" end end

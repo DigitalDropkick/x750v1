@@ -1,0 +1,39 @@
+#!/usr/bin/python3
+"""Hash one reserved DDK input independently of the HTTP request timeout."""
+import hashlib,json,os,pathlib,re,stat,sys,time
+
+def seal(identifier):
+    if not re.fullmatch(r'upload-[0-9]+-[0-9]+-[0-9]+',identifier): raise ValueError('Invalid input ID')
+    directory=pathlib.Path('/overlay/ddk-field-console/uploads')/identifier
+    path=directory/'metadata.json'
+    record=json.loads(path.read_text())
+    if record.get('id')!=identifier or record.get('phase')!='sealing': raise ValueError('Input is not awaiting a hash')
+    def save():
+        temporary=directory/'metadata.next'
+        temporary.write_text(json.dumps(record));temporary.chmod(0o600);temporary.replace(path)
+    try:
+        source=directory/'sealed.bin';before=source.lstat()
+        if not stat.S_ISREG(before.st_mode) or before.st_size!=record['declared_size']: raise ValueError('Sealed file size changed')
+        digest=hashlib.sha256()
+        last=0
+        with source.open('rb') as handle:
+            while True:
+                block=handle.read(1048576)
+                if not block: break
+                digest.update(block)
+                if time.monotonic()-last>1:
+                    record['hash_bytes']=handle.tell();save();last=time.monotonic()
+        after=source.lstat()
+        if (before.st_ino,before.st_size,before.st_mtime_ns)!=(after.st_ino,after.st_size,after.st_mtime_ns): raise ValueError('Sealed file changed during hashing')
+        record.update(phase='sealed',size=before.st_size,sha256=digest.hexdigest(),sealed_at=int(time.time()))
+        record['expires_at']=record['sealed_at']+record.pop('retention_seconds')
+    except Exception:
+        record.update(phase='failed',message='Input hashing failed or the file changed. The input is retained for inspection or deletion.')
+    save()
+    try: (directory/'hash.pid').unlink()
+    except FileNotFoundError: pass
+
+if __name__=='__main__':
+    os.umask(0o077)
+    if len(sys.argv)!=2: raise SystemExit(64)
+    seal(sys.argv[1])

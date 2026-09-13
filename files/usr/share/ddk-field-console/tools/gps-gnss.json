@@ -2,7 +2,7 @@
   "id": "gps-gnss",
   "name": "GPS / GNSS / RTK",
   "category": "GPS",
-  "description": "Structured, bounded receive and decode workflows for reviewed USB GNSS serial nodes plus installed RTK and NTRIP utilities.",
+  "description": "GNSS receiver configuration, gpsd observations, RTK solutions, and NTRIP corrections.",
   "package_names": ["gpsd", "gpsd-clients", "gpsd-utils", "rtkrcv", "ntripcaster", "ntripclient", "ntripserver"],
   "expected_binaries": ["gpsdecode", "gpsd", "cgps", "rtkrcv", "ntripclient"],
   "required_hardware": ["gps"],
@@ -11,7 +11,9 @@
   "enabled": true,
   "actions": [
     {"id": "gps.snapshot", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "gps.ntrip", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
+    {"id": "gps.ntrip", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "gps.receiver_control", "label": "GNSS receiver configuration", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "gps.session", "label": "GNSS and RTK receiver session", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "GNSS receive remains bounded and keeps gpsd off. NTRIP adds typed caster/mount/transport/serial controls, redacted one-time credentials, exact non-EC25 receiver selection, confirmation, cancellation, and cleanup without enabling a boot service."
+  "help_text": "Use receiver configuration for native mode and baud controls. GNSS sessions run a temporary local gpsd or RTK receiver and preserve observations or solution files. NTRIP delivers corrections to a selected receiver; modem GNSS uses Cellular AT controls."
 }

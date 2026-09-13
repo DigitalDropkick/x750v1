@@ -2,16 +2,18 @@
   "id": "can",
   "name": "CAN Bus",
   "category": "CAN",
-  "description": "One bounded passive SocketCAN frame snapshot with exact transmit-runtime readiness reporting.",
-  "package_names": ["canutils"],
+  "description": "CAN interface setup, filtered capture, transmission, and replay.",
+  "package_names": ["canutils", "canutils-candump", "canutils-cansend", "canutils-canplayer"],
   "expected_binaries": ["candump", "cansend"],
   "required_hardware": ["can"],
   "status_probe": "can",
   "risk_level": "ACTION",
   "enabled": true,
   "actions": [
-    {"id": "can.capture", "class": "ACTION", "execution": "job", "enabled": true},
-    {"id": "can.transmit", "class": "DISRUPTIVE", "execution": "job", "enabled": false, "unavailable_reason": "No physical canN interface is attached, and the installed canutils package record provides neither candump nor cansend. Structured configuration/transmit requires those exact runtimes, approved CAN hardware, and bus-impact acceptance."}
+    {"id": "can.configure", "label": "CAN interface setup", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "can.capture", "label": "CAN capture", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "can.transmit", "label": "CAN transmit", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "can.replay", "label": "Replay saved CAN frames", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "This target currently has neither a physical canN nor candump/cansend payload. Structured receive, configuration, and confirmed transmit require those exact runtimes plus approved hardware and bus-impact tests."
+  "help_text": "Select a CAN interface, configure its bitrate and state, capture a replay-compatible log, or transmit classic/CAN-FD frames. Bitrate changes restore the previous configuration on failure. A compatible CAN adapter is needed for bus operations."
 }

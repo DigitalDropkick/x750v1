@@ -2,7 +2,7 @@
   "id": "smartcard-auth",
   "name": "Security / Authentication",
   "category": "Security / Authentication",
-  "description": "On-demand PC/SC/YubiKey inventory and confirmed YubiKey personalization.",
+  "description": "PC/SC and YubiKey operations, OATH tokens, and stoken software tokens.",
   "package_names": ["libfido2-1", "ykpers", "ykclient", "oath-toolkit", "stoken", "pcsc-tools", "pcscd", "ccid"],
   "expected_binaries": ["ykinfo", "ykpersonalize", "oathtool", "stoken", "pcsc_scan"],
   "required_hardware": ["smartcard"],
@@ -10,8 +10,10 @@
   "risk_level": "SECURITY",
   "enabled": true,
   "actions": [
+    {"id": "auth.otp", "label": "OATH token generation", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
     {"id": "auth.inventory", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "auth.program", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
+    {"id": "auth.program", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "auth.stoken", "label": "Software token tools", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Inventory starts pcscd only inside the reader workflow and stops it afterward, or selects a YubiKey index for ykinfo. Personalization exposes dry-run/commit profiles, keeps key material in one-time redacted private inputs, and requires exact token/slot confirmation before writes or deletion."
+  "help_text": "Reader inventory reuses PC/SC or owns a temporary helper. YubiKey writes require exact token/slot confirmation. Token seeds and PINs use private inputs; generated token output is excluded from persistent case logs."
 }

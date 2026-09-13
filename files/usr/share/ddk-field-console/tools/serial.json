@@ -2,7 +2,7 @@
   "id": "serial",
   "name": "USB & Serial Attribution",
   "category": "Serial",
-  "description": "Sysfs ownership mapping plus bounded receive and confirmed transmit/receive sessions for reviewed general-purpose USB serial nodes.",
+  "description": "Interactive serial console, receive logging, and binary transfers to selected USB adapters.",
   "package_names": ["picocom", "socat", "ser2net", "conserver", "gensio-bin"],
   "expected_binaries": ["picocom", "socat", "ser2net", "conserver"],
   "required_hardware": ["serial"],
@@ -11,7 +11,9 @@
   "enabled": true,
   "actions": [
     {"id": "serial.inspect", "class": "INFO", "enabled": true},
-    {"id": "serial.session", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
+    {"id": "serial.session", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "serial.console", "label": "Interactive serial console", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "serial.transfer", "label": "Serial file transfer", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Inspection remains read-only. Bounded socat sessions expose live non-reserved device selection, baud/data/parity/stop/flow settings, receive artifacts, and target-bound confirmation for transmit. EC25 modem nodes remain MODEM RESERVED. A continuous interactive terminal would require an authenticated PTY streaming transport and is not represented by one-shot jobs."
+  "help_text": "Choose the adapter and line settings, start a console, and send text or hexadecimal data from Jobs. File transfer sends sealed input and records received bytes. Modem AT commands have a dedicated cellular workflow."
 }

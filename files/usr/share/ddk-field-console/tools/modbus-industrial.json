@@ -2,7 +2,7 @@
   "id": "modbus-industrial",
   "name": "Industrial / Modbus",
   "category": "Industrial",
-  "description": "Structured Modbus/TCP and reviewed non-EC25 Modbus/RTU holding-register reads.",
+  "description": "Modbus TCP and RTU reads, writes, polling, and write verification.",
   "package_names": ["mbtools", "mbusd", "libmodbus", "linuxptp", "ntripcaster", "ntripclient", "ntripserver"],
   "expected_binaries": ["mbpoll", "mbusd", "ptp4l", "ntripclient"],
   "required_hardware": [],
@@ -11,7 +11,7 @@
   "enabled": true,
   "actions": [
     {"id": "industrial.modbus_read", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "industrial.modbus_write", "class": "DISRUPTIVE", "enabled": false, "unavailable_reason": "The installed mbtools payload contains read-oriented mbcollect/mbrecorder only. mbpoll is absent, and mbusd is a gateway rather than a reliable register-write client."}
+    {"id": "industrial.modbus_write", "label": "Modbus reads, polling, and writes", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "The exact mbcollect runtime supports bounded master-mode holding-register reads through a DDK-generated config for TCP or reviewed non-EC25 RTU. Register write remains unavailable because this target has no mbpoll payload and mbcollect exposes no write operation; mbusd is a gateway, not a register-write client."
+  "help_text": "The native libmodbus adapter supports coils, discrete inputs, holding and input registers, single or multiple writes, polling, and readback verification. Choose the transport, unit, address and values explicitly."
 }

@@ -1,0 +1,242 @@
+#!/usr/bin/python3
+"""Lifecycle adapters for specific native tools; no user-selected executable."""
+import json
+import os
+import pathlib
+import pty
+import select
+import re
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+class Stopped(Exception): pass
+
+def stopping(_signal, _frame): raise Stopped()
+
+children=[]
+def spawn(argv, **kwargs):
+    process=subprocess.Popen(argv, **kwargs)
+    children.append(process)
+    return process
+
+def stop_children():
+    for process in reversed(children):
+        if process.poll() is None:
+            process.terminate()
+            try: process.wait(timeout=.3)
+            except subprocess.TimeoutExpired: process.kill(); process.wait()
+
+def run(argv):
+    result=subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+    if result.returncode: raise RuntimeError(result.stderr.strip() or 'Native command failed')
+    return result.stdout
+
+def rtl_index(serial):
+    # The stock tools parse numeric selectors as indices before serial numbers.
+    # Resolve a unique complete USB serial through their own library first.
+    import ctypes
+    library=ctypes.CDLL('librtlsdr.so.0')
+    library.rtlsdr_get_device_count.restype=ctypes.c_uint32
+    library.rtlsdr_get_device_usb_strings.argtypes=[ctypes.c_uint32,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p]
+    matches=[]
+    for index in range(library.rtlsdr_get_device_count()):
+        manufacturer,product,value=[ctypes.create_string_buffer(256) for _ in range(3)]
+        if library.rtlsdr_get_device_usb_strings(index,manufacturer,product,value)==0 and value.value.decode(errors='replace')==serial: matches.append(index)
+    if len(matches)!=1: raise RuntimeError('Native RTL-SDR enumeration did not find one exact serial match')
+    print(matches[0],flush=True)
+
+def configure_can(interface,bitrate,restart):
+    before=json.loads(run(['/sbin/ip','-details','-json','link','show','dev',interface]))[0]
+    info=before.get('linkinfo',{});data=info.get('info_data',{})
+    if info.get('info_kind')!='can': raise RuntimeError('Choose a physical CAN interface for bitrate setup')
+    timing=data.get('bittiming',{})
+    old=timing.get('bitrate');was_up='UP' in before.get('flags',[])
+    if not old and was_up: raise RuntimeError('An active CAN interface has no readable timing; bring it down before configuration')
+    restoring=['type','can','bitrate',str(old),'restart-ms',str(data.get('restart_ms',0))]
+    if all(timing.get(k) for k in ('tq','prop_seg','phase_seg1','phase_seg2','sjw')):
+        restoring=['type','can']
+        for key,arg in [('tq','tq'),('prop_seg','prop-seg'),('phase_seg1','phase-seg1'),('phase_seg2','phase-seg2'),('sjw','sjw')]: restoring += [arg,str(timing[key])]
+        restoring += ['restart-ms',str(data.get('restart_ms',0))]
+    prefix=['/sbin/ip','link','set','dev',interface]
+    try:
+        run(prefix+['down'])
+        run(prefix+['type','can','bitrate',bitrate,'restart-ms',restart])
+        if was_up: run(prefix+['up'])
+    except BaseException:
+        signal.signal(signal.SIGTERM,signal.SIG_IGN)
+        try:
+            run(prefix+['down'])
+            if old: run(prefix+restoring)
+            if was_up: run(prefix+['up'])
+            print('Previous CAN timing and link state restored.' if old else 'The initially unconfigured CAN interface remains down.',flush=True)
+        except Exception as error: print('CAN recovery needs attention: '+str(error),file=sys.stderr,flush=True)
+        raise
+    print(run(['/sbin/ip','-details','link','show','dev',interface]),flush=True)
+
+def gps_session(device,baud,mode):
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1',0));port=str(probe.getsockname()[1])
+    gpsd=spawn(['/usr/sbin/gpsd','-N','-n','-S',port,'-s',baud,*(['-b'] if mode=='passive' else []),device],stdout=subprocess.DEVNULL)
+    for _ in range(40):
+        if gpsd.poll() is not None: raise RuntimeError('gpsd could not open the receiver or local port')
+        try:
+            connection=socket.create_connection(('127.0.0.1',int(port)),.2);connection.close();break
+        except OSError: time.sleep(.1)
+    else: raise RuntimeError('gpsd did not become ready')
+    process=spawn(['/usr/bin/gpspipe','-w','127.0.0.1:'+port])
+    code=process.wait()
+    if code: raise RuntimeError('gpspipe exited with status '+str(code))
+
+def rtk_session(config,output):
+    # A private PTY keeps RTKLIB's local console alive without telnet or a shell.
+    master,slave=pty.openpty()
+    process=spawn(['/usr/bin/rtkrcv','-o',config,'-d',os.ttyname(slave)],stdin=slave,stdout=slave,stderr=slave,cwd=str(pathlib.Path(output).parent))
+    os.close(slave)
+    last=0;started=False;report='';startup=time.monotonic()+20
+    try:
+        while process.poll() is None:
+            if not started and time.monotonic()>startup: raise RuntimeError('RTK local console did not become ready')
+            if started and time.monotonic()-last>5:
+                os.write(master,b'status\r');last=time.monotonic()
+            ready,_,_=select.select([master],[],[],.25)
+            if ready:
+                try: data=os.read(master,8192)
+                except OSError: break
+                if not data: break
+                cleaned=re.sub(rb'\x1b\[[0-9;?]*[A-Za-z]',b'',data)
+                sys.stdout.buffer.write(cleaned);sys.stdout.buffer.flush()
+                report=(report+cleaned.decode(errors='replace'))[-16384:]
+                if not started and 'rtkrcv>' in report:
+                    os.write(master,b'start\r');started=True;last=time.monotonic();report=''
+                if 'rtk server start error' in report: raise RuntimeError('RTK server could not open its selected streams')
+        raise RuntimeError('RTK local console ended before the session was stopped (exit '+str(process.poll())+')')
+    finally:
+        try: os.write(master,b'\x03shutdown\r')
+        except OSError: pass
+        os.close(master)
+
+def bluetooth_session(controller,address,operation,pinfile):
+    if not pathlib.Path('/sys/class/bluetooth',controller).exists(): raise RuntimeError('Bluetooth adapter disconnected')
+    identity=run(['/usr/bin/hciconfig',controller])
+    adapter=re.search(r'BD Address: ([0-9A-F:]{17})',identity,re.I)
+    if not adapter: raise RuntimeError('Unable to resolve the selected Bluetooth controller address')
+    pin=pathlib.Path(pinfile).read_text() if pinfile!='-' else ''
+    if pin and not re.fullmatch(r'[0-9]{1,16}',pin): raise RuntimeError('Invalid pairing PIN')
+    daemon=False
+    for path in pathlib.Path('/proc').iterdir():
+        if not path.name.isdigit(): continue
+        try: daemon=(path/'comm').read_text().strip()=='bluetoothd'
+        except (FileNotFoundError,ProcessLookupError): continue
+        if daemon: break
+    if not daemon:
+        owned=spawn(['/usr/bin/bluetoothd','-n'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        time.sleep(.5)
+        if owned.poll() is not None: raise RuntimeError('Bluetooth service could not start; verify system D-Bus availability')
+    master,slave=pty.openpty()
+    process=spawn(['/usr/bin/bluetoothctl','--agent','KeyboardOnly' if pin else 'DisplayYesNo'],stdin=slave,stdout=slave,stderr=slave,env=dict(os.environ,LC_ALL='C'))
+    os.close(slave)
+    try: bluetooth_dialogue(master,process,adapter.group(1),address,operation,pin)
+    finally:
+        try: os.write(master,b'quit\r')
+        except OSError: pass
+        os.close(master)
+
+def bluetooth_dialogue(master,process,adapter,address,operation,pin):
+    def send(value): os.write(master,(value+'\r').encode())
+    state='ready';text='';deadline=time.monotonic()+120
+    success={'pair':'Pairing successful','connect':'Connection successful','disconnect':'Successful disconnected','trust':'trust succeeded','untrust':'untrust succeeded','remove':'Device has been removed','info':'Device '+address}
+    try:
+        while process.poll() is None and time.monotonic()<deadline:
+            ready,_,_=select.select([master],[],[],.2)
+            if ready:
+                try: chunk=os.read(master,8192).decode(errors='replace')
+                except OSError: break
+                cleaned=re.sub(r'\x1b\[[0-9;?]*[A-Za-z]','',chunk)
+                text=(text+cleaned)[-32768:]
+                # PIN replies are private and are excluded from both live and final logs.
+                displayed=chunk.replace(pin,'[REDACTED]') if pin else chunk
+                print(displayed,end='',flush=True)
+                prompt=re.search(r'\[[^\]\r\n]+\]#\s*$',text)
+                if state=='ready' and prompt:
+                    send('select '+adapter);text='';state='selected'
+                elif state=='selected' and prompt:
+                    # Selecting the already-default controller has no success message.
+                    # Ask the native client which controller it will actually operate.
+                    send('show');text='';state='identity'
+                elif state=='identity' and prompt:
+                    current=re.search(r'(?:^|[\r\n])Controller ([0-9A-F:]{17})(?:\s|$)',text,re.I)
+                    if not current or current.group(1).upper()!=adapter.upper():
+                        raise RuntimeError('Bluetooth controller selection was not confirmed; no device operation was sent')
+                    send(operation+' '+address);text='';state='operation'
+                elif state!='operation': continue
+                elif '[agent] Enter PIN code:' in text or '[agent] Enter passkey' in text:
+                    if not pin: raise RuntimeError('Device requires a PIN; enter it in the pairing form and retry')
+                    send(pin);text=''
+                elif '[agent] Confirm passkey' in text or '[agent] Authorize service' in text or '[agent] Request authorization' in text:
+                    send('yes');text=''
+                elif success[operation].lower() in text.lower(): return
+                elif 'Failed to ' in text or 'not available' in text: raise RuntimeError('Bluetooth operation failed; see the native diagnostic output')
+        raise RuntimeError('Bluetooth operation did not complete within its pairing window')
+    except KeyError: raise RuntimeError('Unsupported Bluetooth operation')
+
+def ubus(object_name,method,payload):
+    result=subprocess.run(['/bin/ubus','call',object_name,method,json.dumps(payload)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=8)
+    if result.returncode: raise RuntimeError('Router configuration API rejected '+object_name+'.'+method)
+    return json.loads(result.stdout or '{}')
+
+def cellular_session(interface,apn,pdp,auth,username,password_file,job_directory,window):
+    if not re.fullmatch(r'[A-Za-z0-9_]+',interface): raise RuntimeError('Invalid modem interface')
+    section=ubus('uci','get',{'config':'network','section':interface}).get('values',{})
+    if section.get('proto')!='qmi' or section.get('device')!='/dev/cdc-wdm0': raise RuntimeError('Selected interface no longer manages the EC25 QMI device')
+    values={'apn':apn,'pdptype':pdp,'auth':auth,'username':'' if username=='@EMPTY@' else username}
+    if password_file!='-': values['password']=pathlib.Path(password_file).read_text().rstrip('\n')
+    session=ubus('session','create',{'timeout':int(window)+90})['ubus_rpc_session']
+    active=False;confirmed=False;rolled_back=False
+    try:
+        ubus('session','grant',{'ubus_rpc_session':session,'scope':'uci','objects':[['network','read'],['network','write']]})
+        ubus('uci','set',{'ubus_rpc_session':session,'config':'network','section':interface,'values':values})
+        active=True
+        ubus('uci','apply',{'ubus_rpc_session':session,'rollback':True,'timeout':int(window)})
+        print('Cellular profile applied. Reconnect and select Keep Cellular Settings in this job within '+window+' seconds. Otherwise the router restores its previous configuration automatically.',flush=True)
+        directory=pathlib.Path(job_directory)
+        ready=directory/'network-confirm-ready';ready.write_text('ready\n');ready.chmod(0o600)
+        deadline=time.monotonic()+int(window)-3
+        while time.monotonic()<deadline:
+            if (directory/'confirm-network').exists():
+                ubus('uci','confirm',{'ubus_rpc_session':session});confirmed=True
+                print('Cellular settings confirmed and retained.',flush=True);return
+            time.sleep(.2)
+        raise RuntimeError('Cellular settings were not confirmed; restoring the previous profile')
+    finally:
+        signal.signal(signal.SIGTERM,signal.SIG_IGN)
+        if active and not confirmed:
+            try: ubus('uci','rollback',{'ubus_rpc_session':session});rolled_back=True
+            except Exception: print('The router rollback timer remains responsible for recovery.',file=sys.stderr,flush=True)
+        if not active or confirmed or rolled_back:
+            try: ubus('session','destroy',{'ubus_rpc_session':session})
+            except Exception: pass
+        try: (pathlib.Path(job_directory)/'network-confirm-ready').unlink()
+        except FileNotFoundError: pass
+
+def main():
+    signal.signal(signal.SIGTERM,stopping);signal.signal(signal.SIGINT,stopping)
+    try:
+        mode,*args=sys.argv[1:]
+        if mode=='rtl-index' and len(args)==1: rtl_index(*args)
+        elif mode=='can' and len(args)==3: configure_can(*args)
+        elif mode=='gps' and len(args)==3: gps_session(*args)
+        elif mode=='rtk' and len(args)==2: rtk_session(*args)
+        elif mode=='bluetooth' and len(args)==4: bluetooth_session(*args)
+        elif mode=='cellular' and len(args)==8: cellular_session(*args)
+        else: raise RuntimeError('Invalid native session mode or arguments')
+    except Stopped: pass
+    except Exception as error:
+        print('Device session: '+str(error),file=sys.stderr,flush=True);return 1
+    finally:
+        signal.signal(signal.SIGTERM,signal.SIG_IGN);stop_children()
+    return 0
+
+if __name__=='__main__': sys.exit(main())

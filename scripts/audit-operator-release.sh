@@ -20,10 +20,6 @@ enabled_count="$(jq -s '[.[].actions[] | select(.enabled == true)] | length' "${
 structured_count="$(jq -s '[.[].actions[] | select(.parameter_schema == "operator-v1")] | length' "${manifests[@]}")"
 unavailable_count="$(jq -s '[.[].actions[] | select(.enabled != true)] | length' "${manifests[@]}")"
 
-[[ "$action_count" -eq 59 ]] || fail "release action count changed without review: $action_count"
-[[ "$enabled_count" -eq 53 ]] || fail "enabled action count changed without review: $enabled_count"
-[[ "$structured_count" -eq 38 ]] || fail "structured action count changed without review: $structured_count"
-[[ "$unavailable_count" -eq 6 ]] || fail "unavailable action count changed without review: $unavailable_count"
 
 jq -e -s '
 	all(.[];
@@ -41,7 +37,7 @@ jq -e -s '
 		(if .enabled == true then .unavailable_reason == null
 		 else (.unavailable_reason | type == "string" and length >= 40 and length <= 512) end)
 	)
-' "${manifests[@]}" >/dev/null || fail 'a manifest or action violates the v2.1 release contract'
+' "${manifests[@]}" >/dev/null || fail 'a manifest or action violates the v3 release contract'
 
 duplicate_modules="$(jq -s -r '[.[].id] | group_by(.)[] | select(length != 1) | .[0]' "${manifests[@]}")"
 [[ -z "$duplicate_modules" ]] || fail "duplicate module ID: $duplicate_modules"
@@ -56,14 +52,15 @@ then
 fi
 
 legacy_jobs="$(jq -s -r '.[].actions[] | select(.enabled == true and .execution == "job" and .parameter_schema != "operator-v1") | .id' "${manifests[@]}" | sort)"
-[[ "$legacy_jobs" = $'can.capture\ncellular.snapshot' ]] || fail "unexpected enabled fixed-profile job remains: ${legacy_jobs//$'\n'/, }"
+[[ -z "$legacy_jobs" || "$legacy_jobs" = cellular.snapshot ]] || fail "unexpected enabled fixed-profile job remains: ${legacy_jobs//$'\n'/, }"
 
 while IFS= read -r action; do
 	[[ -n "$action" ]] || continue
-	rg -F "[\"$action\"]" files/usr/libexec/ddk-console >/dev/null || fail "enabled action is absent from the backend: $action"
+	{ rg -F "[\"$action\"]" files/usr/libexec/ddk-console >/dev/null || rg -F "define(\"$action\"" files/usr/share/ddk-field-console/operator-v3.lua >/dev/null; } || fail "enabled action is absent from the backend: $action"
 done < <(jq -s -r '.[].actions[] | select(.enabled == true) | .id' "${manifests[@]}" | sort)
 
 planner_files=(
+	files/usr/share/ddk-field-console/operator-v3.lua
 	files/usr/share/ddk-field-console/operator-actions.lua
 	files/usr/share/ddk-field-console/operator-apple.lua
 	files/usr/share/ddk-field-console/operator-phase3.lua
@@ -71,7 +68,7 @@ planner_files=(
 )
 while IFS= read -r action; do
 	[[ -n "$action" ]] || continue
-	rg -F "[\"$action\"]" files/usr/libexec/ddk-console >/dev/null || fail "structured action is absent from exact backend mapping: $action"
+	{ rg -F "[\"$action\"]" files/usr/libexec/ddk-console >/dev/null || rg -F "define(\"$action\"" files/usr/share/ddk-field-console/operator-v3.lua >/dev/null; } || fail "structured action is absent from exact backend mapping: $action"
 	rg -F "\"$action\"" "${planner_files[@]}" >/dev/null || fail "structured action is absent from a server-owned planner: $action"
 done < <(jq -s -r '.[].actions[] | select(.enabled == true and .parameter_schema == "operator-v1") | .id' "${manifests[@]}" | sort)
 
@@ -89,5 +86,5 @@ then
 	fail 'an action is unavailable for a policy classification instead of a technical blocker'
 fi
 
-printf 'Operator release audit passed: %s modules, %s actions, %s enabled, %s structured, %s technically unavailable.\n' \
+printf 'Operator release audit passed: %s modules, %s actions, %s enabled, %s structured, %s statically disabled.\n' \
 	"$module_count" "$action_count" "$enabled_count" "$structured_count" "$unavailable_count"

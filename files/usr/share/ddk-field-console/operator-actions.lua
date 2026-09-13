@@ -213,7 +213,7 @@ end
 local scan_types = { "discovery", "syn", "connect", "udp", "syn_udp", "ack", "window", "maimon", "null", "fin", "xmas", "ip_protocol", "list" }
 local discovery_methods = { "native", "skip", "arp", "icmp_echo", "icmp_timestamp", "icmp_netmask", "tcp_syn", "tcp_ack", "udp" }
 local dns_modes = { "native", "never", "always", "system" }
-local script_profiles = { "none", "default", "safe", "version", "vuln" }
+local script_profiles = { "none", "default", "safe", "version", "vuln", "auth", "broadcast", "brute", "discovery", "dos", "exploit", "external", "fuzzer", "intrusive", "malware" }
 local output_formats = { "text", "xml", "grepable", "all" }
 
 local function nmap_schema(context)
@@ -243,7 +243,10 @@ local function nmap_schema(context)
 			field("osscan_limit", "Limit OS detection to promising targets", "boolean", true, { advanced = true }),
 			field("osscan_guess", "Aggressive OS guessing", "boolean", false, { advanced = true }),
 			field("traceroute", "Traceroute", "boolean", false),
-			field("script_profile", "NSE script profile", "enum", "none", { options = copy_array(script_profiles), advanced = true, help = "Only exact installed Nmap categories are accepted; arbitrary script paths and script arguments are not." }),
+			field("script_profile", "NSE script profile", "enum", "none", { options = copy_array(script_profiles), advanced = true, help = "Choose an installed category, individual script names below, or both." }),
+			field("scripts", "Individual NSE script names", "target_list", {}, { advanced = true, rows = 4, suggestions = context.nmap_scripts or {}, help = "One installed script name per line; for example smb-os-discovery or http-title." }),
+			field("nse_arguments", "NSE arguments", "multiline", "", { advanced = true, rows = 4, private = true, help = "One key=value per line. Values are passed as literal strings in a private argument file and omitted from saved presets." }),
+			field("output_mib", "Maximum size per output file (MiB)", "integer", 32, {min=1,max=512,advanced=true}),
 			field("reason", "Show reasons", "boolean", true, { advanced = true }),
 			field("open_only", "Show open ports only", "boolean", false, { advanced = true }),
 			field("sequential_ports", "Scan ports sequentially", "boolean", false, { advanced = true }),
@@ -261,7 +264,7 @@ local function nmap_schema(context)
 			field("verbosity", "Verbosity", "integer", 0, { min = 0, max = 2, advanced = true }),
 			field("packet_trace", "Packet trace", "boolean", false, { advanced = true }),
 			field("output_format", "Artifact output", "enum", "xml", { options = copy_array(output_formats) }),
-			field("wall_timeout", "Job wall timeout (seconds)", "integer", 120, { min = 10, max = 1800, help = "Independent appliance deadline; completed native artifacts are validated before download." })
+			field("wall_timeout", "Job wall timeout (seconds)", "integer", 120, { min = 10, max = 2147480000, help = "Independent appliance deadline; completed native artifacts are validated before download." })
 		}
 	}
 end
@@ -297,6 +300,20 @@ local function normalize_nmap(options, context)
 	normalized.discovery_method, err = enum(normalized.discovery_method, discovery_methods, "Host discovery"); if not normalized.discovery_method then return nil, err end
 	normalized.dns, err = enum(normalized.dns, dns_modes, "DNS resolution"); if not normalized.dns then return nil, err end
 	normalized.script_profile, err = enum(normalized.script_profile, script_profiles, "NSE script profile"); if not normalized.script_profile then return nil, err end
+	local script_set={};for _,name in ipairs(context.nmap_scripts or {}) do script_set[name]=true end
+	if type(normalized.scripts)~="table" or #normalized.scripts>128 then return nil,"Select up to 128 installed scripts" end
+	for k,name in pairs(normalized.scripts) do
+		if type(k)~="number" or k<1 or k>#normalized.scripts or type(name)~="string" or not name:match("^[A-Za-z0-9][A-Za-z0-9_-]+$") or not script_set[name] then return nil,"NSE script is not present in the installed inventory: "..tostring(name) end
+	end
+	if type(normalized.nse_arguments)~="string" or #normalized.nse_arguments>8192 or normalized.nse_arguments:find("[%z\1-\8\11-\31]") then return nil,"NSE arguments must be at most 8 KiB of key=value lines" end
+	local argument_lines={}
+	for line in normalized.nse_arguments:gmatch("[^\r\n]+") do
+		local key,value=line:match("^([A-Za-z0-9_][A-Za-z0-9_.-]*)=(.*)$")
+		if not key then return nil,"Use one NSE key=value per line" end
+		argument_lines[#argument_lines+1]=key..'="'..value:gsub("\\","\\\\"):gsub('"','\\"')..'"'
+	end
+	if #argument_lines>0 and normalized.script_profile=="none" and #normalized.scripts==0 then return nil,"Choose scripts before setting NSE arguments" end
+	normalized.nse_argument_file=table.concat(argument_lines,",")
 	normalized.output_format, err = enum(normalized.output_format, output_formats, "Artifact output"); if not normalized.output_format then return nil, err end
 	normalized.timing, err = enum(normalized.timing, { "0", "1", "2", "3", "4", "5" }, "Timing template"); if not normalized.timing then return nil, err end
 
@@ -306,12 +323,12 @@ local function normalize_nmap(options, context)
 	end
 
 	for _, item in ipairs({
-		{ "top_ports", 0, 65535, "Top ports" }, { "version_intensity", 0, 9, "Version intensity" },
+		{ "output_mib",1,512,"Output budget" }, { "top_ports", 0, 65535, "Top ports" }, { "version_intensity", 0, 9, "Version intensity" },
 		{ "max_retries", 0, 10, "Maximum retries" }, { "host_timeout", 0, 3600, "Host timeout" },
 		{ "min_rate", 0, 100000, "Minimum rate" }, { "max_rate", 0, 100000, "Maximum rate" },
 		{ "scan_delay_ms", 0, 60000, "Scan delay" }, { "source_port", 0, 65535, "Source port" },
 		{ "mtu", 0, 65528, "MTU" }, { "ttl", 0, 255, "TTL" }, { "data_length", 0, 1400, "Data length" },
-		{ "verbosity", 0, 2, "Verbosity" }, { "wall_timeout", 10, 1800, "Wall timeout" }
+		{ "verbosity", 0, 2, "Verbosity" }, { "wall_timeout", 10, 2147480000, "Wall timeout" }
 	}) do
 		normalized[item[1]], err = validate_integer(normalized[item[1]], item[2], item[3], item[4])
 		if normalized[item[1]] == nil then return nil, err end
@@ -389,7 +406,16 @@ local function build_nmap(options, context)
 		if normalized.osscan_guess then add(argv, "--osscan-guess") end
 	end
 	if normalized.traceroute then add(argv, "--traceroute") end
-	if normalized.script_profile ~= "none" then add(argv, "--script=" .. normalized.script_profile) end
+	local scripts=copy_array(normalized.scripts)
+	if normalized.script_profile~="none" then scripts[#scripts+1]=normalized.script_profile end
+	if #scripts>0 then add(argv,"--script="..table.concat(scripts,",")) end
+	local private_inputs={}
+	if normalized.nse_argument_file~="" then
+		private_inputs[1]={name="nse-arguments",hex=(normalized.nse_argument_file:gsub(".",function(c)return string.format("%02x",c:byte())end))}
+		add(argv,"--script-args-file");add(argv,"@PRIVATE_FILE@/nse-arguments")
+		normalized.nse_arguments="[REDACTED]"
+	end
+	normalized.nse_argument_file=nil
 	if normalized.reason then add(argv, "--reason") end
 	if normalized.open_only then add(argv, "--open") end
 	if normalized.sequential_ports then add(argv, "-r") end
@@ -408,22 +434,22 @@ local function build_nmap(options, context)
 	if normalized.packet_trace then add(argv, "--packet-trace") end
 	if #normalized.exclude_targets > 0 then add(argv, "--exclude"); add(argv, table.concat(normalized.exclude_targets, ",")) end
 	if normalized.output_format == "xml" then
-		add(argv, "-oX"); add(argv, "@JOB@/nmap.xml")
-		artifacts[#artifacts + 1] = { name = "nmap.xml", kind = "nmap_xml", content_type = "application/xml", max_size = 2097152 }
+		add(argv, "-oX"); add(argv, "@ARTIFACT@/nmap.xml")
+		artifacts[#artifacts + 1] = { name = "nmap.xml", kind = "nmap_xml", content_type = "application/xml", storage = "extroot", max_size = normalized.output_mib * 1048576 }
 	elseif normalized.output_format == "grepable" then
-		add(argv, "-oG"); add(argv, "@JOB@/nmap.gnmap")
-		artifacts[#artifacts + 1] = { name = "nmap.gnmap", kind = "nmap_grepable", content_type = "text/plain", max_size = 1048576 }
+		add(argv, "-oG"); add(argv, "@ARTIFACT@/nmap.gnmap")
+		artifacts[#artifacts + 1] = { name = "nmap.gnmap", kind = "nmap_grepable", content_type = "text/plain", storage = "extroot", max_size = normalized.output_mib * 1048576 }
 	elseif normalized.output_format == "all" then
-		add(argv, "-oA"); add(argv, "@JOB@/nmap")
-		artifacts[#artifacts + 1] = { name = "nmap.nmap", kind = "nmap_text", content_type = "text/plain", max_size = 1048576 }
-		artifacts[#artifacts + 1] = { name = "nmap.xml", kind = "nmap_xml", content_type = "application/xml", max_size = 2097152 }
-		artifacts[#artifacts + 1] = { name = "nmap.gnmap", kind = "nmap_grepable", content_type = "text/plain", max_size = 1048576 }
+		add(argv, "-oA"); add(argv, "@ARTIFACT@/nmap")
+		artifacts[#artifacts + 1] = { name = "nmap.nmap", kind = "nmap_text", content_type = "text/plain", storage = "extroot", max_size = normalized.output_mib * 1048576 }
+		artifacts[#artifacts + 1] = { name = "nmap.xml", kind = "nmap_xml", content_type = "application/xml", storage = "extroot", max_size = normalized.output_mib * 1048576 }
+		artifacts[#artifacts + 1] = { name = "nmap.gnmap", kind = "nmap_grepable", content_type = "text/plain", storage = "extroot", max_size = normalized.output_mib * 1048576 }
 	end
 	for _, target in ipairs(normalized.targets) do add(argv, target) end
 
 	local preview = {}
 	for _, item in ipairs(argv) do preview[#preview + 1] = preview_arg(item:gsub("^@JOB@/", "[DDK_ARTIFACT]/")) end
-	local consequential = normalized.script_profile == "vuln" or normalized.fragment or normalized.badsum
+	local consequential = (normalized.script_profile ~= "none" and normalized.script_profile ~= "safe" and normalized.script_profile ~= "version") or #normalized.scripts > 0 or normalized.fragment or normalized.badsum
 	local target_summary = table.concat(normalized.targets, ", ")
 	return {
 		action_id = "network.nmap_lan_discovery",
@@ -438,6 +464,7 @@ local function build_nmap(options, context)
 		target_summary = target_summary,
 		wall_timeout = normalized.wall_timeout,
 		artifacts = artifacts,
+		private_inputs = private_inputs,
 		confirmation = {
 			required = consequential,
 			phrase = consequential and ("RUN ACTIVE SCAN ON " .. target_summary) or nil,
@@ -464,7 +491,8 @@ local function capture_schema(context)
 		fields = {
 			field("interface", "Capture interface", "enum", context.lan_interface or "", { options = interfaces }),
 			field("filter", "Capture filter (BPF)", "text", "arp or icmp or (ip and udp and (port 67 or port 68))", { help = "Passed as one argv element and compiled by tcpdump before capture; never evaluated by a shell." }),
-			field("duration", "Duration (seconds)", "integer", 20, { min = 1, max = 1800 }),
+			field("duration", "Duration (seconds)", "integer", 20, { min = 1, max = 2147480000 }),
+			field("capture_mib", "Capture file size (MiB)", "integer", 64, { min = 1, max = 4096, help = "Stored on extroot; the router checks available space before starting." }),
 			field("packet_count", "Packet ceiling", "integer", 128, { min = 0, max = 1000000, help = "0 uses only the duration and artifact-size ceilings." }),
 			field("snap_length", "Snap length (bytes)", "integer", 96, { min = 0, max = 262144, help = "0 uses tcpdump's native default." }),
 			field("output_format", "Output", "enum", "decoded_pcap", { options = copy_array(capture_output_formats) }),
@@ -504,9 +532,9 @@ local function normalize_capture(options, context)
 	normalized.timestamps, err = enum(normalized.timestamps, capture_timestamps, "Timestamps"); if not normalized.timestamps then return nil, err end
 	normalized.payload, err = enum(normalized.payload, capture_payload_modes, "Payload display"); if not normalized.payload then return nil, err end
 	for _, item in ipairs({
-		{ "duration", 1, 1800, "Duration" }, { "packet_count", 0, 1000000, "Packet ceiling" },
+		{ "duration", 1, 2147480000, "Duration" }, { "packet_count", 0, 1000000, "Packet ceiling" },
 		{ "snap_length", 0, 262144, "Snap length" }, { "verbosity", 0, 3, "Verbosity" },
-		{ "buffer_kib", 0, 16384, "Capture buffer" }
+		{ "buffer_kib", 0, 16384, "Capture buffer" }, { "capture_mib", 1, 4096, "Capture file size" }
 	}) do
 		normalized[item[1]], err = validate_integer(normalized[item[1]], item[2], item[3], item[4])
 		if normalized[item[1]] == nil then return nil, err end
@@ -539,10 +567,10 @@ local function build_capture(options, context)
 	local artifacts = {}
 	local decode_argv
 	if normalized.output_format == "pcap" or normalized.output_format == "decoded_pcap" then
-		add(argv, "-U"); add(argv, "-w"); add(argv, "@JOB@/capture.pcap")
-		artifacts[#artifacts + 1] = { name = "capture.pcap", kind = "pcap", content_type = "application/vnd.tcpdump.pcap", max_size = 8388608 }
+		add(argv, "-U"); add(argv, "-w"); add(argv, "@ARTIFACT@/capture.pcap")
+		artifacts[#artifacts + 1] = { name = "capture.pcap", kind = "pcap", content_type = "application/vnd.tcpdump.pcap", max_size = normalized.capture_mib * 1048576, storage = "extroot" }
 		if normalized.output_format == "decoded_pcap" then
-			decode_argv = { "/usr/sbin/tcpdump", "-r", "@JOB@/capture.pcap" }
+			decode_argv = { "/usr/sbin/tcpdump", "-r", "@ARTIFACT@/capture.pcap" }
 			add_capture_decode_flags(decode_argv, normalized)
 		end
 	else
@@ -608,8 +636,8 @@ local function iperf_schema(context)
 			field("host", "Server host (client mode)", "text", "", { placeholder = "192.168.8.10", show_when = { field = "mode", equals = "client" } }),
 			field("port", "Port", "integer", 5201, { min = 1, max = 65535 }),
 			field("protocol", "Protocol (client mode)", "enum", "tcp", { options = copy_array(iperf_protocols), show_when = { field = "mode", equals = "client" } }),
-			field("duration", "Test/server window (seconds)", "integer", 10, { min = 1, max = 3600 }),
-			field("wall_timeout", "Client wall timeout (seconds)", "integer", 60, { min = 10, max = 7200, help = "Independent appliance deadline.", show_when = { field = "mode", equals = "client" } }),
+			field("duration", "Test/server window (seconds)", "integer", 10, { min = 1, max = 2147480000 }),
+			field("wall_timeout", "Client wall timeout (seconds)", "integer", 60, { min = 10, max = 2147480000, help = "Independent appliance deadline.", show_when = { field = "mode", equals = "client" } }),
 			field("parallel", "Parallel streams", "integer", 1, { min = 1, max = 32, show_when = { field = "mode", equals = "client" } }),
 			field("bitrate", "Target bitrate (bits/second)", "integer", 1000000, { min = 0, max = 10000000000, help = "0 requests the native unlimited setting.", show_when = { field = "mode", equals = "client" } }),
 			field("reverse", "Reverse direction", "boolean", false, { show_when = { field = "mode", equals = "client" } }),
@@ -676,7 +704,7 @@ local function normalize_iperf(options, context)
 	for _, name in ipairs(context.congestion_controls or {}) do congestion_set[name] = true end
 	if type(normalized.congestion) ~= "string" or not congestion_set[normalized.congestion] then return nil, "Congestion algorithm is not available in the running kernel" end
 	for _, item in ipairs({
-		{ "port", 1, 65535, "Port" }, { "duration", 1, 3600, "Duration" }, { "wall_timeout", 10, 7200, "Wall timeout" }, { "parallel", 1, 32, "Parallel streams" },
+		{ "port", 1, 65535, "Port" }, { "duration", 1, 2147480000, "Duration" }, { "wall_timeout", 10, 2147480000, "Wall timeout" }, { "parallel", 1, 32, "Parallel streams" },
 		{ "bitrate", 0, 10000000000, "Bitrate" }, { "transfer_amount", 1, 1000000000000, "Transfer amount" },
 		{ "omit", 0, 60, "Omit" }, { "interval", 0, 60, "Interval" }, { "buffer_length", 0, 1048576, "Buffer length" },
 		{ "window", 0, 16777216, "Window" }, { "mss", 0, 65535, "MSS" }, { "tos", 0, 255, "TOS" },
@@ -816,9 +844,9 @@ local function rtl433_schema(context)
 		class = "ACTION",
 		native = { executable = "/usr/bin/rtl_433", package_version = "20.11-2" },
 		fields = {
-			field("device", "RTL-SDR device", "enum", default_device, { options = devices, help = "Only live, unclaimed, reviewed RTL2832/RTL2838 USB devices are offered; selection uses the USB serial." }),
+			field("device", "RTL-SDR device", "enum", default_device, { options = devices, help = "Live devices supported by the native RTL-SDR library are offered; selection uses a unique USB serial." }),
 			field("frequencies", "Frequencies (Hz)", "integer_list", { 433920000 }, { min = 100000, max = 2000000000, rows = 3, help = "One frequency per line; up to 16. rtl_433 hops between multiple frequencies." }),
-			field("duration", "Receive duration (seconds)", "integer", 60, { min = 1, max = 900 }),
+			field("duration", "Receive duration (seconds)", "integer", 60, { min = 1, max = 2147480000 }),
 			field("sample_rate", "Sample rate (samples/second)", "integer", 250000, { min = 225001, max = 3200000 }),
 			field("gain", "Gain (dB; 0 = automatic)", "number", 0, { min = -10, max = 100, step = 0.1 }),
 			field("ppm", "Frequency correction (PPM)", "integer", 0, { min = -200, max = 200 }),
@@ -881,7 +909,7 @@ local function normalize_rtl433(options, context)
 	normalized.units, err = enum(normalized.units, rtl_units, "Units"); if not normalized.units then return nil, err end
 	normalized.analyzer, err = enum(normalized.analyzer, rtl_analyzers, "Analyzer"); if not normalized.analyzer then return nil, err end
 	for _, item in ipairs({
-		{ "duration", 1, 900, "Duration" }, { "sample_rate", 225001, 3200000, "Sample rate" },
+		{ "duration", 1, 2147480000, "Duration" }, { "sample_rate", 225001, 3200000, "Sample rate" },
 		{ "ppm", -200, 200, "PPM" }, { "hop_interval", 1, 900, "Hop interval" },
 		{ "raw_samples", 1, 4194304, "Raw sample ceiling" }, { "verbosity", 0, 3, "Verbosity" }
 	}) do
@@ -1079,7 +1107,7 @@ local function serial_schema(context)
 			field("parity", "Parity", "enum", "none", { options = copy_array(serial_parities) }),
 			field("stop_bits", "Stop bits", "enum", "1", { options = { "1", "2" } }),
 			field("flow", "Flow control", "enum", "none", { options = copy_array(serial_flows) }),
-			field("duration", "Session window (seconds)", "integer", 15, { min = 1, max = 300 }),
+			field("duration", "Session window (seconds)", "integer", 15, { min = 1, max = 2147480000 }),
 			field("read_kib", "Receive artifact ceiling (KiB)", "integer", 64, { min = 1, max = 2048 }),
 			field("output_view", "Job preview", "enum", "hex_ascii", { options = copy_array(serial_views) }),
 			field("transmit_encoding", "Transmit encoding", "enum", "text", { options = copy_array(serial_encodings), show_when = { field = "mode", equals = "transmit_receive" } }),
@@ -1115,7 +1143,7 @@ local function normalize_serial(options, context)
 	normalized.output_view, err = enum(normalized.output_view, serial_views, "Output preview"); if not normalized.output_view then return nil, err end
 	normalized.transmit_encoding, err = enum(normalized.transmit_encoding, serial_encodings, "Transmit encoding"); if not normalized.transmit_encoding then return nil, err end
 	normalized.line_ending, err = enum(normalized.line_ending, serial_endings, "Line ending"); if not normalized.line_ending then return nil, err end
-	normalized.duration, err = validate_integer(normalized.duration, 1, 300, "Duration"); if normalized.duration == nil then return nil, err end
+	normalized.duration, err = validate_integer(normalized.duration, 1, 2147480000, "Duration"); if normalized.duration == nil then return nil, err end
 	normalized.read_kib, err = validate_integer(normalized.read_kib, 1, 2048, "Receive ceiling"); if normalized.read_kib == nil then return nil, err end
 	if type(normalized.transmit_data) ~= "string" or #normalized.transmit_data > 12288 or normalized.transmit_data:find("%z") then return nil, "Transmit data is invalid or too large" end
 	local payload_hex = ""
@@ -1175,7 +1203,7 @@ local function gps_schema(context)
 		native = { executable = "/bin/dd", decoder = "/usr/bin/gpsdecode", decoder_version = "3.23.1" },
 		fields = {
 			field("device", "GNSS serial node", "enum", default_device, { options = devices, help = "Only live, idle, reviewed USB GNSS serial nodes are offered. EC25 nodes are excluded." }),
-			field("duration", "Receive duration (seconds)", "integer", 30, { min = 1, max = 300 }),
+			field("duration", "Receive duration (seconds)", "integer", 30, { min = 1, max = 2147480000 }),
 			field("capture_kib", "Raw byte ceiling (KiB)", "integer", 64, { min = 1, max = 2048 }),
 			field("decode_mode", "gpsdecode output", "enum", "verbose", { options = copy_array(gps_decode_modes) }),
 			field("position_summary", "Validated position summary", "boolean", true, { help = "Available with verbose gpsdecode output; precise coordinates remain transient." }),
@@ -1203,7 +1231,7 @@ local function normalize_gps(options, context)
 	if type(normalized.device) ~= "string" or not devices[normalized.device] then return nil, "GNSS device is not present in the live reviewed receiver inventory" end
 	local err
 	normalized.decode_mode, err = enum(normalized.decode_mode, gps_decode_modes, "Decode mode"); if not normalized.decode_mode then return nil, err end
-	normalized.duration, err = validate_integer(normalized.duration, 1, 300, "Duration"); if normalized.duration == nil then return nil, err end
+	normalized.duration, err = validate_integer(normalized.duration, 1, 2147480000, "Duration"); if normalized.duration == nil then return nil, err end
 	normalized.capture_kib, err = validate_integer(normalized.capture_kib, 1, 2048, "Capture ceiling"); if normalized.capture_kib == nil then return nil, err end
 	normalized.debug, err = validate_integer(normalized.debug, 0, 5, "Debug level"); if normalized.debug == nil then return nil, err end
 	for _, name in ipairs({ "position_summary", "decoded_artifact", "raw_artifact", "unscaled", "split24" }) do
@@ -1321,7 +1349,7 @@ local function adb_diagnostics_schema(context)
 		fields = {
 			field("device", "Authorized ADB device", "enum", default_device, { options = devices, help = "Only live ADB transports correlated with a reviewed USB Android identity are offered." }),
 			field("operation", "Native operation", "enum", "get_state", { options = copy_array(adb_diagnostic_operations) }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 60, { min = 10, max = 900 }),
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 60, { min = 10, max = 2147480000 }),
 			field("property", "Android property (empty = all)", "text", "", { show_when = { field = "operation", equals = "getprop" }, placeholder = "ro.build.version.release" }),
 			field("package_scope", "Package scope", "enum", "all", { options = copy_array(adb_package_scopes), show_when = { field = "operation", equals = "list_packages" } }),
 			field("package_filter", "Package-name substring", "text", "", { show_when = { field = "operation", equals = "list_packages" } }),
@@ -1351,7 +1379,7 @@ local function normalize_adb_diagnostics(options, context)
 	if type(normalized.device) ~= "string" or not devices[normalized.device] then return nil, "ADB device is not present in the live reviewed USB transport inventory" end
 	local err
 	normalized.operation, err = enum(normalized.operation, adb_diagnostic_operations, "ADB operation"); if not normalized.operation then return nil, err end
-	normalized.wall_timeout, err = validate_integer(normalized.wall_timeout, 10, 900, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = validate_integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	normalized.property, err = validate_camera_text(normalized.property, "Property", 128, "^[A-Za-z0-9_.-]+$"); if normalized.property == nil then return nil, err end
 	normalized.package_scope, err = enum(normalized.package_scope, adb_package_scopes, "Package scope"); if not normalized.package_scope then return nil, err end
 	normalized.package_filter, err = validate_camera_text(normalized.package_filter, "Package filter", 96, "^[A-Za-z0-9_.-]+$"); if normalized.package_filter == nil then return nil, err end
@@ -1421,7 +1449,7 @@ local function adb_manage_schema(context)
 		fields = {
 			field("device", "Authorized ADB device", "enum", devices[1] and devices[1].value or "", { options = devices }),
 			field("operation", "Device-changing operation", "enum", "install", { options = copy_array(adb_manage_operations) }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 300, { min = 10, max = 1800 }),
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 300, { min = 10, max = 2147480000 }),
 			field("push_upload_id", "Sealed file to push", "enum", "", { options = push_uploads, show_when = { field = "operation", equals = "push" } }),
 			field("push_remote_path", "Remote destination", "text", "", { show_when = { field = "operation", equals = "push" }, placeholder = "/sdcard/Download/file.bin" }),
 			field("install_upload_id", "Sealed APK", "enum", "", { options = install_uploads, show_when = { field = "operation", equals = "install" } }),
@@ -1451,7 +1479,7 @@ local function normalize_adb_manage(options, context)
 	local restore_choices, restore_records = upload_choices(context, "android_backup", false)
 	local err
 	normalized.operation, err = enum(normalized.operation, adb_manage_operations, "ADB operation"); if not normalized.operation then return nil, err end
-	normalized.wall_timeout, err = validate_integer(normalized.wall_timeout, 10, 1800, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = validate_integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	normalized.reboot_target, err = enum(normalized.reboot_target, adb_reboot_targets, "Reboot target"); if not normalized.reboot_target then return nil, err end
 	normalized.tcpip_port, err = validate_integer(normalized.tcpip_port, 1024, 65535, "ADB TCP port"); if not normalized.tcpip_port then return nil, err end
 	for _, name in ipairs({ "install_replace", "install_test", "install_downgrade", "install_external", "uninstall_keep_data" }) do normalized[name], err = boolean(normalized[name], name); if normalized[name] == nil then return nil, err end end
@@ -1521,5 +1549,11 @@ function M.prepare(action_id, options, context)
 	if action_id == "android.adb_manage" then return build_adb_manage(options, context or {}) end
 	return nil, "Action does not accept structured Operator Mode parameters"
 end
+
+-- Shared typed validation for additional exact v3 actions.
+M.validate_target = validate_target
+M.valid_ipv4 = valid_ipv4
+M.valid_ipv6 = valid_ipv6
+M.valid_hostname = valid_hostname
 
 return M

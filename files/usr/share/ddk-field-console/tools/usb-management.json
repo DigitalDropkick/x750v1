@@ -2,7 +2,7 @@
   "id": "usb-management",
   "name": "USB Hardware",
   "category": "USB & Serial",
-  "description": "Structured USB inventory with protected hub-power and USB/IP limitations reported explicitly.",
+  "description": "USB inventory, topology-aware hub power, and USB/IP import management.",
   "package_names": ["usbutils", "uhubctl", "usbip", "usbip-client", "usbip-server"],
   "expected_binaries": ["lsusb", "uhubctl", "usbip"],
   "required_hardware": ["usb"],
@@ -11,8 +11,8 @@
   "enabled": true,
   "actions": [
     {"id": "usb.inventory", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "usb.power", "class": "DISRUPTIVE", "enabled": false, "unavailable_reason": "The only controllable physical hub root also carries the active extroot and EC25 modem path. No independently switchable non-critical port can be validated on this topology."},
-    {"id": "usbip.attach", "class": "DISRUPTIVE", "enabled": false, "unavailable_reason": "The installed USB/IP client reports no usable VHCI controller, so there is no reviewed local virtual host-controller target for an attach workflow."}
+    {"id": "usb.power", "label": "USB hub port power", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "usbip.attach", "label": "USB/IP connections", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Inventory exposes summary/tree/verbose lsusb output with server-selected devices and bounded artifacts. Power remains unavailable because the only controllable physical root-hub port contains the appliance extroot hub and EC25 path; USB/IP attach remains unavailable because the installed client reports no usable VHCI controller."
+  "help_text": "Hub power controls identify the selected port and its downstream devices. Active router storage, swap and uplink devices are protected. USB/IP lists remote devices, imports them into real VHCI ports, and detaches selected imports."
 }

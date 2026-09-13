@@ -141,7 +141,7 @@ end
 
 -- OpenOCD ------------------------------------------------------------------
 
-local openocd_operations = { "probe", "program" }
+local openocd_operations = { "probe", "program", "readback", "halt", "resume", "reset", "debug" }
 
 local function openocd_schema(context)
 	local devices = choice_map(context.programmer_devices)
@@ -153,6 +153,7 @@ local function openocd_schema(context)
 		action_id = "firmware.openocd", label = "OpenOCD Target Operator", class = "DISRUPTIVE",
 		native = { executable = "/usr/bin/openocd", version = "OpenOCD 0.11.0-v0.11.0-1-OpenWrt" },
 		fields = {
+			field("accept_unrecognized", "I identified an unfamiliar USB device as this programmer", "boolean", false, { advanced=true, help="Required only for devices labelled identify as programmer. Select the matching native programmer/configuration." }),
 			field("device", "Reviewed USB debug adapter", "enum", devices[1] and devices[1].value or "", { options = devices }),
 			field("config_mode", "Configuration selection", "enum", "interface_target", { options = { "interface_target", "board" } }),
 			field("interface_config", "Installed interface config", "enum", interfaces[1] and interfaces[1].value or "", { options = interfaces, show_when = { field = "config_mode", equals = "interface_target" } }),
@@ -160,11 +161,13 @@ local function openocd_schema(context)
 			field("board_config", "Installed board config", "enum", boards[1] and boards[1].value or "", { options = boards, show_when = { field = "config_mode", equals = "board" } }),
 			field("operation", "Operation", "enum", "probe", { options = copy(openocd_operations) }),
 			field("upload", "Firmware image", "enum", "", { options = uploads, show_when = { field = "operation", equals = "program" } }),
-			field("address", "Binary load address (optional)", "text", "", { placeholder = "0x08000000", show_when = { field = "operation", equals = "program" } }),
+			field("address", "Load or readback address", "text", "", { placeholder = "0x08000000", show_when = { field = "operation", values = { "program", "readback" } } }),
+			field("length", "Readback bytes", "integer", 1048576, { min = 1, max = 268435456, show_when = { field = "operation", equals = "readback" } }),
+			field("gdb_port", "Local GDB port (access through SSH tunnel)", "integer", 3333, { min = 1024, max = 65535, show_when = { field = "operation", equals = "debug" } }),
 			field("adapter_speed", "Adapter speed (kHz; 0 = config default)", "integer", 0, { min = 0, max = 50000, advanced = true }),
 			field("verify", "Verify programmed image", "boolean", true, { show_when = { field = "operation", equals = "program" } }),
 			field("reset", "Reset target after programming", "boolean", true, { show_when = { field = "operation", equals = "program" } }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 900, { min = 10, max = 7200, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 900, { min = 10, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -174,13 +177,17 @@ local function build_openocd(options, context)
 	local normalized, err = defaults(schema, options, "OpenOCD")
 	if not normalized then return nil, err end
 	local device = selected_device(context.programmer_devices, normalized.device, "Selected OpenOCD adapter"); if not device then return nil, "Selected OpenOCD adapter is not in the reviewed live inventory" end
+	if type(normalized.accept_unrecognized)~="boolean" then return nil,"Programmer identification must be a checkbox" end
+	if device.requires_enrollment and not normalized.accept_unrecognized then return nil,"Identify the selected unfamiliar USB device as your programmer using the advanced checkbox" end
 	normalized.config_mode, err = enum(normalized.config_mode, { "interface_target", "board" }, "Configuration selection"); if not normalized.config_mode then return nil, err end
 	normalized.operation, err = enum(normalized.operation, openocd_operations, "OpenOCD operation"); if not normalized.operation then return nil, err end
 	normalized.adapter_speed, err = integer(normalized.adapter_speed, 0, 50000, "Adapter speed"); if not normalized.adapter_speed then return nil, err end
 	normalized.verify, err = boolean(normalized.verify, "Verify"); if normalized.verify == nil then return nil, err end
 	normalized.reset, err = boolean(normalized.reset, "Reset"); if normalized.reset == nil then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 7200, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	normalized.address, err = hex_address(normalized.address, "Load address", false); if normalized.address == nil then return nil, err end
+	normalized.length, err = integer(normalized.length, 1, 268435456, "Readback length"); if not normalized.length then return nil, err end
+	normalized.gdb_port, err = integer(normalized.gdb_port, 1024, 65535, "GDB port"); if not normalized.gdb_port then return nil, err end
 	local argv = { "/usr/bin/openocd" }
 	if normalized.config_mode == "board" then
 		normalized.board_config, err = enum(normalized.board_config, context.openocd_board_configs, "Board config"); if not normalized.board_config then return nil, err end
@@ -192,7 +199,7 @@ local function build_openocd(options, context)
 		add(argv, "-f"); add(argv, "/usr/share/openocd/scripts/" .. normalized.target_config)
 	end
 	normalized.device_topology, normalized.device_usb_id, normalized.device_serial = device.topology, device.usb_id, device.serial or ""
-	local input_uploads, confirmation = {}, { required = false }
+	local input_uploads, confirmation, artifacts = {}, { required = false }, {}
 	if normalized.operation == "program" then
 		local _, uploads = upload_choices(context, "firmware_image")
 		local upload = uploads[normalized.upload]
@@ -200,19 +207,24 @@ local function build_openocd(options, context)
 		input_uploads = upload_binding(normalized.upload, "firmware_image")
 		local phrase = "PROGRAM OPENOCD " .. normalized.device .. " " .. normalized.upload
 		confirmation = { required = true, phrase = phrase, reason = "This will program the selected target through the exact adapter/config combination. Confirm voltage, pinout, target identity, backup, and recovery path." }
-	elseif normalized.upload ~= "" or normalized.address ~= "" or normalized.verify ~= true or normalized.reset ~= true then
-		return nil, "Programming-only OpenOCD fields must remain at defaults during probe"
+	else
+		if normalized.upload ~= "" then return nil, "Choose a firmware image only for programming" end
+		if normalized.operation == "readback" then
+			if normalized.address == "" then return nil, "Enter the target readback address" end
+			artifacts = { { name = "firmware-read.bin", kind = "firmware_backup", content_type = "application/octet-stream", max_size = normalized.length, storage = "extroot" } }
+		end
+		if normalized.operation ~= "probe" then confirmation = { required = true, phrase = "OPENOCD " .. normalized.operation:upper() .. " " .. normalized.device, reason = "This operation controls or halts the selected target through its debug adapter." } end
 	end
 	local shown = copy(argv)
 	shown[#shown + 1] = "-f"; shown[#shown + 1] = "[DDK_GENERATED_OPENOCD_COMMANDS]"
 	return { action_id = schema.action_id, worker = "phase3_openocd", label = "OpenOCD " .. normalized.operation, class = "DISRUPTIVE", resource = "firmware", singleton = true,
 		options = normalized, argv = argv, argv_preview = preview(shown), target_summary = normalized.device .. " / " .. normalized.operation,
-		wall_timeout = normalized.wall_timeout, artifacts = {}, input_uploads = input_uploads, confirmation = confirmation }
+		wall_timeout = normalized.wall_timeout, artifacts = artifacts, input_uploads = input_uploads, confirmation = confirmation }
 end
 
 -- AVRDUDE ------------------------------------------------------------------
 
-local avrdude_operations = { "probe", "read_flash", "read_eeprom", "verify_flash", "verify_eeprom", "write_flash", "write_eeprom", "chip_erase" }
+local avrdude_operations = { "probe", "read_flash", "read_eeprom", "verify_flash", "verify_eeprom", "write_flash", "write_eeprom", "read_memory", "verify_memory", "write_memory", "write_fuse", "chip_erase" }
 local avrdude_input_formats = { "a", "i", "r", "e" }
 local avrdude_output_formats = { "i", "r" }
 
@@ -223,10 +235,13 @@ local function avrdude_schema(context)
 		action_id = "firmware.avrdude", label = "AVRDUDE Programmer", class = "DISRUPTIVE",
 		native = { executable = "/usr/bin/avrdude", version = "AVRDUDE 6.3" },
 		fields = {
+			field("accept_unrecognized", "I identified an unfamiliar USB device as this programmer", "boolean", false, { advanced=true, help="Required only for devices labelled identify as programmer. Select the matching native programmer/configuration." }),
 			field("device", "Reviewed programmer/serial connection", "enum", devices[1] and devices[1].value or "", { options = devices }),
 			field("programmer", "Installed programmer type", "enum", context.avrdude_programmers[1] and context.avrdude_programmers[1].value or "", { options = copy(context.avrdude_programmers) }),
 			field("part", "Installed AVR part", "enum", context.avrdude_parts[1] and context.avrdude_parts[1].value or "", { options = copy(context.avrdude_parts) }),
 			field("operation", "Memory operation", "enum", "probe", { options = copy(avrdude_operations) }),
+			field("memory", "Target memory", "enum", "lfuse", { options = { "flash", "eeprom", "lfuse", "hfuse", "efuse", "fuse", "lock", "signature", "calibration", "usersig", "prodsig" }, show_when = { field = "operation", values = { "read_memory", "verify_memory", "write_memory", "write_fuse" } } }),
+			field("fuse_value", "Fuse or lock byte", "integer", 255, { min = 0, max = 255, show_when = { field = "operation", equals = "write_fuse" } }),
 			field("upload", "Firmware input", "enum", "", { options = uploads }),
 			field("input_format", "Input format", "enum", "a", { options = copy(avrdude_input_formats), advanced = true }),
 			field("output_format", "Backup format", "enum", "r", { options = copy(avrdude_output_formats), advanced = true }),
@@ -236,7 +251,7 @@ local function avrdude_schema(context)
 			field("no_verify", "Skip automatic write verification", "boolean", false, { advanced = true }),
 			field("force_signature", "Override signature mismatch", "boolean", false, { advanced = true }),
 			field("verbose", "Verbosity", "integer", 1, { min = 0, max = 4, advanced = true }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 900, { min = 10, max = 14400, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 900, { min = 10, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -246,6 +261,8 @@ local function build_avrdude(options, context)
 	local normalized, err = defaults(schema, options, "AVRDUDE")
 	if not normalized then return nil, err end
 	local device = selected_device(context.firmware_connection_devices, normalized.device, "Selected AVRDUDE connection"); if not device then return nil, "Selected AVRDUDE connection is not in the reviewed live inventory" end
+	if type(normalized.accept_unrecognized)~="boolean" then return nil,"Programmer identification must be a checkbox" end
+	if device.requires_enrollment and not normalized.accept_unrecognized then return nil,"Identify the selected unfamiliar USB device as your programmer using the advanced checkbox" end
 	normalized.programmer, err = enum(normalized.programmer, context.avrdude_programmers, "Programmer type"); if not normalized.programmer then return nil, err end
 	normalized.part, err = enum(normalized.part, context.avrdude_parts, "AVR part"); if not normalized.part then return nil, err end
 	normalized.operation, err = enum(normalized.operation, avrdude_operations, "AVRDUDE operation"); if not normalized.operation then return nil, err end
@@ -255,7 +272,7 @@ local function build_avrdude(options, context)
 	normalized.bitclock, err = number(normalized.bitclock, 0, 1000, "Bit clock"); if normalized.bitclock == nil then return nil, err end
 	for _, name in ipairs({ "disable_auto_erase", "no_verify", "force_signature" }) do normalized[name], err = boolean(normalized[name], name); if normalized[name] == nil then return nil, err end end
 	normalized.verbose, err = integer(normalized.verbose, 0, 4, "Verbosity"); if normalized.verbose == nil then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 14400, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	normalized.device_kind, normalized.device_topology, normalized.device_usb_id = device.kind, device.topology or "", device.usb_id or ""
 	local device_serial = type(device.serial) == "string" and device.serial:match("^[A-Za-z0-9._-]+$") and #device.serial <= 128 and device.serial or ""
 	normalized.device_serial = device_serial
@@ -271,12 +288,19 @@ local function build_avrdude(options, context)
 	if normalized.force_signature then add(argv, "-F") end
 	for _ = 1, normalized.verbose do add(argv, "-v") end
 	local artifacts, input_uploads, confirmation = {}, {}, { required = false }
+	normalized.memory, err = enum(normalized.memory, { "flash", "eeprom", "lfuse", "hfuse", "efuse", "fuse", "lock", "signature", "calibration", "usersig", "prodsig" }, "AVR memory"); if not normalized.memory then return nil, err end
+	normalized.fuse_value, err = integer(normalized.fuse_value, 0, 255, "Fuse byte"); if not normalized.fuse_value then return nil, err end
 	local operation, memory = normalized.operation, normalized.operation:find("eeprom", 1, true) and "eeprom" or "flash"
+	if operation:match("_memory$") or operation=="write_fuse" then memory=normalized.memory end
 	if operation == "probe" then
 		add(argv, "-n")
 	elseif operation == "chip_erase" then
 		add(argv, "-e")
 		confirmation = { required = true, phrase = "ERASE AVR " .. normalized.device .. " " .. normalized.part, reason = "This will erase the selected AVR target." }
+	elseif operation == "write_fuse" then
+		if not ({lfuse=true,hfuse=true,efuse=true,fuse=true,lock=true})[memory] then return nil, "Select a fuse or lock memory for a byte write" end
+		add(argv,"-U"); add(argv,memory .. ":w:" .. string.format("0x%02x",normalized.fuse_value) .. ":m")
+		confirmation = { required = true, phrase = "WRITE AVR " .. normalized.device .. " " .. normalized.part .. " " .. memory .. " " .. normalized.fuse_value, reason = "Fuse and lock values can disable programming access; confirm the target data sheet and recovery method." }
 	elseif operation:match("^read_") then
 		local name = normalized.output_format == "i" and "firmware-read.hex" or "firmware-read.bin"
 		add(argv, "-U"); add(argv, memory .. ":r:@ARTIFACT@/" .. name .. ":" .. normalized.output_format)
@@ -322,7 +346,7 @@ local function dfu_schema(context)
 			field("transfer_size", "USB transfer size (0 = default)", "integer", 0, { min = 0, max = 1048576, advanced = true }),
 			field("force", "Force operation where native tool supports it", "boolean", false, { advanced = true }),
 			field("reset", "Reset/leave after dfu-util transfer", "boolean", false, { advanced = true }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 900, { min = 10, max = 14400, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 900, { min = 10, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -342,7 +366,7 @@ local function build_dfu(options, context)
 	normalized.transfer_size, err = integer(normalized.transfer_size, 0, 1048576, "Transfer size"); if normalized.transfer_size == nil then return nil, err end
 	normalized.force, err = boolean(normalized.force, "Force"); if normalized.force == nil then return nil, err end
 	normalized.reset, err = boolean(normalized.reset, "Reset"); if normalized.reset == nil then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 14400, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	normalized.device_topology, normalized.device_usb_id, normalized.device_serial, normalized.busnum, normalized.devnum = device.topology, device.usb_id, device.serial or "", device.busnum, device.devnum
 	local argv, artifacts, input_uploads, confirmation = {}, {}, {}, { required = false }
 	if normalized.tool == "dfu-util" then
@@ -417,7 +441,7 @@ local function firmware_serial_schema(context)
 			field("verify_write", "Verify write", "boolean", true, { advanced = true }),
 			field("reset_after", "Reset/start after operation", "boolean", false, { advanced = true }),
 			field("control_lines", "Use LPC DTR/RTS boot control", "boolean", false, { advanced = true }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 900, { min = 10, max = 14400, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 900, { min = 10, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -436,7 +460,7 @@ local function build_firmware_serial(options, context)
 	normalized.oscillator_khz, err = integer(normalized.oscillator_khz, 100, 100000, "Oscillator"); if not normalized.oscillator_khz then return nil, err end
 	normalized.input_format, err = enum(normalized.input_format, { "hex", "bin" }, "Input format"); if not normalized.input_format then return nil, err end
 	for _, name in ipairs({ "erase_before_write", "verify_write", "reset_after", "control_lines" }) do normalized[name], err = boolean(normalized[name], name); if normalized[name] == nil then return nil, err end end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 14400, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	normalized.device_topology, normalized.device_usb_id = device.topology or "", device.usb_id or ""
 	local argv, artifacts, input_uploads, confirmation = {}, {}, {}, { required = false }
 	local op = normalized.operation
@@ -499,7 +523,7 @@ local function storage_inspect_schema(context)
 			field("force_fsck", "Force filesystem check", "boolean", false, { advanced = true }),
 			field("block_size", "Badblocks block size", "integer", 4096, { min = 512, max = 1048576, advanced = true }),
 			field("max_bad_blocks", "Stop after bad blocks", "integer", 1000, { min = 1, max = 1000000, advanced = true }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 3600, { min = 10, max = 86400, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 3600, { min = 10, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -524,7 +548,7 @@ local function build_storage_inspect(options, context)
 	normalized.force_fsck, err = boolean(normalized.force_fsck, "Force filesystem check"); if normalized.force_fsck == nil then return nil, err end
 	normalized.block_size, err = integer(normalized.block_size, 512, 1048576, "Block size"); if not normalized.block_size then return nil, err end
 	normalized.max_bad_blocks, err = integer(normalized.max_bad_blocks, 1, 1000000, "Maximum bad blocks"); if not normalized.max_bad_blocks then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 86400, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	normalized.device_size, normalized.device_kind, normalized.fs_type, normalized.mounted = device.size, device.kind, device.fs_type or "", device.mounted and true or false
 	local argv, artifacts, op = {}, {}, normalized.operation
 	if op:match("^smart_") then
@@ -560,7 +584,7 @@ local function storage_repair_schema(context)
 			field("block_size", "Badblocks block size", "integer", 4096, { min = 512, max = 1048576, advanced = true }),
 			field("passes", "Badblocks non-destructive passes", "integer", 1, { min = 1, max = 4, advanced = true }),
 			field("max_bad_blocks", "Stop after bad blocks", "integer", 1000, { min = 1, max = 1000000, advanced = true }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 14400, { min = 10, max = 86400, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 14400, { min = 10, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -576,7 +600,7 @@ local function build_storage_repair(options, context)
 	normalized.block_size, err = integer(normalized.block_size, 512, 1048576, "Block size"); if not normalized.block_size then return nil, err end
 	normalized.passes, err = integer(normalized.passes, 1, 4, "Passes"); if not normalized.passes then return nil, err end
 	normalized.max_bad_blocks, err = integer(normalized.max_bad_blocks, 1, 1000000, "Maximum bad blocks"); if not normalized.max_bad_blocks then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 86400, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	normalized.device_size, normalized.device_kind, normalized.fs_type, normalized.mounted = device.size, device.kind, device.fs_type or "", false
 	local argv, artifacts = {}, {}
 	if normalized.operation:match("^fsck_") then
@@ -600,13 +624,13 @@ local function storage_image_schema(context)
 		native = { executable = "/bin/dd", version = "BusyBox 1.35.0 dd" },
 		fields = {
 			field("device", "Unmounted non-system source", "enum", devices[1] and devices[1].value or "", { options = devices }),
-			field("offset", "Source byte offset", "integer", 0, { min = 0, max = 34359738368, advanced = true }),
-			field("length", "Bytes to image", "integer", math.min(first_size, 17179869184), { min = 1, max = 17179869184 }),
+			field("offset", "Source byte offset", "integer", 0, { min = 0, max = 8796093022208, advanced = true }),
+			field("length", "Bytes to image", "integer", math.min(first_size, 8796093022208), { min = 1, max = 8796093022208 }),
 			field("block_size", "Copy block size", "enum", "1M", { options = { "64K", "256K", "1M", "4M" }, advanced = true }),
 			field("continue_errors", "Continue after read errors with zero padding", "boolean", true, { advanced = true }),
 			field("direct", "Use direct input I/O", "boolean", false, { advanced = true }),
 			field("sha256", "Create SHA-256 companion artifact", "boolean", true, { advanced = true }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 14400, { min = 10, max = 86400, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 14400, { min = 10, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -617,12 +641,12 @@ local function build_storage_image(options, context)
 	if not normalized then return nil, err end
 	local device, device_err = validate_storage_common(normalized, context); if not device then return nil, device_err end
 	if device.mounted then return nil, "Raw imaging requires an unmounted source" end
-	normalized.offset, err = integer(normalized.offset, 0, 34359738368, "Source offset"); if normalized.offset == nil then return nil, err end
-	normalized.length, err = integer(normalized.length, 1, 17179869184, "Image length"); if not normalized.length then return nil, err end
+	normalized.offset, err = integer(normalized.offset, 0, 8796093022208, "Source offset"); if normalized.offset == nil then return nil, err end
+	normalized.length, err = integer(normalized.length, 1, 8796093022208, "Image length"); if not normalized.length then return nil, err end
 	if normalized.offset + normalized.length > device.size then return nil, "Image offset plus length exceeds the selected target size" end
 	normalized.block_size, err = enum(normalized.block_size, { "64K", "256K", "1M", "4M" }, "Block size"); if not normalized.block_size then return nil, err end
 	for _, name in ipairs({ "continue_errors", "direct", "sha256" }) do normalized[name], err = boolean(normalized[name], name); if normalized[name] == nil then return nil, err end end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 86400, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	normalized.device_size, normalized.device_kind, normalized.fs_type, normalized.mounted = device.size, device.kind, device.fs_type or "", false
 	local input_flags = "skip_bytes,count_bytes,fullblock" .. (normalized.direct and ",direct" or "")
 	local argv = { "/bin/dd", "if=" .. normalized.device, "of=@ARTIFACT@/storage-image.raw", "bs=" .. normalized.block_size, "skip=" .. normalized.offset, "count=" .. normalized.length, "iflag=" .. input_flags }
@@ -643,11 +667,11 @@ local function storage_restore_schema(context)
 		fields = {
 			field("device", "Unmounted non-system destination", "enum", devices[1] and devices[1].value or "", { options = devices }),
 			field("upload", "Sealed raw image", "enum", "", { options = uploads }),
-			field("offset", "Destination byte offset", "integer", 0, { min = 0, max = 34359738368, advanced = true }),
+			field("offset", "Destination byte offset", "integer", 0, { min = 0, max = 8796093022208, advanced = true }),
 			field("block_size", "Copy block size", "enum", "1M", { options = { "64K", "256K", "1M", "4M" }, advanced = true }),
 			field("direct", "Use direct output I/O", "boolean", false, { advanced = true }),
-			field("verify", "Compare written bytes (offset must be zero)", "boolean", true, { advanced = true }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 14400, { min = 10, max = 86400, advanced = true })
+			field("verify", "Compare written bytes at the selected offset", "boolean", true, { advanced = true }),
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 14400, { min = 10, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -660,13 +684,12 @@ local function build_storage_restore(options, context)
 	if device.mounted then return nil, "Raw restore requires an unmounted destination" end
 	local _, uploads = upload_choices(context, "storage_image")
 	local upload = uploads[normalized.upload]; if not upload then return nil, "Raw restore requires a sealed storage_image upload" end
-	normalized.offset, err = integer(normalized.offset, 0, 34359738368, "Destination offset"); if normalized.offset == nil then return nil, err end
+	normalized.offset, err = integer(normalized.offset, 0, 8796093022208, "Destination offset"); if normalized.offset == nil then return nil, err end
 	if normalized.offset + upload.size > device.size then return nil, "Image plus destination offset exceeds the selected target size" end
 	normalized.block_size, err = enum(normalized.block_size, { "64K", "256K", "1M", "4M" }, "Block size"); if not normalized.block_size then return nil, err end
 	normalized.direct, err = boolean(normalized.direct, "Direct I/O"); if normalized.direct == nil then return nil, err end
 	normalized.verify, err = boolean(normalized.verify, "Verify"); if normalized.verify == nil then return nil, err end
-	if normalized.verify and normalized.offset ~= 0 then return nil, "Native bounded cmp verification is available only for offset zero" end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 86400, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	normalized.device_size, normalized.image_size, normalized.image_sha256, normalized.device_kind, normalized.mounted = device.size, upload.size, upload.sha256, device.kind, false
 	local output_flags = "seek_bytes" .. (normalized.direct and ",direct" or "")
 	local argv = { "/bin/dd", "if=@UPLOAD@/" .. normalized.upload, "of=" .. normalized.device, "bs=" .. normalized.block_size, "seek=" .. normalized.offset, "oflag=" .. output_flags, "conv=notrunc,fsync" }
@@ -688,7 +711,7 @@ local function squashfs_schema(context)
 			field("paths", "Exact relative paths (empty = all)", "target_list", {}, { rows = 5, placeholder = "etc/config/network\nwww/index.html", show_when = { field = "operation", equals = "extract" } }),
 			field("max_depth", "Listing/extraction maximum depth (0 = unlimited)", "integer", 0, { min = 0, max = 64, advanced = true }),
 			field("output_limit_mib", "Extraction/archive ceiling (MiB)", "integer", 512, { min = 1, max = 8192, advanced = true }),
-			field("wall_timeout", "Wall timeout (seconds)", "integer", 1800, { min = 10, max = 28800, advanced = true })
+			field("wall_timeout", "Wall timeout (seconds)", "integer", 1800, { min = 10, max = 2147480000, advanced = true })
 		}
 	}
 end
@@ -703,7 +726,7 @@ local function build_squashfs(options, context)
 	normalized.paths, err = dense_paths(normalized.paths, "Recovery paths"); if not normalized.paths then return nil, err end
 	normalized.max_depth, err = integer(normalized.max_depth, 0, 64, "Maximum depth"); if normalized.max_depth == nil then return nil, err end
 	normalized.output_limit_mib, err = integer(normalized.output_limit_mib, 1, 8192, "Output limit"); if not normalized.output_limit_mib then return nil, err end
-	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 28800, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
+	normalized.wall_timeout, err = integer(normalized.wall_timeout, 10, 2147480000, "Wall timeout"); if not normalized.wall_timeout then return nil, err end
 	if normalized.operation ~= "extract" and #normalized.paths > 0 then return nil, "Exact recovery paths are accepted only for extraction" end
 	local argv = { "/usr/sbin/unsquashfs", "-no-xattrs", "-no-progress", "-strict-errors", "-processors", "1", "-data-queue", "4", "-frag-queue", "4" }
 	if normalized.max_depth > 0 then add(argv, "-max-depth"); add(argv, normalized.max_depth) end

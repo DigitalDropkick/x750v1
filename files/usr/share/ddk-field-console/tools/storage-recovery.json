@@ -2,7 +2,7 @@
   "id": "storage-recovery",
   "name": "Storage / Recovery",
   "category": "Storage / Recovery",
-  "description": "Non-system USB media health, filesystem checks/repair, bad-block work, raw imaging/restore, and SquashFS artifact recovery.",
+  "description": "Storage inspection, imaging, repair, resumable recovery, and saved-case export.",
   "package_names": ["e2fsprogs", "badblocks", "smartmontools", "squashfs-tools-unsquashfs"],
   "expected_binaries": ["e2fsck", "badblocks", "smartctl", "unsquashfs"],
   "required_hardware": [],
@@ -15,7 +15,10 @@
     {"id": "storage.repair", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "storage", "enabled": true},
     {"id": "storage.image", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "storage", "enabled": true},
     {"id": "storage.restore", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "storage", "enabled": true},
-    {"id": "storage.squashfs", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "none", "enabled": true}
+    {"id": "storage.squashfs", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "none", "enabled": true},
+    {"id": "storage.ddrescue", "label": "Resumable storage recovery", "class": "ACTION", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "cases.export", "label": "Export a saved case", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "storage.clone", "label": "Clone or recover onto another drive", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Active extroot, system media, mounted repair/image targets, and swap remain excluded. Read-only SMART can inspect mounted non-system media; writes require exact target/size/hash confirmation. Artifacts remain in generated DDK extroot paths."
+  "help_text": "Keep partial images and recovery maps. Resume recovery from a saved case while preserving its original files. Restore verification honors the destination offset. Clone directly onto a second external drive for full-size recovery beyond router storage capacity. The destination is overwritten only after exact source, destination, and range confirmation. Image-file size is constrained by available extroot capacity; system disks and active swap remain protected."
 }

@@ -1,0 +1,499 @@
+#!/usr/bin/lua
+-- Execute a server-built argv in its own process group. Browser input is never code.
+local fs = require "nixio.fs"
+local n = require "nixio"
+local json = require "luci.jsonc"
+local usb_topology = dofile("/usr/share/ddk-field-console/usb-topology.lua")
+local registry = dofile("/usr/share/ddk-field-console/operator-v3.lua")
+local policy = dofile("/usr/share/ddk-field-console/runtime-policy.lua")
+registry.actions["network.nmap_lan_discovery"]={executables={"/usr/bin/nmap"}}
+local id, task = arg[1], arg[2]
+if type(id) ~= "string" or not id:match("^job%-%d+%-%d+$") or (task ~= "v3_native" and task ~= "operator_nmap") then os.exit(64) end
+local dir, root = "/tmp/ddk/jobs/" .. id, "/overlay/ddk-field-console/artifacts/" .. id
+local function read(path, limit)
+	local stat = fs.lstat(path)
+	if not stat or stat.type ~= "reg" or stat.size > (limit or 65536) then return nil end
+	return fs.readfile(path)
+end
+local function tail(path, limit)
+	local file=io.open(path,"rb");if not file then return "" end
+	local size=file:seek("end") or 0;file:seek("set",math.max(0,size-limit));local value=file:read(limit) or "";file:close()
+	return (size>limit and "[Latest "..limit.." bytes; full output is retained in the artifact]\n" or "")..value
+end
+local function write(path, value)
+	assert(not fs.lstat(path) or fs.lstat(path).type == "reg", "Unsafe output path")
+	assert(fs.writefile(path, value)); fs.chmod(path, "0600")
+end
+local function status(value)
+	write(dir .. "/status.next", value .. "\n"); assert(fs.rename(dir .. "/status.next", dir .. "/status"))
+end
+local metadata = json.parse(read(dir .. "/metadata.json") or "")
+if not metadata or not registry.actions[metadata.action_id] then os.exit(65) end
+local runtime, options = metadata.native_runtime or {}, metadata.options or {}
+local pid, handles, output, final_outcome = nil, {}, nil, nil
+local private_values, private_paths = {}, {}
+local helper_run, adb_owned, interactive_input, monitor_interface, debug_resume
+local function stop_child()
+	if not pid then return end
+	-- Only the group created by this worker is signalled; no global pidof/killall.
+	n.kill(-pid, 15)
+	for _ = 1, 10 do
+		local done = n.waitpid(pid, "nohang")
+		if done and done > 0 then pid = nil; return end
+		n.nanosleep(0, 100000000)
+	end
+	n.kill(-pid, 9); n.waitpid(pid); pid = nil
+end
+local function cleanup()
+	stop_child()
+	if debug_resume then
+	 local expected=runtime.process_identity;local rest=(fs.readfile("/proc/"..expected.value.."/stat") or ""):match("^%d+ %(.+%) (.*)$");local fields={};for f in (rest or ""):gmatch("%S+") do fields[#fields+1]=f end
+	 if fields[20]==expected.starttime and fs.readlink("/proc/"..expected.value.."/exe")==expected.exe then n.kill(tonumber(expected.value),assert(n.const.SIGCONT)) end
+	end
+	if interactive_input then interactive_input:close();interactive_input=nil end
+	if adb_owned and helper_run then pcall(helper_run,{"/usr/bin/adb","-P","5038","kill-server"},10,true);adb_owned=false end
+	if monitor_interface and helper_run then pcall(helper_run,{"/usr/sbin/iw","dev",monitor_interface,"del"},10,true);monitor_interface=nil end
+	for _, handle in ipairs(handles) do pcall(function() handle:close() end) end
+	for _, path in ipairs(private_paths) do fs.unlink(path) end
+	fs.unlink(dir.."/helper.out");fs.unlink(dir.."/helper.err")
+	for name in (fs.dir(dir) or function() end) do
+		if name:match("^private%-[a-z0-9-]+[.]hex$") then fs.unlink(dir .. "/" .. name) end
+	end
+	for key in (read(dir .. "/lock-keys", 8192) or ""):gmatch("[^\n]+") do
+		if key:match("^[a-z0-9][a-z0-9_.-]+$") then
+			local path = "/tmp/ddk/locks/" .. key
+			if (read(path .. "/owner", 128) or ""):match("([^\n]+)") == id then fs.unlink(path .. "/owner"); fs.rmdir(path) end
+		end
+	end
+end
+helper_run=function(argv,seconds,ignore_stop,file_limit)
+	write(dir.."/helper.out","");write(dir.."/helper.err","")
+	local out=assert(n.open(dir.."/helper.out","w","0600"));local err=assert(n.open(dir.."/helper.err","w","0600"))
+	pid=assert(n.fork())
+	if pid==0 then
+		assert(n.setsid());assert(n.dup(out,n.stdout));assert(n.dup(err,n.stderr));out:close();err:close()
+		local command={"/bin/sh","-c",'ulimit -f "$1"; shift; exec "$@"',"ddk-helper",tostring(math.ceil((file_limit or 131072)/512))}
+		for _,value in ipairs(argv) do command[#command+1]=value end
+		n.exec(unpack(command));os.exit(127)
+	end
+	out:close();err:close();local deadline=os.time()+seconds;local result=124
+	while true do
+		local done,why,code=n.waitpid(pid,"nohang")
+		if done and done>0 then n.kill(-pid,15);pid=nil;result=why=="exited" and code or 128+(code or 0);break end
+		if os.time()>=deadline or (not ignore_stop and fs.stat(dir.."/stop-request")) then stop_child();break end
+		n.nanosleep(0,100000000)
+	end
+	return result,read(dir.."/helper.out",131072) or "",read(dir.."/helper.err",131072) or ""
+end
+local function tree_size(path,maximum)
+	local total=0
+	for name in (fs.dir(path) or function() end) do
+		if name~="." and name~=".." then
+			local child=path.."/"..name;local stat=fs.lstat(child)
+			if stat and stat.type=="reg" then total=total+stat.size
+			elseif stat and stat.type=="dir" then total=total+tree_size(child,maximum-total) end
+			if total>=maximum then return total end
+		end
+	end
+	return total
+end
+local function remove_workspace(path)
+	-- Only a job-owned workspace, and never follow symlinks into the source device.
+	assert(path:sub(1,#root+11)==root.."/workspace-","Invalid workspace cleanup")
+	local function remove(current)
+		for name in (fs.dir(current) or function() end) do
+			if name~="." and name~=".." then
+				local child=current.."/"..name;local st=fs.lstat(child)
+				if st and st.type=="dir" then remove(child) else fs.unlink(child) end
+			end
+		end
+		fs.rmdir(current)
+	end
+	remove(path)
+end
+local function private(name)
+	assert(name:match("^[a-z][a-z0-9-]+$") and #name <= 32, "Invalid private input")
+	if private_values[name] then return private_values[name] end
+	local path = dir .. "/private-" .. name .. ".hex"
+	local hex = assert(read(path, 16385), "Missing private input"):gsub("\n$", "")
+	assert(#hex > 0 and #hex % 2 == 0 and not hex:find("[^0-9a-f]"), "Invalid private input")
+	local value = hex:gsub("..", function(pair) return string.char(tonumber(pair, 16)) end)
+	private_values[name] = value; fs.unlink(path)
+	return value
+end
+local function redacted(value)
+	for _, secret in pairs(private_values) do
+		if secret ~= "" then value = value:gsub(secret:gsub("([^%w])", "%%%1"), "[REDACTED]") end
+	end
+	return value
+end
+local function redact_file(path)
+	if next(private_values)==nil then return end
+	local source=assert(io.open(path,"rb"));local target=path..".redacted"
+	private_paths[#private_paths+1]=target
+	write(target,"");local destination=assert(io.open(target,"wb"))
+	policy.redact_stream(function()return source:read(65536)end,function(value)assert(destination:write(value))end,private_values)
+	source:close();assert(destination:close());assert(fs.rename(target,path))
+end
+local function hardware_check()
+	if runtime.hardware=="rtl_sdr" then
+  local expected=assert(runtime.rtl_identity,"Missing tuner identity");local matches=0
+  for _,device in ipairs(usb_topology.inventory(fs).devices) do
+   if device.serial==expected.serial and device.usb_id==expected.usb_id then
+    matches=matches+1
+    assert(device.value==expected.topology and device.busnum==expected.busnum and device.devnum==expected.devnum,"Selected tuner reconnected or changed USB identity")
+   end
+  end
+  assert(matches==1,"Selected tuner is missing or its serial is ambiguous")
+ end
+	if runtime.hardware=="usb_target" then
+		local expected=assert(runtime.usb_identity,"Missing USB identity");local inventory=usb_topology.inventory(fs);local found=false;local matches=0
+		for _,device in ipairs(inventory.devices) do
+			if device.value==expected.value and device.usb_id==expected.usb_id and device.busnum==expected.busnum and device.devnum==expected.devnum and device.serial==expected.serial then found=true end
+			local unique=runtime.usb_unique
+			if unique and device.usb_id==unique.usb_id and (unique.serial=="" or device.serial==unique.serial) then matches=matches+1 end
+		end
+		assert(found,"Selected USB device disconnected or changed identity")
+		assert(not inventory.protected[expected.value],"Selected USB device supplies active router infrastructure")
+		if runtime.usb_unique then assert(matches==1,"Native programmer can no longer uniquely select this USB device") end
+		local nodes={}
+		for name in (fs.dir("/sys/class/tty") or function() end) do
+			if name:match("^ttyUSB%d+$") or name:match("^ttyACM%d+$") then
+				local path=fs.realpath("/sys/class/tty/"..name.."/device") or ""
+				if path:find("/"..expected.value.."/",1,true) then nodes["/dev/"..name]=true end
+			end
+		end
+		for process in (fs.dir("/proc") or function() end) do
+			if process:match("^%d+$") then
+				for fd in (fs.dir("/proc/"..process.."/fd") or function() end) do assert(not nodes[fs.readlink("/proc/"..process.."/fd/"..fd) or ""],"A serial interface of the selected USB programmer is already open") end
+			end
+		end
+	end
+	if runtime.hardware=="usb_power" then
+		local inventory=usb_topology.inventory(fs)
+		if options.operation~="on" then local target,reason=usb_topology.check_port(inventory,options.hub,options.port);assert(target,"USB power change would affect "..tostring(reason)) end
+	end
+	if runtime.hardware=="usbip" then assert(fs.stat("/sys/bus/platform/drivers/vhci_hcd/vhci_hcd.0"),"USB/IP VHCI controller is unavailable; load the installed matching vhci-hcd module") end
+	if runtime.hardware=="monitor" then
+		assert(options.phy:match("^phy%d+$") and fs.stat("/sys/class/ieee80211/"..options.phy),"Selected radio disconnected")
+		if options.channel~=0 then
+			for name in (fs.dir("/sys/class/net") or function() end) do
+				local phy=fs.realpath("/sys/class/net/"..name.."/phy80211") or ""
+				local flags=tonumber((fs.readfile("/sys/class/net/"..name.."/flags"))) or 0
+				assert(not (phy:match("([^/]+)$")==options.phy and flags%2==1),"The radio now has an active interface; keep its current channel")
+			end
+		end
+	end
+	if runtime.hardware=="process" then
+		local expected=assert(runtime.process_identity,"Missing process identity");local proc="/proc/"..expected.value
+		assert(expected.value:match("^%d+$") and tonumber(expected.value)>1 and tonumber(expected.value)~=n.getpid(),"Invalid trace process")
+		local rest=(fs.readfile(proc.."/stat") or ""):match("^%d+ %(.+%) (.*)$");local fields={};for field in (rest or ""):gmatch("%S+") do fields[#fields+1]=field end
+		assert(fields[20]==expected.starttime and fs.readlink(proc.."/exe")==expected.exe,"Selected process exited or its PID was reused")
+		if runtime.debugserver then debug_resume=fields[1]~="T" and fields[1]~="t" end
+	end
+	if runtime.hardware == "modem" then assert(fs.stat("/dev/cdc-wdm0"), "EC25 modem is not present") end
+	if runtime.hardware == "bluetooth" then assert(options.controller:match("^hci%d+$") and fs.stat("/sys/class/bluetooth/" .. options.controller), "Selected Bluetooth adapter disconnected") end
+	if runtime.hardware == "can" then
+		assert(options.interface:match("^[A-Za-z0-9_.-]+$") and (fs.readfile("/sys/class/net/" .. options.interface .. "/type") or ""):match("^280%s*$"), "Selected CAN interface disconnected")
+	end
+	if runtime.hardware == "camera" or runtime.hardware == "serial" or runtime.hardware=="modem_at" then
+		local device=options.device
+		assert(device and (device:match("^/dev/video%d+$") or device:match("^/dev/ttyUSB%d+$") or device:match("^/dev/ttyACM%d+$")),"Invalid hardware node")
+		local st=fs.stat(device);assert(st and st.type=="chr","Selected device disconnected")
+		local name=device:match("([^/]+)$")
+		local node=fs.realpath((runtime.hardware=="camera" and "/sys/class/video4linux/" or "/sys/class/tty/")..name.."/device")
+		assert(node and node:find("/usb",1,true),"Device has no USB attribution")
+		local parent=node;local ec25=false;local interface_number
+		while parent and parent:match("^/sys/") do
+			local vendor=(fs.readfile(parent.."/idVendor") or ""):gsub("%s","")
+			local product=(fs.readfile(parent.."/idProduct") or ""):gsub("%s","")
+			local number=fs.readfile(parent.."/bInterfaceNumber");if number and not interface_number then interface_number=number:gsub("%s","") end
+			if vendor=="2c7c" and product=="0125" then ec25=true end
+			parent=parent:match("^(.*)/[^/]+$")
+		end
+		if runtime.hardware=="modem_at" then assert(ec25 and interface_number=="02","Selected port is not the EC25 AT interface")
+		else assert(not ec25,"The EC25 modem requires its dedicated cellular workflow") end
+		for process in (fs.dir("/proc") or function() end) do
+			if process:match("^%d+$") then
+				for fd in (fs.dir("/proc/"..process.."/fd") or function() end) do
+					assert(fs.readlink("/proc/"..process.."/fd/"..fd)~=device,"Selected device is already open by process "..process)
+				end
+			end
+		end
+	end
+	if runtime.clone_target then
+  local expected=runtime.clone_target;local name=options.target and options.target:match("^/dev/(sd[a-z]+%d*)$");local disk=name and name:match("^(sd[a-z]+)")
+  assert(name and disk~="sda" and disk~=runtime.device_identity.disk and fs.stat(options.target,"type")=="blk","Invalid clone destination")
+  local serial=(fs.readfile("/sys/class/block/"..disk.."/device/serial") or ""):gsub("^%s+",""):gsub("%s+$","")
+  assert(fs.realpath("/sys/class/block/"..name)==expected.sysfs_path and serial==expected.serial and tonumber((fs.readfile("/sys/class/block/"..name.."/size")))*512==expected.size,"Clone destination identity changed")
+  assert(options.target_offset+options.length<=expected.size,"Clone destination capacity changed")
+  for line in (fs.readfile("/proc/mounts") or ""):gmatch("[^\n]+") do local source=line:match("^(%S+)");assert(not source or source:match("^/dev/(sd[a-z]+)")~=disk,"A destination partition became mounted") end
+  for line in (fs.readfile("/proc/swaps") or ""):gmatch("[^\n]+") do local source=line:match("^(%S+)");assert(not source or source:match("^/dev/(sd[a-z]+)")~=disk,"Destination now supplies active swap") end
+ end
+	if runtime.hardware == "storage" then
+		local expected=runtime.device_identity
+		local name=options.device and options.device:match("^/dev/(sd[a-z]+%d*)$")
+		local disk=name and name:match("^(sd[a-z]+)")
+		assert(expected and name and disk~="sda" and fs.stat(options.device,"type")=="blk","Invalid or protected source drive")
+		local sysfs=fs.realpath("/sys/class/block/"..name)
+		local serial=(fs.readfile("/sys/class/block/"..disk.."/device/serial") or ""):gsub("^%s+",""):gsub("%s+$","")
+		assert(sysfs==expected.sysfs_path and serial==expected.serial and tonumber((fs.readfile("/sys/class/block/"..name.."/size")))*512==expected.size,"Source identity changed since preparation")
+		if runtime.recovery_identity then assert(runtime.recovery_identity.serial==serial and runtime.recovery_identity.size==expected.size,"Saved recovery source does not match this drive") end
+		for line in (fs.readfile("/proc/mounts") or ""):gmatch("[^\n]+") do
+			local source=line:match("^(%S+)")
+			assert(not source or source:match("^/dev/(sd[a-z]+)")~=disk,"Unmount all source-drive partitions before recovery")
+		end
+	end
+end
+local function run()
+	assert(fs.lstat(dir).type == "dir", "Invalid job directory")
+	local argv = {}
+	for line in assert(read(dir .. "/argv", 65536), "Missing argv"):gmatch("[^\n]+") do
+		assert(not line:find("[%z\r]"), "Invalid native argument")
+		local name = line:match("^@PRIVATE@/([a-z0-9-]+)$")
+		local file_name=line:match("^@PRIVATE_FILE@/([a-z0-9-]+)$")
+		if file_name then
+			line=dir.."/private-"..file_name..".bin";private_paths[#private_paths+1]=line;write(line,private(file_name))
+		end
+		argv[#argv + 1] = name and private(name) or line
+	end
+	local allowed = false
+	for _, executable in ipairs(registry.actions[metadata.action_id].executables) do if executable == argv[1] then allowed = true end end
+	assert(allowed and fs.access(argv[1], "x"), "Selected native executable is unavailable")
+	local duration = tonumber(read(dir .. "/wall-timeout", 32))
+	assert(duration and duration >= 0 and duration <= 2147483647 and duration==math.floor(duration), "Invalid duration")
+	local limit = tonumber(runtime.output_mib)
+	assert(limit and limit >= 1 and limit <= 1024 and limit == math.floor(limit), "Invalid output budget")
+	limit = limit * 1048576
+	write(dir .. "/pid", tostring(n.getpid()) .. "\n"); status("running")
+	hardware_check()
+	if runtime.cellular then for i,value in ipairs(argv) do if value=="@CELLULAR_JOB@" then argv[i]=dir end end end
+	if runtime.source_case then
+		assert(runtime.source_case:match("^job%-%d+%-%d+$"),"Invalid saved case")
+		local saved="/overlay/ddk-field-console/saved/"..runtime.source_case
+		assert(read(saved.."/metadata.json"),"Saved case disappeared before export")
+		local workspace=root.."/workspace-case-export";assert(not fs.lstat(workspace),"Export workspace already exists");assert(fs.mkdir(workspace,"0700"))
+		for _,name in ipairs({"metadata.json","status","stdout","stderr"}) do assert(fs.copy(saved.."/"..name,workspace.."/"..name),"Unable to stage saved metadata");fs.chmod(workspace.."/"..name,"0600") end
+		for i,value in ipairs(argv) do if value=="@CASE_EXPORT@" then argv[i]=workspace end end
+		for _,file in ipairs(runtime.case_files or {}) do
+			assert(file.name:match("^[A-Za-z0-9][A-Za-z0-9_.-]+$") and not file.name:find("..",1,true),"Invalid case file")
+			local stat=fs.lstat("/overlay/ddk-field-console/artifacts/"..runtime.source_case.."/"..file.name)
+			assert(stat and stat.type=="reg" and stat.size==file.size,"Saved artifact changed before export")
+			assert(fs.link("/overlay/ddk-field-console/artifacts/"..runtime.source_case.."/"..file.name,workspace.."/"..file.name),"Unable to stage saved artifact")
+		end
+	end
+	if runtime.rtk then
+  local config=dir.."/private-rtk.cfg";private_paths[#private_paths+1]=config
+  local formats={ubx=4,rtcm3=1,oem4=2,skytraq=7,sbf=13,binex=11,javad=9}
+  local modes={single=0,dgps=1,kinematic=2,static=3,movingbase=4,fixed=5,["ppp-kine"]=6,["ppp-static"]=7}
+  local lines={"inpstr1-type=1","inpstr1-path="..options.device:gsub("^/dev/","")..":"..options.baud..":8:n:1:off","inpstr1-format="..assert(formats[options.format]),"inpstr2-type=0","inpstr3-type=0","outstr1-type=2","outstr1-path="..root.."/gnss-solution.pos","outstr1-format=0","outstr2-type=0","logstr1-type=0","logstr2-type=0","logstr3-type=0","pos1-posmode="..assert(modes[options.position_mode]),"pos1-frequency="..assert(({l1=1,["l1+l2"]=2,["l1+l2+l5"]=3})[options.frequency]),"file-tempdir="..root}
+  if runtime.rtk_corrections then
+   local upload=runtime.rtk_corrections:match("^@UPLOAD@/(upload%-%d+%-%d+%-%d+)$");assert(upload,"Invalid RTK corrections input")
+   lines[#lines+1]="inpstr2-type=2";lines[#lines+1]="inpstr2-path=/overlay/ddk-field-console/uploads/"..upload.."/sealed.bin";lines[#lines+1]="inpstr2-format=1"
+  end
+  write(config,table.concat(lines,"\n").."\n")
+  for i,value in ipairs(argv) do if value=="@RTK_CONFIG@" then argv[i]=config end end
+ end
+	if runtime.ftdi then
+		local config=dir.."/private-ftdi.cfg";private_paths[#private_paths+1]=config
+		local function configure(filename,custom)
+			local lines={'filename="'..(filename~="" and root..'/'..filename or "")..'"'}
+			if custom then
+				for _,key in ipairs({"vendor_id","product_id","max_power"}) do lines[#lines+1]=key.."="..tostring(options[key]) end
+				for _,key in ipairs({"manufacturer","product","serial"}) do assert(options[key]:match("^[A-Za-z0-9 _.+/-]*$"),"Invalid EEPROM descriptor");lines[#lines+1]=key..'="'..options[key]..'"' end
+				for _,key in ipairs({"self_powered","remote_wakeup"}) do lines[#lines+1]=key.."="..(options[key] and "true" or "false") end
+				lines[#lines+1]='cha_type='..options.channel_a;lines[#lines+1]='chb_type='..options.channel_b;lines[#lines+1]='use_serial=true'
+			end
+			write(config,table.concat(lines,"\n").."\n")
+		end
+		if options.operation=="write" or options.operation=="erase" then
+			configure("ftdi-backup.bin",false)
+			local code,report=helper_run({"/usr/bin/ftdi_eeprom","--device",argv[3],"--read-eeprom",config},30)
+			assert(code==0 and report:find("FTDI read eeprom: 0",1,true) and (fs.stat(root.."/ftdi-backup.bin","size") or 0)>0,"Unable to back up selected EEPROM; no write was attempted")
+		end
+		configure(options.operation=="erase" and "" or "ftdi-eeprom.bin",options.operation=="build" or options.operation=="write")
+		for i,value in ipairs(argv) do if value=="@FTDI_CONFIG@" then argv[i]=config end end
+	end
+	if runtime.monitor then
+		local name="ddkm"..n.getpid()
+		assert(#name<=15 and not fs.stat("/sys/class/net/"..name),"Monitor interface name is already in use")
+		monitor_interface=name
+		assert(helper_run({"/usr/sbin/iw","phy",options.phy,"interface","add",name,"type","monitor"},10)==0,"Radio driver cannot add a concurrent monitor interface")
+		if options.channel~=0 then assert(helper_run({"/usr/sbin/iw","dev",name,"set","channel",tostring(options.channel)},10)==0,"Radio rejected the requested channel") end
+		assert(helper_run({"/sbin/ip","link","set",name,"up"},10)==0,"Unable to bring up the monitor interface")
+		for i,value in ipairs(argv) do if value=="@MONITOR@" then argv[i]=name end end
+	end
+	if runtime.rtl_identity then
+		local code,value=helper_run({"/usr/libexec/ddk-device-session","rtl-index",runtime.rtl_identity.serial},15)
+		local index=value:match("^(%d+)%s*$")
+		assert(code==0 and index,"Native RTL-SDR enumeration could not resolve the exact selected receiver")
+		for i,argument in ipairs(argv) do if argument=="-d" then argv[i+1]=index end end
+	end
+	if runtime.adb then
+		for line in (fs.readfile("/proc/net/tcp") or ""):gmatch("[^\n]+") do
+			local address,state=line:match("^%s*%d+:%s+(%S+)%s+%S+%s+(%S+)")
+			assert(not (address and address:match(":13AE$") and state=="0A"),"ADB port 5038 is already owned by another session")
+		end
+		adb_owned=true
+		assert(helper_run({"/usr/bin/adb","-P","5038","start-server"},10)==0,"Unable to start the isolated ADB server")
+		if runtime.adb_connect then assert(helper_run({"/usr/bin/adb","-P","5038","connect",runtime.adb_connect},15)==0,"Unable to connect to the selected network device") end
+		if options.operation~="get_state" then
+			local code,state=helper_run({"/usr/bin/adb","-P","5038","-s",argv[5],"get-state"},10)
+			assert(code==0 and state:match("^device%s*$"),"ADB device is offline or unauthorized. Unlock it and accept the debugging prompt; network ADB requires an enabled device TCP port.")
+		end
+		if runtime.apk_inputs then
+			local index=0
+			for i,value in ipairs(argv) do
+				if value:match("^/overlay/ddk%-field%-console/uploads/upload%-%d+%-%d+%-%d+/sealed[.]bin$") then
+					index=index+1;local alias=root.."/input-"..index..".apk"
+					assert(not fs.lstat(alias) and fs.link(value,alias),"Unable to create native APK filename")
+					private_paths[#private_paths+1]=alias;argv[i]=alias
+				end
+			end
+		end
+	end
+	local native_file_limit=limit
+	for _,definition in ipairs(metadata.artifacts or {}) do native_file_limit=math.max(native_file_limit,tonumber(definition.max_size) or 0) end
+	assert(native_file_limit<=8796093022208,"Invalid artifact quota")
+	if runtime.clone_resume then
+  assert(runtime.clone_resume:match("^job%-%d+%-%d+$"),"Invalid clone case")
+  local source="/overlay/ddk-field-console/artifacts/"..runtime.clone_resume.."/clone.map"
+  local stat=fs.lstat(source);assert(stat and stat.type=="reg" and stat.size>0 and stat.size<=16777216,"Saved clone map is unavailable")
+  assert(fs.copy(source,root.."/clone.map"),"Unable to preserve the previous clone map");fs.chmod(root.."/clone.map","0600")
+ end
+	if runtime.recovery then
+		assert(runtime.recovery:match("^job%-%d+%-%d+$"),"Invalid recovery case")
+		local previous="/overlay/ddk-field-console/artifacts/"..runtime.recovery
+		assert(fs.lstat(previous) and fs.lstat(previous).type=="dir","Saved recovery is unavailable")
+		-- Copy the image first and map last. The previous case remains an immutable rollback point.
+		for _,name in ipairs({"recovery.raw","recovery.map"}) do
+			local source=previous.."/"..name;local st=fs.lstat(source)
+			assert(st and st.type=="reg" and st.size<=(name=="recovery.raw" and options.length or 16777216),"Saved recovery artifact is invalid")
+			local input_file=assert(io.open(source,"rb"));local output_file=assert(io.open(root.."/"..name,"wb"))
+			while true do
+				if fs.stat(dir.."/stop-request") then input_file:close();output_file:close();final_outcome="stopped";return end
+				local block=input_file:read(1048576);if not block then break end
+				local space=fs.statvfs("/overlay");assert(space and space.bavail*space.bsize>105906176,"Free storage reserve reached during recovery clone")
+				assert(output_file:write(block),"Unable to clone recovery; check free storage")
+			end
+			input_file:close();assert(output_file:close());fs.chmod(root.."/"..name,"0600")
+		end
+	end
+	local input = "/dev/null"
+	if runtime.stdin then
+		local name = assert(runtime.stdin:match("^@PRIVATE@/([a-z0-9-]+)$"), "Invalid stdin input")
+		input = dir .. "/private-" .. name .. ".bin"; private_paths[#private_paths + 1] = input; write(input, private(name))
+	end
+	-- Inputs are sealed, owned regular files, revalidated after queueing.
+	for _, upload in ipairs(json.parse(read(dir .. "/input-uploads.json") or "[]") or {}) do
+		local stat = fs.lstat(upload.sealed_path)
+		assert(upload.sealed_path:match("^/overlay/ddk%-field%-console/uploads/upload%-%d+%-%d+%-%d+/sealed[.]bin$") and stat and stat.type == "reg" and stat.size == upload.size, "Sealed input changed or expired")
+	end
+	if runtime.stdin_upload then
+		local found=false
+		for _,upload in ipairs(json.parse(read(dir.."/input-uploads.json") or "[]") or {}) do if upload.id==runtime.stdin_upload then input=upload.sealed_path;found=true end end
+		assert(found,"Serial transmit input is missing")
+	end
+	local stdout_name=runtime.stdout_artifact or "native-output.txt"
+	if runtime.stdout_artifact then local found=false;for _,a in ipairs(metadata.artifacts or {}) do if a.name==stdout_name and a.storage=="extroot" then found=true end end;assert(found and stdout_name:match("^[A-Za-z0-9_.-]+$") and not stdout_name:find("..",1,true),"Invalid native stdout artifact") end
+	local stdout_path = runtime.sensitive and dir .. "/native.out" or root .. "/"..stdout_name
+	if not runtime.sensitive then assert(fs.lstat(root) and fs.lstat(root).type == "dir", "Missing extroot output directory") end
+	write(stdout_path, ""); write(dir .. "/native.err", "")
+	local child_in
+	if runtime.interactive then child_in,interactive_input=n.pipe();assert(child_in and interactive_input);interactive_input:setblocking(false)
+	else child_in = assert(n.open(input, "r")) end
+	local child_out = assert(n.open(stdout_path, "w", "0600"))
+	local child_err = assert(n.open(dir .. "/native.err", "w", "0600"))
+	handles = {child_in, child_out, child_err}
+	write(dir .. "/pid", tostring(n.getpid()) .. "\n"); status("running")
+	pid = assert(n.fork(), "Unable to start process")
+	if pid == 0 then
+		assert(n.setsid())
+		assert(n.dup(child_in, n.stdin)); assert(n.dup(child_out, n.stdout)); assert(n.dup(child_err, n.stderr))
+		for _, handle in ipairs(handles) do handle:close() end
+		if interactive_input then interactive_input:close() end
+		-- Constant wrapper sets a kernel file quota; each argument remains a separate literal.
+		local command = {"/bin/sh", "-c", 'ulimit -f "$1"; shift; exec "$@"', "ddk-native", tostring(math.ceil(native_file_limit / 512))}
+		for _, value in ipairs(argv) do command[#command + 1] = value end
+		n.exec(unpack(command)); os.exit(127)
+	end
+	for _, handle in ipairs(handles) do handle:close() end; handles = {}
+	local deadline, last_refresh, outcome, exit_code = os.time() + duration, 0, nil, nil
+	local pending_input=""
+	while true do
+		local done, reason, code = n.waitpid(pid, "nohang")
+		if done and done > 0 then n.kill(-pid, 15); pid = nil; exit_code = reason == "exited" and code or 128 + (code or 0); break end
+		if fs.stat(dir .. "/stop-request") then outcome = "stopped"; break end
+		if interactive_input then
+			if pending_input=="" then
+				local queued={};for name in (fs.dir(dir) or function() end) do if name:match("^tx%-%d+%-%d+%-%d+[.]hex$") then queued[#queued+1]=name end end;table.sort(queued)
+				if queued[1] then
+					local hex=assert(read(dir.."/"..queued[1],16384),"Invalid serial queue item")
+					assert(#hex%2==0 and not hex:find("[^0-9a-f]"),"Invalid serial data encoding")
+					pending_input=hex:gsub("..",function(pair)return string.char(tonumber(pair,16))end);fs.unlink(dir.."/"..queued[1])
+				end
+			end
+			if pending_input~="" then local sent=interactive_input:write(pending_input);if sent and sent>0 then pending_input=pending_input:sub(sent+1) end end
+		end
+		if duration>0 and os.time() >= deadline then outcome = runtime.window and "complete" or "failed"; break end
+		local out_size, err_size = fs.stat(stdout_path, "size") or 0, fs.stat(dir .. "/native.err", "size") or 0
+		if out_size >= limit or err_size > 262144 then outcome = "stopped"; break end
+		for _,definition in ipairs(metadata.artifacts or {}) do
+			if definition.storage=="extroot" and definition.name~= "native-output.txt" then
+				local size=fs.stat(root.."/"..definition.name,"size") or 0
+				if size>definition.max_size then outcome="stopped" end
+			end
+		end
+		if outcome then break end
+		local space = fs.statvfs("/overlay")
+		if space and space.bavail * space.bsize < 104857600 then outcome = "stopped"; break end
+		if os.time() ~= last_refresh then
+			last_refresh = os.time()
+			for _,workspace in ipairs(metadata.workspaces or {}) do
+				if tree_size(root.."/workspace-"..workspace.name,workspace.reserve_size)>=workspace.reserve_size then outcome="stopped" end
+			end
+			if outcome then break end
+			-- No native stderr is streamed while secrets are in use: split writes could leak fragments.
+			if next(private_values) == nil then
+				write(dir .. "/stdout", tail(stdout_path,65536))
+			end
+		end
+		n.nanosleep(0, 200000000)
+	end
+	stop_child()
+	if not outcome then
+		outcome = "failed"
+		for _, code in ipairs(runtime.success_codes or {0}) do if exit_code == code then outcome = "complete" end end
+	end
+	if runtime.archive_directory then
+		write(dir.."/stderr","Packing received files; partial transfers are retained.\n")
+		local code=helper_run({"/bin/tar","-cf",root.."/android-files.tar","-C",root.."/workspace-android-directory","."},600,true,options.artifact_mib*1048576)
+		if code~=0 then outcome="failed" else remove_workspace(root.."/workspace-android-directory") end
+	end
+	-- Redact the whole stream with overlap across read boundaries. Preserve full
+	-- output for long authenticated sessions rather than replacing it with a tail.
+	redact_file(stdout_path);redact_file(dir.."/native.err")
+	output = tail(stdout_path,65536)
+	if runtime.ftdi and outcome=="complete" then
+		local expected=({read="FTDI read eeprom: 0",write="FTDI write eeprom: 0",erase="FTDI erase eeprom: 0"})[options.operation]
+		if (expected and not output:find(expected,1,true)) or output:find("ftdi_eeprom_build(): error:",1,true) then outcome="failed" end
+		if options.operation~="erase" and (fs.stat(root.."/ftdi-eeprom.bin","size") or 0)==0 then outcome="failed" end
+	end
+	write(dir .. "/stdout", redacted(output or ""))
+	local f_err = io.open(dir .. "/native.err", "rb"); local errors = f_err and f_err:read(32768) or ""; if f_err then f_err:close() end
+	write(dir .. "/stderr", redacted(errors) .. "\nNative exit: " .. tostring(exit_code or "session ended") .. "; result: " .. outcome .. ".\n")
+	-- Commands using secrets produce only a redacted report, never an unfiltered downloadable log.
+	fs.unlink(dir .. "/native.err"); if runtime.sensitive then fs.unlink(stdout_path) end
+	final_outcome=outcome
+end
+local ok, err = pcall(run)
+cleanup()
+if runtime.source_case then pcall(remove_workspace,root.."/workspace-case-export") end
+if not ok then
+	-- Do not include argv or private native exceptions in failure messages.
+	write(dir .. "/stderr", redacted(tostring(err)) .. "\n")
+	fs.unlink(dir .. "/native.out"); fs.unlink(dir .. "/native.err")
+	if next(private_values)~=nil and fs.stat(root.."/native-output.txt") then fs.unlink(root.."/native-output.txt") end
+	status("failed"); os.exit(65)
+end
+status(final_outcome or "failed")

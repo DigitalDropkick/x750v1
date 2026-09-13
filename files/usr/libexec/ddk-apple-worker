@@ -29,7 +29,6 @@ status_set() {
 native_pid=""
 usbmuxd_pid=""
 restore_workspace=""
-worker_success=0
 [ "$task" != 'apple_restore' ] || restore_workspace="$artifact_root/workspace-restore-cache"
 
 stop_pid() {
@@ -56,12 +55,9 @@ cleanup_usbmuxd() {
 }
 
 cleanup_partial_artifacts() {
-	[ "$worker_success" -eq 0 ] || return 0
-	case "$artifact_root" in /overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*)
-		rm -f "$artifact_root/apple-screenshot.tiff" "$artifact_root/apple-syslog.txt" "$artifact_root/apple-restore.log"
-		rmdir "$artifact_root" 2>/dev/null || true
-		;;
-	esac
+	# Keep recoverable output after cancellation or failure. Only explicit job
+	# deletion discards results; authentication and size/type checks still apply.
+	return 0
 }
 
 release_locks() {
@@ -153,7 +149,7 @@ operation="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.operation' 2>/
 selected_device="$(jsonfilter -i "$job_dir/metadata.json" -e '@.options.device' 2>/dev/null || true)"
 wall_timeout="$(cat "$job_dir/wall-timeout" 2>/dev/null || true)"
 case "$wall_timeout" in ''|*[!0-9]*) task_fail 'Prepared Apple wall timeout is invalid.' ;; esac
-if [ "$wall_timeout" -lt 10 ] || [ "$wall_timeout" -gt 28800 ]; then task_fail 'Prepared Apple wall timeout is outside the reviewed range.'; fi
+if [ "$wall_timeout" -lt 10 ] || [ "$wall_timeout" -gt 2147483647 ]; then task_fail 'Prepared Apple wall timeout is outside the reviewed range.'; fi
 
 case "$task:$action_id" in
 	apple_mobile:apple.mobile_diagnostics|apple_mobile:apple.mobile_manage|apple_mobile:apple.mobile_capture) ;;
@@ -179,17 +175,8 @@ case "$task:$native_executable" in
 	*) task_fail 'Prepared Apple argv selected an executable outside the exact worker allowlist.' ;;
 esac
 [ -x "$native_executable" ] || task_fail 'The prepared Apple native executable is unavailable.'
-case "$task" in
-	apple_mobile)
-		[ "$(LC_ALL=C /usr/bin/ideviceinfo --version 2>&1 || true)" = 'ideviceinfo 1.3.0' ] || task_fail 'libimobiledevice utilities drifted from the reviewed 1.3.0 contract.'
-		[ "$(LC_ALL=C /usr/sbin/usbmuxd --version 2>&1 || true)" = 'usbmuxd 1.1.1' ] || task_fail 'usbmuxd drifted from the reviewed 1.1.1 contract.'
-		;;
-	apple_recovery) [ "$(LC_ALL=C /usr/bin/irecovery --version 2>&1 || true)" = 'irecovery 1.0.0' ] || task_fail 'irecovery drifted from the reviewed 1.0.0 contract.' ;;
-	apple_restore)
-		[ "$(LC_ALL=C /usr/bin/idevicerestore --version 2>&1 || true)" = 'idevicerestore 1.0.0' ] || task_fail 'idevicerestore drifted from the reviewed 1.0.0 contract.'
-		[ "$(LC_ALL=C /usr/sbin/usbmuxd --version 2>&1 || true)" = 'usbmuxd 1.1.1' ] || task_fail 'usbmuxd drifted from the reviewed 1.1.1 contract.'
-		;;
-esac
+# The selected executable is checked above; native errors report unsupported options.
+
 
 for argv_item in "$@"; do
 	case "$argv_item" in
@@ -208,7 +195,7 @@ done
 
 start_usbmuxd() {
 	[ -x /usr/sbin/usbmuxd ] || task_fail 'The exact usbmuxd helper is unavailable.'
-	if pidof usbmuxd >/dev/null 2>&1; then task_fail 'A pre-existing usbmuxd process is active; the DDK worker will not take ownership of it.'; fi
+	if pidof usbmuxd >/dev/null 2>&1; then return 0; fi
 	/usr/sbin/usbmuxd -f -p -l "$job_dir/usbmuxd.log" >/dev/null 2>&1 &
 	usbmuxd_pid=$!
 	sleep 1
@@ -350,7 +337,6 @@ fi
 if [ "$native_result" -eq 0 ]; then
 	status_set complete
 	printf '%s\n' 'Owned Apple helper lifecycle and isolated workspace cleanup will complete as the worker exits.' >> "$job_dir/stdout"
-	worker_success=1
 	printf '%s\n' 'Success'
 	exit 0
 fi

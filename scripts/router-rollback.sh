@@ -22,7 +22,7 @@ allowed_target() {
 		/www/ddk/gl_home.html) return 0 ;;
 		# Retained only so backups from pre-template DDK builds remain removable.
 		/www/luci-static/resources/view/ddk/*) return 0 ;;
-		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker|/usr/libexec/ddk-phase4-worker) return 0 ;;
+		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker|/usr/libexec/ddk-phase4-worker|/usr/libexec/ddk-v3-worker|/usr/libexec/ddk-compare-range|/usr/libexec/ddk-modbus-client|/usr/libexec/ddk-usbip-client|/usr/libexec/ddk-device-session|/usr/libexec/ddk-input-sealer) return 0 ;;
 		/usr/share/ddk-field-console/*) return 0 ;;
 		*) return 1 ;;
 	esac
@@ -36,8 +36,8 @@ fi
 case "$backup_path" in /root/ddk-backups/*) ;; *) fail 'backup path is outside /root/ddk-backups' ;; esac
 backup_name="${backup_path#/root/ddk-backups/}"
 case "$backup_name" in
-	[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z-field-console-v1|\
-	[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z-field-console-v1-[0-9]*) ;;
+	[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z-field-console-v[13]|\
+	[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z-field-console-v[13]-[0-9]*) ;;
 	*) fail 'backup name does not match a DDK Field Console backup' ;;
 esac
 case "$backup_name" in *..*|*/*|*[!A-Za-z0-9_.-]*) fail 'backup name contains unsafe characters' ;; esac

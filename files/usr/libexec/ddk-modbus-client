@@ -1,0 +1,163 @@
+#!/usr/bin/python3
+"""Structured CLI for the router's existing libmodbus, TCP and serial RTU."""
+import argparse
+import ctypes as C
+import json
+import re
+import sys
+import time
+
+READS = {
+    "read_coils": ("modbus_read_bits", C.c_uint8, 2000),
+    "read_discrete": ("modbus_read_input_bits", C.c_uint8, 2000),
+    "read_holding": ("modbus_read_registers", C.c_uint16, 125),
+    "read_input": ("modbus_read_input_registers", C.c_uint16, 125),
+}
+WRITES = {
+    "write_coil": ("modbus_write_bit", C.c_uint8, 1),
+    "write_register": ("modbus_write_register", C.c_uint16, 1),
+    "write_coils": ("modbus_write_bits", C.c_uint8, 1968),
+    "write_registers": ("modbus_write_registers", C.c_uint16, 123),
+}
+
+
+class NativeModbus:
+    def __init__(self):
+        self.lib = C.CDLL("libmodbus.so.5", use_errno=True)
+        self.context = None
+        self.bind("modbus_new_tcp_pi", [C.c_char_p, C.c_char_p], C.c_void_p)
+        self.bind("modbus_new_rtu", [C.c_char_p, C.c_int, C.c_char, C.c_int, C.c_int], C.c_void_p)
+        for name in ("modbus_connect", "modbus_close", "modbus_free"):
+            self.bind(name, [C.c_void_p], C.c_int if name == "modbus_connect" else None)
+        for name in ("modbus_set_slave", "modbus_rtu_set_serial_mode", "modbus_rtu_set_rts"):
+            self.bind(name, [C.c_void_p, C.c_int], C.c_int)
+        self.bind("modbus_set_response_timeout", [C.c_void_p, C.c_uint32, C.c_uint32], C.c_int)
+        self.bind("modbus_set_byte_timeout", [C.c_void_p, C.c_uint32, C.c_uint32], C.c_int)
+        self.bind("modbus_strerror", [C.c_int], C.c_char_p)
+        for name, ctype, _ in READS.values():
+            self.bind(name, [C.c_void_p, C.c_int, C.c_int, C.POINTER(ctype)], C.c_int)
+        for operation, (name, ctype, _) in WRITES.items():
+            args = [C.c_void_p, C.c_int, C.c_int]
+            if operation in ("write_coils", "write_registers"):
+                args.append(C.POINTER(ctype))
+            self.bind(name, args, C.c_int)
+
+    def bind(self, name, args, result):
+        function = getattr(self.lib, name)
+        function.argtypes, function.restype = args, result
+
+    def checked(self, name, *args):
+        result = getattr(self.lib, name)(*args)
+        if result == -1:
+            raise RuntimeError(self.lib.modbus_strerror(C.get_errno()).decode("utf-8", "replace"))
+        return result
+
+    def connect(self, options):
+        if options.transport == "tcp":
+            self.context = self.lib.modbus_new_tcp_pi(options.host.encode(), str(options.port).encode())
+        else:
+            self.context = self.lib.modbus_new_rtu(options.device.encode(), options.baud, options.parity.encode(), 8, options.stop_bits)
+        if not self.context:
+            raise RuntimeError("libmodbus could not allocate the selected transport")
+        self.checked("modbus_set_slave", self.context, options.unit)
+        self.checked("modbus_set_response_timeout", self.context, options.timeout, 0)
+        self.checked("modbus_set_byte_timeout", self.context, options.timeout, 0)
+        self.checked("modbus_connect", self.context)
+        if options.transport == "rtu":
+            if options.rs485:
+                self.checked("modbus_rtu_set_serial_mode", self.context, 1)
+            if options.rts != "none":
+                self.checked("modbus_rtu_set_rts", self.context, 1 if options.rts == "up" else 2)
+
+    def read(self, operation, address, count):
+        name, ctype, maximum = READS[operation]
+        if not 1 <= count <= maximum or address + count > 65536:
+            raise ValueError("Read range exceeds the Modbus function's limits")
+        buffer = (ctype * count)()
+        result = self.checked(name, self.context, address, count, buffer)
+        if result != count:
+            raise RuntimeError("Device returned an incomplete response")
+        return list(buffer)
+
+    def write(self, operation, address, values):
+        name, ctype, maximum = WRITES[operation]
+        if not 1 <= len(values) <= maximum or address + len(values) > 65536:
+            raise ValueError("Write range exceeds the Modbus function's limits")
+        ceiling = 1 if ctype is C.c_uint8 else 65535
+        if any(value < 0 or value > ceiling for value in values):
+            raise ValueError("Coils accept 0/1; registers accept unsigned 16-bit values")
+        if operation in ("write_coil", "write_register"):
+            result = self.checked(name, self.context, address, values[0])
+        else:
+            result = self.checked(name, self.context, address, len(values), (ctype * len(values))(*values))
+        if result != len(values):
+            raise RuntimeError("Device did not acknowledge the complete write")
+
+    def close(self):
+        if self.context:
+            self.lib.modbus_close(self.context)
+            self.lib.modbus_free(self.context)
+            self.context = None
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--transport", choices=("tcp", "rtu"), default="tcp")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=502)
+    parser.add_argument("--device", default="")
+    parser.add_argument("--baud", type=int, default=19200)
+    parser.add_argument("--parity", choices=("N", "E", "O"), default="E")
+    parser.add_argument("--stop-bits", type=int, choices=(1, 2), default=1)
+    parser.add_argument("--rs485", action="store_true")
+    parser.add_argument("--rts", choices=("none", "up", "down"), default="none")
+    parser.add_argument("--unit", type=int, default=1)
+    parser.add_argument("--function", choices=tuple(READS) + tuple(WRITES), default="read_holding")
+    parser.add_argument("--address", type=int, default=0)
+    parser.add_argument("--count", type=int, default=1)
+    parser.add_argument("--values", default="")
+    parser.add_argument("--timeout", type=int, default=3)
+    parser.add_argument("--cycles", type=int, default=1)
+    parser.add_argument("--interval", type=int, default=1)
+    parser.add_argument("--verify", action="store_true")
+    options = parser.parse_args()
+    if not (1 <= options.port <= 65535 and 0 <= options.unit <= 255 and 0 <= options.address <= 65535 and
+            1 <= options.timeout <= 120 and 1 <= options.interval <= 3600 and 0 <= options.cycles <= 1000000):
+        parser.error("Transport, unit, address, timeout, or cycle value is outside its native range")
+    if options.transport == "rtu" and not re.fullmatch(r"/dev/tty(?:USB|ACM)[0-9]+", options.device):
+        parser.error("RTU requires a selected USB serial adapter")
+    if options.transport == "rtu" and options.unit == 0:
+        parser.error("Choose a responding slave ID; broadcasts cannot be acknowledged or verified")
+    values = [int(value, 0) for value in options.values.split(",") if value] if options.values else []
+    native = NativeModbus()
+    try:
+        native.connect(options)
+        cycle = 0
+        while options.cycles == 0 or cycle < options.cycles:
+            cycle += 1
+            result = {"time": int(time.time()), "cycle": cycle, "function": options.function, "unit": options.unit, "address": options.address}
+            if options.function in READS:
+                result["values"] = native.read(options.function, options.address, options.count)
+            else:
+                native.write(options.function, options.address, values)
+                result.update(values=values, acknowledged=True)
+                if options.verify:
+                    read_operation = "read_coils" if "coil" in options.function else "read_holding"
+                    actual = native.read(read_operation, options.address, len(values))
+                    result.update(readback=actual, verified=actual == values)
+                    if actual != values:
+                        print(json.dumps(result), flush=True)
+                        raise RuntimeError("Write acknowledged, but readback differs")
+            print(json.dumps(result), flush=True)
+            if options.cycles == 0 or cycle < options.cycles:
+                time.sleep(options.interval)
+    finally:
+        native.close()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, RuntimeError, AttributeError) as error:
+        print("Modbus: " + str(error), file=sys.stderr)
+        sys.exit(1)

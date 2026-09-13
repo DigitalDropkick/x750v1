@@ -1,0 +1,193 @@
+#!/usr/bin/python3
+"""USB/IP control protocol with direct Linux VHCI sysfs enumeration.
+
+The loaded kernel handles all USB traffic after import. No daemon or libudev is
+required. Protocol: docs.kernel.org/usb/usbip_protocol.html; Linux v5.10 VHCI ABI.
+"""
+import argparse
+import json
+import os
+import re
+import socket
+import struct
+import sys
+from pathlib import Path
+
+HEADER = struct.Struct("!HHI")
+DEVICE = struct.Struct("!256s32sIIIHHHBBBBBB")
+VERSION = 0x0111
+VHCI = Path("/sys/devices/platform/vhci_hcd.0")
+BUSID = re.compile(r"[0-9]+-[0-9]+(?:\.[0-9]+)*")
+
+
+def receive(sock, length):
+    parts = bytearray()
+    while len(parts) < length:
+        part = sock.recv(length - len(parts))
+        if not part:
+            raise OSError("USB/IP peer closed an incomplete reply")
+        parts.extend(part)
+    return bytes(parts)
+
+
+def reply(sock, opcode):
+    version, received, status = HEADER.unpack(receive(sock, HEADER.size))
+    if version != VERSION or received != opcode:
+        raise ValueError("Unexpected USB/IP protocol version or reply")
+    if status:
+        raise OSError("USB/IP peer rejected the operation (status %d)" % status)
+
+
+def device(sock):
+    values = DEVICE.unpack(receive(sock, DEVICE.size))
+    busid = values[1].split(b"\0", 1)[0].decode("ascii")
+    if not BUSID.fullmatch(busid) or len(busid) > 31:
+        raise ValueError("Invalid remote USB bus ID")
+    if values[2] > 65535 or values[3] > 65535 or values[4] not in range(1, 7):
+        raise ValueError("Invalid remote USB device identity or speed")
+    return {"busid": busid, "busnum": values[2], "devnum": values[3],
+            "speed": values[4], "usb_id": "%04x:%04x" % (values[5], values[6]),
+            "interfaces": values[-1]}
+
+
+def connect(host, port, timeout):
+    sock = socket.create_connection((host, port), timeout)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    return sock
+
+
+def list_remote(host, port, timeout):
+    with connect(host, port, timeout) as sock:
+        sock.sendall(HEADER.pack(VERSION, 0x8005, 0))
+        reply(sock, 5)
+        count, = struct.unpack("!I", receive(sock, 4))
+        if count > 65535:
+            raise ValueError("Invalid USB/IP device count")
+        for _ in range(count):
+            item = device(sock)
+            descriptors = receive(sock, item["interfaces"] * 4)
+            item["interface_classes"] = ["%02x:%02x:%02x" % tuple(descriptors[i:i+3])
+                                         for i in range(0, len(descriptors), 4)]
+            yield item
+
+
+def ports(base=VHCI):
+    if not base.is_dir():
+        raise OSError("The matching vhci-hcd kernel module is not loaded")
+    result = []
+    for path in sorted(base.glob("status*")):
+        if not re.fullmatch(r"status(?:\.[0-9]+)?", path.name):
+            continue
+        for line in path.read_text().splitlines()[1:]:
+            fields = line.split()
+            if len(fields) < 7 or fields[0] not in ("hs", "ss"):
+                raise ValueError("Unexpected VHCI status layout")
+            port, state, speed = map(int, fields[1:4])
+            result.append({"port": port, "state": state, "speed": speed,
+                           "hub": fields[0], "local_busid": fields[6], "free": state == 4})
+    if not result or len({p["port"] for p in result}) != len(result):
+        raise ValueError("VHCI returned an empty or ambiguous port inventory")
+    return result
+
+
+def write_attribute(base, name, value):
+    # The driver consumes this one control record atomically.
+    with (base / name).open("w") as stream:
+        stream.write(value)
+
+
+def attach(host, port, busid, timeout, base=VHCI):
+    if not BUSID.fullmatch(busid) or len(busid) > 31:
+        raise ValueError("Invalid USB bus ID")
+    with connect(host, port, timeout) as sock:
+        sock.sendall(HEADER.pack(VERSION, 0x8003, 0) + busid.encode().ljust(32, b"\0"))
+        reply(sock, 3)
+        selected = device(sock)
+        if selected["busid"] != busid:
+            raise ValueError("USB/IP peer returned a different device")
+        hub = "ss" if selected["speed"] >= 5 else "hs"
+        free = next((p for p in ports(base) if p["free"] and p["hub"] == hub), None)
+        if free is None:
+            raise OSError("No free VHCI %s port" % hub)
+        # Python timeouts set O_NONBLOCK; return to blocking mode for kernel I/O.
+        sock.settimeout(None)
+        devid = selected["busnum"] << 16 | selected["devnum"]
+        write_attribute(base, "attach", "%d %d %d %d" %
+                        (free["port"], sock.fileno(), devid, selected["speed"]))
+        return {"attached_port": free["port"], "host": host, **selected}
+
+
+def affects(device, path):
+    return device in Path(path).parts
+
+
+def detach_reason(busid, sysroot=Path("/sys"), procroot=Path("/proc")):
+    # Detaching an imported drive or uplink must not strand the active router.
+    for filename in ("mounts", "swaps"):
+        for line in (procroot / filename).read_text().splitlines():
+            fields = line.split()
+            if fields and fields[0].startswith("/dev/"):
+                path = (sysroot / "class/block" / Path(fields[0]).name).resolve()
+                if affects(busid, path):
+                    return "The imported device supplies mounted storage or active swap"
+    for line in (procroot / "net/route").read_text().splitlines()[1:]:
+        fields = line.split()
+        if len(fields) > 1 and fields[1] == "00000000":
+            if affects(busid, (sysroot / "class/net" / fields[0] / "device").resolve()):
+                return "The imported device supplies a default network route"
+    return None
+
+
+def detach(port, base=VHCI):
+    selected = next((p for p in ports(base) if p["port"] == port), None)
+    if not selected or selected["free"]:
+        raise ValueError("Selected USB/IP port is no longer attached")
+    busid = selected["local_busid"]
+    if busid != "0-0":
+        if not BUSID.fullmatch(busid):
+            raise ValueError("Invalid imported USB identity")
+        reason = detach_reason(busid)
+        if reason:
+            raise OSError(reason)
+    write_attribute(base, "detach", str(port))
+    return {"detached_port": port}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("operation", choices=("list", "ports", "attach", "detach"))
+    parser.add_argument("--host")
+    parser.add_argument("--server-port", type=int, default=3240)
+    parser.add_argument("--timeout", type=int, default=10)
+    parser.add_argument("--busid")
+    parser.add_argument("--port", type=int)
+    args = parser.parse_args()
+    if not 1 <= args.server_port <= 65535 or not 1 <= args.timeout <= 120:
+        parser.error("Invalid port or timeout")
+    if args.operation in ("list", "attach") and not args.host:
+        parser.error("A remote host is required")
+    if args.operation == "list":
+        count = 0
+        for item in list_remote(args.host, args.server_port, args.timeout):
+            print(json.dumps(item), flush=True)
+            count += 1
+        if not count:
+            print("No exported USB devices")
+    elif args.operation == "ports":
+        print(json.dumps(ports()))
+    elif args.operation == "attach":
+        if not args.busid:
+            parser.error("A USB bus ID is required")
+        print(json.dumps(attach(args.host, args.server_port, args.busid, args.timeout)))
+    else:
+        if args.port is None or args.port < 0:
+            parser.error("An imported port is required")
+        print(json.dumps(detach(args.port)))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, UnicodeError) as error:
+        print("USB/IP: %s" % error, file=sys.stderr)
+        sys.exit(1)

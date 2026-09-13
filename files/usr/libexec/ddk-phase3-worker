@@ -27,7 +27,6 @@ status_set() {
 }
 
 native_pid=""
-worker_success=0
 workspace=""
 openocd_commands="$job_dir/openocd-commands.cfg"
 runtime_limit_kb=16777216
@@ -50,16 +49,9 @@ cleanup_workspace() {
 }
 
 cleanup_partial_artifacts() {
-	[ "$worker_success" -eq 0 ] || return 0
-	case "$artifact_root" in /overlay/ddk-field-console/artifacts/job-[0-9]*-[0-9]*)
-		rm -f "$artifact_root/firmware-read.hex" "$artifact_root/firmware-read.bin" \
-			"$artifact_root/firmware-dfu-read.bin" "$artifact_root/firmware-serial-read.bin" \
-			"$artifact_root/storage-badblocks.txt" "$artifact_root/storage-image.raw" \
-			"$artifact_root/recovered-files.tar"
-		rmdir "$artifact_root" 2>/dev/null || true
-		;;
-	esac
-	rm -f "$job_dir/storage-image.sha256"
+	# Keep recoverable output after cancellation or failure. Only explicit job
+	# deletion discards results; authentication and size/type checks still apply.
+	return 0
 }
 
 release_locks() {
@@ -81,7 +73,7 @@ stop_job() {
 	[ -z "$native_pid" ] || stop_pid "$native_pid"
 	native_pid=""
 	status_set stopped
-	printf '%s\n' 'Phase 3 worker stopped by an authenticated DDK request; owned child, workspace, partial artifacts, and locks were cleaned.' >> "$job_dir/stderr"
+	printf '%s\n' 'Phase 3 worker stopped by an authenticated DDK request; owned child, workspace, and locks were cleaned; partial results were retained.' >> "$job_dir/stderr"
 	exit 143
 }
 
@@ -175,18 +167,18 @@ validate_usb_target() {
 	expected_serial="$(json_option device_serial)"
 	case "$expected_serial" in '') ;; *[!A-Za-z0-9._-]*) task_fail 'Prepared firmware USB serial identity is invalid.' ;; esac
 	if [ -n "$expected_serial" ] && { [ "${#expected_serial}" -gt 128 ] || [ "$(cat "$base/serial" 2>/dev/null || true)" != "$expected_serial" ]; }; then task_fail 'The selected firmware USB serial identity changed after review.'; fi
-	reviewed_programmer=0
-	case "$usb_id" in
-		03eb:2103|03eb:2104|03eb:2107|03eb:2141|03eb:2145|0483:3744|0483:3748|0483:374b|0483:374d|0483:374e|0483:3752|0483:3753|0483:3754|09fb:6001|09fb:6002|09fb:6003|0d28:0204|15ba:0003|15ba:0004|15ba:002a|15ba:002b|1d50:6008|1d50:6018|2e8a:000c|1366:*) reviewed_programmer=1 ;;
-	esac
-	descriptor="$(printf '%s %s' "$(cat "$base/manufacturer" 2>/dev/null || true)" "$(cat "$base/product" 2>/dev/null || true)" | tr '[:upper:]' '[:lower:]')"
-	if printf '%s' "$descriptor" | grep -Eq 'j-?link|st-?link|cmsis[ -]?dap|daplink|picoprobe|debug probe|black magic probe|usb[ -]?blaster|atmel[ -]?ice|avr dragon|jtagice|avrisp|pickit|bus pirate|tigard|ft232h'; then reviewed_programmer=1; fi
-	for interface in "$base":*; do
-		[ -d "$interface" ] || continue
-		signature="$(cat "$interface/bInterfaceClass" 2>/dev/null || true):$(cat "$interface/bInterfaceSubClass" 2>/dev/null || true):$(cat "$interface/bInterfaceProtocol" 2>/dev/null || true)"
-		case "$signature" in fe:01:01|fe:01:02) reviewed_programmer=1 ;; esac
-	done
-	[ "$reviewed_programmer" -eq 1 ] || task_fail 'Firmware USB target no longer matches the reviewed programmer/DFU identity table.'
+	# Recheck live topology before opening any USB programmer, including enrolled ones.
+	DDK_USB_TARGET="$topology" /usr/bin/lua -e '
+local fs=require "nixio.fs"
+local policy=dofile("/usr/share/ddk-field-console/usb-topology.lua")
+local inventory=policy.inventory(fs)
+local selected=os.getenv("DDK_USB_TARGET")
+assert(not inventory.protected[selected],"Selected USB target now serves router infrastructure")
+local found=false
+for _,device in ipairs(inventory.devices) do if device.value==selected then found=true end end
+assert(found,"Selected USB target disappeared")
+' || task_fail 'The selected programmer is absent or now serves router infrastructure.'
+
 }
 
 validate_dfu_target() {
@@ -320,7 +312,7 @@ operation="$(json_option operation)"
 [ -n "$operation" ] || operation="${action_id#*.}"
 wall_timeout="$(cat "$job_dir/wall-timeout" 2>/dev/null || true)"
 case "$wall_timeout" in ''|*[!0-9]*) task_fail 'Prepared Phase 3 wall timeout is invalid.' ;; esac
-if [ "$wall_timeout" -lt 10 ] || [ "$wall_timeout" -gt 86400 ]; then task_fail 'Prepared Phase 3 wall timeout is outside the reviewed range.'; fi
+if [ "$wall_timeout" -lt 10 ] || [ "$wall_timeout" -gt 2147483647 ]; then task_fail 'Prepared Phase 3 wall timeout is outside the reviewed range.'; fi
 case "$task:$action_id" in
 	phase3_openocd:firmware.openocd|phase3_avrdude:firmware.avrdude|phase3_dfu:firmware.dfu|phase3_serial:firmware.serial) ;;
 	phase3_storage:storage.inspect|phase3_storage:storage.repair|phase3_storage:storage.image|phase3_storage:storage.restore|phase3_squashfs:storage.squashfs) ;;
@@ -363,26 +355,10 @@ case "$task:$native_executable" in
 esac
 [ -x "$native_executable" ] || task_fail 'Prepared Phase 3 native executable is unavailable.'
 
-case "$task" in
-	phase3_openocd) /usr/bin/openocd --version 2>&1 | grep -Fq 'Open On-Chip Debugger 0.11.0-v0.11.0-1-OpenWrt' || task_fail 'OpenOCD drifted from the reviewed 0.11.0 OpenWrt contract.' ;;
-	phase3_avrdude) /usr/bin/avrdude -? 2>&1 | grep -Fq 'avrdude version 6.3' || task_fail 'AVRDUDE drifted from the reviewed 6.3 contract.' ;;
-	phase3_dfu)
-		if [ "$native_executable" = /usr/bin/dfu-util ]; then [ "$(/usr/bin/dfu-util --version 2>&1 | sed -n '1p')" = 'dfu-util 0.11' ] || task_fail 'dfu-util drifted from the reviewed 0.11 contract.'
-		else [ "$(/usr/bin/dfu-programmer --version 2>&1 | sed -n '1p')" = 'dfu-programmer 0.7.2' ] || task_fail 'dfu-programmer drifted from the reviewed 0.7.2 contract.'; fi ;;
-	phase3_serial)
-		case "$native_executable" in
-			/usr/bin/stm32flash) /usr/bin/stm32flash -h 2>&1 | grep -Fq 'Usage: /usr/bin/stm32flash' || task_fail 'STM32Flash drifted from the reviewed 0.6 package contract.' ;;
-			/usr/bin/bossac) /usr/bin/bossac --help 2>&1 | grep -Fq 'BOSSA' || task_fail 'BOSSA drifted from the reviewed 1.9.1 package contract.' ;;
-			/usr/sbin/lpc21isp) /usr/sbin/lpc21isp 2>&1 | grep -Fq 'Version 1.97' || task_fail 'LPC21ISP drifted from the reviewed 1.97 contract.' ;;
-		esac ;;
-	phase3_storage)
-		case "$native_executable" in
-			/usr/sbin/smartctl) /usr/sbin/smartctl --version 2>&1 | grep -Fq 'smartctl 7.2 ' || task_fail 'smartctl drifted from the reviewed 7.2 contract.' ;;
-			/usr/sbin/e2fsck|/usr/sbin/badblocks) /usr/sbin/e2fsck -V 2>&1 | grep -Fq 'e2fsck 1.46.5' || task_fail 'e2fsprogs drifted from the reviewed 1.46.5 contract.' ;;
-			/bin/dd) /bin/dd --help 2>&1 | grep -Fq 'iflag=skip_bytes' || task_fail 'BusyBox dd drifted from the reviewed 1.35 byte-count contract.' ;;
-		esac ;;
-	phase3_squashfs) /usr/sbin/unsquashfs -version 2>&1 | grep -Fq 'unsquashfs version 4.5' || task_fail 'unsquashfs drifted from the reviewed 4.5 contract.' ;;
-esac
+# Byte offsets require these actual dd capabilities, independent of package version.
+if [ "$native_executable" = /bin/dd ]; then
+ /bin/dd --help 2>&1 | grep -Fq 'iflag=skip_bytes' || task_fail 'This dd build lacks byte-offset input support.'
+fi
 
 avrdude_port_found=0
 avrdude_expected_port=""
@@ -440,11 +416,18 @@ if [ "$task" = phase3_squashfs ] && [ "$operation" = extract ]; then workspace="
 
 if [ "$task" = phase3_openocd ]; then
 	{
-		printf '%s\n' 'gdb_port disabled' 'tcl_port disabled' 'telnet_port disabled'
+		printf '%s\n' 'bindto 127.0.0.1' 'tcl_port disabled' 'telnet_port disabled'
+		if [ "$operation" = debug ]; then printf 'gdb_port %s\n' "$(json_option gdb_port)"; else printf '%s\n' 'gdb_port disabled'; fi
 		printf 'adapter usb location %s\n' "$(json_option device_topology)"
 		adapter_speed="$(json_option adapter_speed)"; [ "$adapter_speed" = 0 ] || printf 'adapter speed %s\n' "$adapter_speed"
 		printf '%s\n' 'init'
 		if [ "$operation" = probe ]; then printf '%s\n' 'targets' 'flash banks' 'shutdown'
+		elif [ "$operation" = readback ]; then
+			printf '%s\n' 'halt'
+			printf 'dump_image %s %s %s\n' "$artifact_root/firmware-read.bin" "$(json_option address)" "$(json_option length)"
+			printf '%s\n' 'resume' 'shutdown'
+		elif [ "$operation" = debug ]; then printf '%s\n' 'halt'
+		elif [ "$operation" = halt ] || [ "$operation" = resume ] || [ "$operation" = reset ]; then printf '%s\n' "$operation" 'shutdown'
 		else
 			upload_id="$(json_option upload)"; firmware_input="$(sealed_path_for_upload_id "$upload_id")"; [ -n "$firmware_input" ] || task_fail 'OpenOCD sealed input could not be resolved.'; validate_sealed_input "$firmware_input"
 			printf '%s\n' 'reset halt'
@@ -475,8 +458,9 @@ if [ "$task" = phase3_storage ] && [ "$action_id" = storage.repair ] && [ "$nati
 
 if [ "$native_result" -eq 0 ]; then
 	case "$action_id:$operation" in
-		firmware.avrdude:read_flash|firmware.avrdude:read_eeprom)
+		firmware.avrdude:read_flash|firmware.avrdude:read_eeprom|firmware.avrdude:read_memory)
 			if [ "$(json_option output_format)" = i ]; then validate_artifact firmware-read.hex; else validate_artifact firmware-read.bin; fi ;;
+		firmware.openocd:readback) validate_artifact firmware-read.bin ;;
 		firmware.dfu:read) validate_artifact firmware-dfu-read.bin ;;
 		firmware.serial:read) validate_artifact firmware-serial-read.bin ;;
 		storage.inspect:badblocks_read|storage.repair:badblocks_nondestructive)
@@ -493,7 +477,7 @@ if [ "$native_result" -eq 0 ]; then
 		storage.restore:*)
 			if [ "$(json_option verify)" = true ]; then
 				upload_id="$(json_option upload)"; restore_input="$(sealed_path_for_upload_id "$upload_id")"; restore_size="$(json_option image_size)"
-				/usr/bin/timeout "$wall_timeout" /usr/bin/cmp -s -n "$restore_size" "$restore_input" "$(json_option device)" >> "$job_dir/stdout" 2>> "$job_dir/stderr" &
+				/usr/bin/timeout "$wall_timeout" /usr/libexec/ddk-compare-range "$restore_input" "$(json_option device)" "$(json_option offset)" "$restore_size" >> "$job_dir/stdout" 2>> "$job_dir/stderr" &
 				native_pid=$!; compare_result=0; wait "$native_pid" 2>/dev/null || compare_result=$?; native_pid=""
 				[ "$compare_result" -eq 0 ] || task_fail 'Post-write comparison did not match the sealed storage image.'
 				post_note='Post-write byte comparison: MATCH'
@@ -522,7 +506,6 @@ mv "$job_dir/stdout.next" "$job_dir/stdout"
 
 if [ "$native_result" -eq 0 ]; then
 	status_set complete
-	worker_success=1
 	printf '%s\n' 'Phase 3 native operation completed; owned workspaces, command files, child state, and locks are being cleaned.' >> "$job_dir/stdout"
 	printf '%s\n' 'Success'
 	exit 0

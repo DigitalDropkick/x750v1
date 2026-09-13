@@ -124,7 +124,9 @@ local function classify_android(device)
 	local fastboot = has_signature(device, "ff:42:03")
 	local mtp = has_signature(device, "06:01:01")
 	local descriptor_match = has_token(device.descriptor, android_tokens)
-	if not android_vendors[device.vendor_id] or not (adb or fastboot or mtp or descriptor_match) then
+	-- A native Android transport is stronger evidence than a vendor catalogue.
+	-- MTP alone is shared by cameras and still needs mobile identity evidence.
+	if not adb and not fastboot and not (android_vendors[device.vendor_id] and (mtp or descriptor_match)) then
 		return nil
 	end
 	if fastboot then return "FASTBOOT USB INTERFACE" end

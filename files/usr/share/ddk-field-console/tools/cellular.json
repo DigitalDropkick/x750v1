@@ -2,7 +2,7 @@
   "id": "cellular",
   "name": "Cellular / Modem",
   "category": "Cellular",
-  "description": "Privacy-conscious Quectel identity, registration, and radio-signal snapshot.",
+  "description": "Modem diagnostics, connection controls, APN profiles, and EC25 AT/GNSS operations.",
   "package_names": ["qmi-utils", "uqmi", "qcsuper", "libqmi"],
   "expected_binaries": ["qmicli", "uqmi", "qcsuper"],
   "required_hardware": ["cellular_modem"],
@@ -10,8 +10,11 @@
   "risk_level": "INFO",
   "enabled": true,
   "actions": [
+    {"id": "cellular.control", "label": "Cellular connection controls", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "cellular.diagnostics", "label": "Cellular diagnostics", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
     {"id": "cellular.snapshot", "class": "INFO", "execution": "job", "enabled": true},
-    {"id": "cellular.raw_command", "class": "DISRUPTIVE", "enabled": false, "unavailable_reason": "An arbitrary AT/QMI text box would be a generic device-command endpoint. Additional modem work requires operation-specific schemas, identifier privacy rules, exact EC25 state validation, and tested connectivity recovery/rollback."}
+    {"id": "cellular.raw_command", "label": "EC25 AT and built-in GNSS", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "cellular.profile", "label": "Cellular APN profile with automatic recovery", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "The fixed read-only EC25 snapshot remains available. Broader structured QMI/AT workflows need exact modem-command schemas, identifier privacy rules, target binding, state-change confirmation, and connectivity recovery tests."
+  "help_text": "APN profile changes use timed OpenWrt rollback. After reconnecting, select Keep Cellular Settings in the running job; otherwise the previous configuration is restored. Diagnostic and direct modem commands expose their native results."
 }

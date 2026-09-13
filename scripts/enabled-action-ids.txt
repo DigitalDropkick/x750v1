@@ -16,3 +16,11 @@ storage.image
 storage.inspect
 storage.squashfs
 throughput.iperf3
+automation.mqtt_subscribe
+camera.video
+radio.receiver_tools
+storage.ddrescue
+serial.console
+serial.transfer
+gps.session
+bluetooth.pairing

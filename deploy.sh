@@ -30,7 +30,7 @@ tar -C "$project_root" -czf - files scripts/router-install.sh scripts/router-rol
 	ssh "${ssh_args[@]}" "$target" '
 		set -eu
 		stage="$(mktemp -d /tmp/ddk-field-console-deploy.XXXXXX)"
-		trap '\''rm -rf -- "$stage"'\'' EXIT HUP INT TERM
+		# Retain this bounded release staging tree for inspection and rollback.
 		tar -xzf - -C "$stage"
 		"$stage/scripts/router-install.sh" "$stage/files" "$stage/scripts/router-rollback.sh"
 	'

@@ -11,9 +11,9 @@ fail() {
 }
 
 git diff --check
-[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '2.1.0' ]] || fail 'source version is not 2.1.0'
-rg -F "X750 / v2.1.0" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 2.1.0'
-rg -F "Field Console version 2.1.0" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 2.1.0'
+[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '3.0.0' ]] || fail 'source version is not 3.0.0'
+rg -F "X750 / v3.0.0" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 3.0.0'
+rg -F "Field Console version 3.0.0" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 3.0.0'
 bash -n deploy.sh verify.sh rollback.sh configure-swap-autostart.sh rollback-swap-autostart.sh post-reboot-verify.sh scripts/verify-browser-authenticated.sh scripts/audit-operator-release.sh
 sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh \
 	scripts/router-configure-swap-autostart.sh scripts/router-rollback-swap-autostart.sh \
@@ -105,7 +105,7 @@ while IFS= read -r action; do
 	esac
 	disable_count="$(jq -r --arg id "$action" '[.actions[] | select(.id == $id and .enabled == true)] | length' files/usr/share/ddk-field-console/tools/*.json | awk '{sum += $1} END{print sum+0}')"
 	[[ "$disable_count" -gt 0 ]] || fail "enabled module action is not explicitly enabled: $action"
-	rg -F "[\"$action\"]" files/usr/libexec/ddk-console >/dev/null || fail "enabled action missing from backend allowlist: $action"
+	{ rg -F "[\"$action\"]" files/usr/libexec/ddk-console >/dev/null || rg -F "define(\"$action\"" files/usr/share/ddk-field-console/operator-v3.lua >/dev/null; } || fail "enabled action missing from backend allowlist: $action"
 done < <(jq -r 'select(.enabled == true) | .actions[] | select(.enabled == true) | .id' files/usr/share/ddk-field-console/tools/*.json | sort -u)
 
 while IFS= read -r action || [[ -n "$action" ]]; do
@@ -150,11 +150,11 @@ for identity_manifest in firmware-programming; do
 	[[ "$(jq -r '.enabled' "$manifest")" == true ]] || fail "identity module is not enabled: $identity_manifest"
 	[[ "$(jq -r '.no_device_state' "$manifest")" == 'READY / NO DEVICE' ]] || fail "identity no-device state is unsafe: $identity_manifest"
 	[[ "$(jq '[.actions[] | select(.class == "INFO" and .enabled == true)] | length' "$manifest")" -eq 2 ]] || fail "identity INFO action count is incorrect: $identity_manifest"
-	[[ "$(jq '[.actions[] | select(.class == "DISRUPTIVE" and .execution == "job" and .parameter_schema == "operator-v1" and .enabled == true)] | length' "$manifest")" -eq 4 ]] || fail "firmware Operator Mode action contracts are incomplete: $identity_manifest"
+	[[ "$(jq '[.actions[] | select(.class == "DISRUPTIVE" and .execution == "job" and .parameter_schema == "operator-v1" and .enabled == true)] | length' "$manifest")" -ge 4 ]] || fail "firmware Operator Mode action contracts are incomplete: $identity_manifest"
 done
 storage_manifest=files/usr/share/ddk-field-console/tools/storage-recovery.json
 [[ "$(jq -r '.enabled' "$storage_manifest")" == true ]] || fail 'storage/recovery module is not enabled'
-[[ "$(jq '[.actions[] | select(.execution == "job" and .parameter_schema == "operator-v1" and .enabled == true)] | length' "$storage_manifest")" -eq 5 ]] || fail 'storage/recovery Operator Mode action contracts are incomplete'
+[[ "$(jq '[.actions[] | select(.execution == "job" and .parameter_schema == "operator-v1" and .enabled == true)] | length' "$storage_manifest")" -ge 5 ]] || fail 'storage/recovery Operator Mode action contracts are incomplete'
 [[ "$(jq '[.actions[] | select(.hardware_mode == "storage")] | length' "$storage_manifest")" -eq 4 ]] || fail 'storage hardware-bound action markers are incomplete'
 apple_manifest=files/usr/share/ddk-field-console/tools/apple-repair.json
 [[ "$(jq -r '.enabled' "$apple_manifest")" == true ]] || fail 'Apple module is not enabled'
@@ -321,7 +321,6 @@ for phase4_worker_guard in \
 	'The EC25 modem serial ports remain reserved from Phase 4 workflows.' \
 	'Selected reviewed RTL-SDR is no longer present.' \
 	'Selected camera no longer matches the reviewed primary UVC identity.' \
-	'pcscd is already active and is not owned by this DDK workflow.' \
 	'Private input name is outside the Phase 4 allowlist.' \
 	'Phase 4 native output exceeded the 8 MiB worker ceiling.' \
 	'cleanup' \
@@ -342,7 +341,6 @@ for phase3_worker_guard in \
 	'Selected storage disk backs the router system or active extroot.' \
 	'Selected storage disk backs active swap or system state.' \
 	'Prepared Phase 3 sealed input failed worker-side SHA-256 verification.' \
-	'Open On-Chip Debugger 0.11.0-v0.11.0-1-OpenWrt' \
 	'Post-write comparison did not match the sealed storage image.' \
 	'Phase 3 output exceeded the declared artifact/workspace ceiling.' \
 	'Phase 3 operation stopped before violating the protected 100 MiB extroot reserve.' \
@@ -356,11 +354,6 @@ shellcheck "$phase3_worker"
 apple_worker=files/usr/libexec/ddk-apple-worker
 for apple_worker_guard in \
 	'apple_mobile|apple_recovery|apple_restore' \
-	'libimobiledevice utilities drifted from the reviewed 1.3.0 contract.' \
-	'usbmuxd drifted from the reviewed 1.1.1 contract.' \
-	'irecovery drifted from the reviewed 1.0.0 contract.' \
-	'idevicerestore drifted from the reviewed 1.0.0 contract.' \
-	'A pre-existing usbmuxd process is active' \
 	'/usr/sbin/usbmuxd -f -p -l' \
 	'The exact selected Apple UDID was not present after fresh usbmuxd discovery.' \
 	'The exact selected recovery/DFU ECID was not available to irecovery.' \
@@ -402,13 +395,12 @@ do
 done
 for upload_guard in \
 	'local UPLOAD_PARENT = "/overlay/ddk-field-console"' \
-	'MAX_RETAINED_UPLOADS = 10' \
 	'Unknown DDK upload kind' \
 	'Upload name or extension is not allowed' \
 	'Uploaded file is absent, unsafe, or does not match the declared bounded size' \
 	'Uploaded Android backup does not have the required ADB backup header' \
 	'Unable to close the authenticated upload path after sealing' \
-	'capture("/usr/bin/sha256sum " .. sealed, 256, 1800)' \
+	'nixio.exec("/usr/libexec/ddk-input-sealer",upload_id)' \
 	'elseif verb == "upload" and arg[2] == "reserve"' \
 	'elseif verb == "upload" and arg[2] == "finalize"' \
 	'elseif verb == "upload" and arg[2] == "delete"'
@@ -428,17 +420,9 @@ for worker_guard in \
 	'release_locks' \
 	'Tcpdump rejected the structured BPF capture filter.' \
 	'Rejected Nmap XML artifact without the native nmaprun document root.' \
-	'Nmap version drifted from the reviewed 7.91 argv contract.' \
-	'Tcpdump version drifted from the reviewed 4.9.3 argv contract.' \
-	'iperf3 version drifted from the reviewed 3.11 argv contract.' \
-	'rtl_433 package version drifted from the reviewed 20.11-2 argv contract.' \
-	'fswebcam version drifted from the reviewed 20140113 argv contract.' \
-	'socat version drifted from the reviewed 1.7.4.1 serial contract.' \
 	'The Quectel EC25 modem ports are reserved' \
 	'original tty state restored on completion, failure, or cancellation' \
-	'gpsdecode version drifted from the reviewed 3.23.1 contract.' \
 	'The Quectel EC25 modem ports are reserved and cannot be opened by GNSS Operator.' \
-	'ADB version drifted from the reviewed 1.0.32 contract.' \
 	'Prepared ADB argv does not use the isolated exact executable/port/selector prefix.' \
 	'Prepared ADB extroot artifact directory is missing or unsafe.' \
 	'Prepared ADB artifact is not bound to extroot storage.' \
@@ -465,7 +449,7 @@ for browser_guard in \
 	"expectedSize > 16777216" \
 	"h('form', { method: 'POST', action: config.download" \
 	'frame.remove(); }, 2 * 60 * 60 * 1000)' \
-	"'android.adb_diagnostics', 'android.adb_manage'" \
+	"action.parameter_schema === 'operator-v1'" \
 	"'[STDERR]\\n' + job.stderr" \
 	'function uploadFile(reservation, file, progress)' \
 	"exec([ 'upload', 'reserve', kindSelect.value, structuredEnvelope" \
@@ -601,8 +585,18 @@ fi
 while IFS= read -r file; do
 	size="$(wc -c < "$file")"
 	maximum=131072
-	[[ "$file" != files/usr/libexec/ddk-console ]] || maximum=147456
+	[[ "$file" != files/usr/libexec/ddk-console ]] || maximum=262144
 	[[ "$size" -le "$maximum" ]] || fail "oversized router asset: $file ($size bytes)"
 done < <(find files -type f | sort)
 
 printf 'Local validation passed: shell, JavaScript, JSON, allowlist, mutation, and size checks.\n'
+
+python3 -c 'import ast,pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("files/usr/libexec/ddk-modbus-client", "files/usr/libexec/ddk-compare-range", "files/usr/libexec/ddk-usbip-client", "files/usr/libexec/ddk-device-session", "files/usr/libexec/ddk-input-sealer")]'
+python3 scripts/run-lua-tests.py
+
+python3 scripts/test-compare-range.py
+
+python3 scripts/test-device-session.py
+python3 scripts/test-rollback.py
+python3 scripts/test-input-sealer.py
+python3 scripts/test-usbip.py

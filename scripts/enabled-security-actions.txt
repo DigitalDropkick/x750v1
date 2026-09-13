@@ -4,3 +4,11 @@ bluetooth.scan
 capture.lan_metadata_snapshot
 forensics.inspect_file
 network.nmap_lan_discovery
+network.arp_scan
+auth.otp
+bluetooth.services
+wireless.monitor
+capture.ring
+auth.stoken
+forensics.trace
+wireless.file_analysis

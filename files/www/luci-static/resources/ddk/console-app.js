@@ -111,7 +111,7 @@
 			var request = new XMLHttpRequest();
 			request.open('POST', config.upload, true);
 			request.withCredentials = true;
-			request.timeout = 2 * 60 * 60 * 1000;
+			request.timeout = 0;
 			request.upload.addEventListener('progress', function(event) {
 				if (event.lengthComputable && progress)
 					progress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
@@ -147,6 +147,14 @@
 			index++;
 		}
 		return (index ? number.toFixed(number >= 10 ? 1 : 2) : number.toFixed(0)) + ' ' + units[index];
+	}
+	async function waitForSealed(input, progress) {
+		while(input.phase === 'sealing') {
+			if(progress)progress('Hashing ' + input.original_name + '… ' + formatBytes(input.hash_bytes || 0) + ' / ' + formatBytes(input.size));
+			await new Promise(function(resolve){setTimeout(resolve,1500);});
+			input=await exec(['upload','finalize',input.id]);
+		}
+		return input;
 	}
 
 	function formatUptime(seconds) {
@@ -203,7 +211,7 @@
 				h('span', { class: 'ddk-eyebrow' }, 'LOCAL REPAIR · SERIOUS SYSTEMS'),
 				h('h2', {}, section || 'FIELD CONSOLE'),
 				h('p', {}, description || 'GL-X750 field appliance control surface')),
-			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v2.1.0')));
+			h('div', { class: 'ddk-appliance-tag' }, h('span', { class: 'ddk-live-dot' }), h('span', {}, 'X750 / v3.0.0')));
 	}
 
 	function sectionHeading(title, detail) {
@@ -249,6 +257,9 @@
 		if (field.type === 'boolean') {
 			control = h('input', { type: 'checkbox', checked: field.default === true });
 		}
+		else if (field.type === 'upload_list') {
+			control = h('select', { class: 'ddk-input', multiple: true, size: Math.min(8, Math.max(3, (field.options || []).length)) }, (field.options || []).map(function(item) { return h('option', { value: item.value }, item.label); }));
+		}
 		else if (field.type === 'enum') {
 			control = h('select', { class: 'ddk-select' }, (field.options || []).map(function(option) {
 				var value = typeof option === 'object' ? option.value : option;
@@ -273,32 +284,37 @@
 				placeholder: field.placeholder || ''
 			});
 		}
+		control.name = field.name;
 		var wrapper = h('label', { class: 'ddk-operator-field' + (field.type === 'boolean' ? ' ddk-operator-check' : '') },
 			h('span', { class: 'ddk-operator-label' }, field.label),
 			control,
 			field.help ? h('small', {}, field.help) : null);
+		if (field.suggestions && field.suggestions.length) {
+			var listId='ddk-suggestions-'+field.name, search=h('input',{class:'ddk-input',list:listId,placeholder:'Find an installed script','aria-label':'Find an installed script'});
+			wrapper.appendChild(h('div',{},search,h('datalist',{id:listId},field.suggestions.map(function(value){return h('option',{value:value});})),button('Add script','',function(){var value=search.value.trim();if(field.suggestions.indexOf(value)<0)return;var values=control.value.split(/\r?\n/).filter(Boolean);if(values.indexOf(value)<0)values.push(value);control.value=values.join('\n');search.value='';})));
+		}
 		registry[field.name] = { field: field, control: control, wrapper: wrapper };
 		return wrapper;
 	}
 
 	function applyOperatorConditions(registry) {
-		Object.keys(registry).forEach(function(name) {
-			var entry = registry[name], condition = entry.field.show_when;
-			if (!condition || !registry[condition.field]) {
-				entry.wrapper.hidden = false;
-				return;
-			}
-			var source = registry[condition.field].control;
-			var value = source.type === 'checkbox' ? source.checked : source.value;
-			entry.wrapper.hidden = condition.equals !== undefined ? value !== condition.equals : value === condition.not_equals;
-		});
+		function matches(condition) {
+			if (condition.any) return condition.any.some(matches);
+			if (condition.all) return condition.all.every(matches);
+			if (!registry[condition.field]) return true;
+			var source=registry[condition.field].control, value=source.type==='checkbox' ? source.checked : source.value;
+			return condition.values ? condition.values.indexOf(value)>=0 : condition.equals!==undefined ? value===condition.equals : value!==condition.not_equals;
+		}
+		Object.keys(registry).forEach(function(name) { var entry=registry[name];entry.wrapper.hidden=entry.field.show_when ? !matches(entry.field.show_when) : false; });
 	}
 
 	function collectOperatorOptions(registry) {
 		var options = {};
 		Object.keys(registry).forEach(function(name) {
 			var entry = registry[name], field = entry.field, control = entry.control;
+			if (entry.wrapper.hidden) { options[name] = field.default; return; }
 			if (field.type === 'boolean') options[name] = control.checked;
+			else if (field.type === 'upload_list') options[name] = Array.from(control.selectedOptions).map(function(item) { return item.value; });
 			else if (field.type === 'integer' || field.type === 'number') options[name] = Number(control.value);
 			else if (field.type === 'target_list') options[name] = control.value.split(/\r?\n/).map(function(value) { return value.trim(); }).filter(Boolean);
 			else if (field.type === 'integer_list') options[name] = control.value.split(/\r?\n/).map(function(value) { return value.trim(); }).filter(Boolean).map(Number);
@@ -317,7 +333,7 @@
 		var content = h('div', { class: 'ddk-operator-review' },
 			row('Action', prepared.action_id),
 			row('Exact target', prepared.target_summary),
-			row('Wall timeout', prepared.wall_timeout + ' seconds'),
+			row('Wall timeout', prepared.wall_timeout === 0 ? 'Until finished or stopped' : prepared.wall_timeout + ' seconds'),
 			row('Artifacts', artifactText),
 			h('p', { class: 'ddk-operator-label' }, 'Server-built native invocation'),
 			h('pre', {}, prepared.argv_preview),
@@ -346,15 +362,44 @@
 			})), null);
 	}
 
-	async function openOperatorAction(actionId, onStarted) {
+	function operatorPresets(actionId, registry) {
+		var key = 'ddk-v3-presets:' + actionId, saved = [];
+		try { var parsed = JSON.parse(localStorage.getItem(key) || '[]'); if (Array.isArray(parsed)) saved = parsed.slice(0, 50); } catch (_) {}
+		var selector = h('select', { class: 'ddk-input', 'aria-label': 'Saved preset' });
+		var name = h('input', { class: 'ddk-input', placeholder: 'Preset name', maxlength: 80, 'aria-label': 'Preset name' });
+		function refresh() { selector.replaceChildren.apply(selector, [h('option', {value:''}, 'Choose a saved preset')].concat(saved.map(function(item,index) { return h('option',{value:String(index)},item.name); })));  }
+		function persist() { localStorage.setItem(key, JSON.stringify(saved)); refresh(); }
+		refresh();
+		return h('details', {class:'ddk-operator-advanced'}, h('summary',{},'Presets saved in this browser'),
+			h('p',{},'Save settings for repeat visits. Passwords, token seeds, private arguments, and uploaded-file selections are excluded.'),
+			selector, h('div',{class:'ddk-action-row'},button('Load','',function() {
+				var item = selector.value !== '' && saved[Number(selector.value)]; if (!item) return;
+				Object.keys(registry).forEach(function(fieldName) {
+					if (!Object.prototype.hasOwnProperty.call(item.options || {},fieldName)) return;
+					var entry=registry[fieldName], value=item.options[fieldName];
+					if (entry.field.type==='boolean') entry.control.checked=!!value;
+					else entry.control.value=Array.isArray(value)?value.join('\n'):String(value);
+				}); applyOperatorConditions(registry); name.value=item.name;
+			}),button('Remove','',function() { if(selector.value==='')return;saved.splice(Number(selector.value),1);persist(); })),name,
+			button('Save current settings','',function() {
+				var label=name.value.trim();if(!label)return;
+				var options=collectOperatorOptions(registry);
+				Object.keys(registry).forEach(function(fieldName) { var f=registry[fieldName].field; if(f.private || f.type==='secret' || f.type==='upload_list' || /upload|input|packages/.test(fieldName)) delete options[fieldName]; });
+				saved=saved.filter(function(item){return item.name!==label;});saved.unshift({name:label,options:options});saved=saved.slice(0,50);
+				try {persist();name.value='';} catch(error) {showModal('Preset storage',h('p',{},error.message));}
+			}));
+	}
+
+	async function openOperatorAction(actionId, onStarted, initialOptions) {
 		try {
 			var schema = await exec([ 'action', 'describe', actionId ]);
 			var registry = {}, primary = h('div', { class: 'ddk-operator-grid' }), advanced = h('div', { class: 'ddk-operator-grid' });
-			(schema.fields || []).forEach(function(field) { (field.advanced ? advanced : primary).appendChild(operatorField(field, registry)); });
+			(schema.fields || []).forEach(function(field) { if(initialOptions && Object.prototype.hasOwnProperty.call(initialOptions,field.name)) field.default=initialOptions[field.name]; (field.advanced ? advanced : primary).appendChild(operatorField(field, registry)); });
 			Object.keys(registry).forEach(function(name) { registry[name].control.addEventListener('change', function() { applyOperatorConditions(registry); }); });
 			applyOperatorConditions(registry);
 			var content = h('div', {},
-				h('div', { class: 'ddk-alert ddk-alert-info' }, 'The browser submits typed values. The router validates them and constructs the native argv; no browser-built command is executed.'),
+				operatorPresets(actionId, registry),
+				schema.availability && schema.availability.missing.length ? h('div', { class: 'ddk-alert' }, 'Some operations need additional software: ' + schema.availability.missing.join(', ') + '. Available operations can still be used.') : null,
 				primary,
 				advanced.childNodes.length ? h('details', { class: 'ddk-operator-advanced' }, h('summary', {}, 'Advanced native options'), advanced) : null);
 			var reviewButton;
@@ -556,7 +601,7 @@
 		var actions = (module.actions || []).map(function(action) {
 			var modeCounts = module.mode_counts || {};
 			var modeReady = action.hardware_mode === 'normal' ? Number(modeCounts.normal || 0) > 0 : action.hardware_mode === 'recovery' ? Number(modeCounts.recovery || 0) + Number(modeCounts.dfu || 0) > 0 : action.hardware_mode === 'any' ? Number(modeCounts.normal || 0) + Number(modeCounts.recovery || 0) + Number(modeCounts.dfu || 0) > 0 : action.hardware_mode === 'storage' ? !!module.action_ready : action.hardware_mode === 'relay' ? Number(modeCounts.relay || 0) > 0 : action.hardware_mode === 'openocd' || action.hardware_mode === 'avrdude' || action.hardware_mode === 'dfu' || action.hardware_mode === 'serial_programmer' ? Number(modeCounts[action.hardware_mode] || 0) > 0 : true;
-			var operatorEnabled = module.console_enabled && action.enabled && action.parameter_schema === 'operator-v1' && module.software.installed && modeReady && (!module.hardware.required || module.action_ready || module.hardware.present);
+			var operatorEnabled = module.console_enabled && action.enabled && action.parameter_schema === 'operator-v1';
 			var jobEnabled = module.console_enabled && action.enabled && action.class === 'INFO' && action.execution === 'job' && action.id === 'cellular.snapshot';
 			var infoEnabled = module.console_enabled && action.enabled && action.class === 'INFO' && action.execution !== 'job';
 			var privateIdentity = infoEnabled && !!privateIdentityActions[action.id];
@@ -606,7 +651,8 @@
 				catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); }
 			} : null;
 			var disabled = !operatorEnabled && !infoEnabled && !jobEnabled && !discoveryEnabled && !captureEnabled && !rtl433Enabled && !cameraEnabled && !gpsEnabled && !canEnabled;
-			return button(action.id, action.class === 'SECURITY' ? 'ddk-button-security' : action.class === 'ACTION' || action.class === 'DISRUPTIVE' ? 'ddk-button-action' : 'ddk-button-secondary', handler, disabled, action.enabled !== true ? action.unavailable_reason : '');
+			var actionButton = button(action.label || action.id.split('.').pop().replace(/_/g,' ').replace(/^./,function(letter){return letter.toUpperCase();}), action.class === 'SECURITY' ? 'ddk-button-security' : action.class === 'ACTION' || action.class === 'DISRUPTIVE' ? 'ddk-button-action' : 'ddk-button-secondary', handler, disabled, action.enabled !== true ? action.unavailable_reason : '');
+			actionButton.dataset.action = action.id; return actionButton;
 		});
 		return h('article', { class: 'ddk-tool' },
 			h('div', { class: 'ddk-tool-head' }, h('div', {}, h('span', { class: 'ddk-card-kicker' }, module.category), h('h3', {}, module.name)), statePill(module.state)),
@@ -666,42 +712,6 @@
 
 	async function renderJobs() {
 		var jobsNode = h('div'), reportsNode = h('div'), pollers = {};
-		var modules = await exec([ 'capabilities' ]);
-		var rtlModule = modules.find(function(module) { return module.id === 'sdr-radio'; });
-		var rtlReady = !!(rtlModule && rtlModule.console_enabled && rtlModule.hardware.present);
-		var rtlReason = rtlModule && rtlModule.state ? rtlModule.state : 'UNAVAILABLE';
-		var cameraModule = modules.find(function(module) { return module.id === 'camera'; });
-		var cameraReady = !!(cameraModule && cameraModule.console_enabled && cameraModule.hardware.present);
-		var cameraReason = cameraModule && cameraModule.state ? cameraModule.state : 'UNAVAILABLE';
-		var serialModule = modules.find(function(module) { return module.id === 'serial'; });
-		var serialReady = !!(serialModule && serialModule.console_enabled && serialModule.hardware.present);
-		var serialReason = serialModule && serialModule.state ? serialModule.state : 'UNAVAILABLE';
-		var gpsModule = modules.find(function(module) { return module.id === 'gps-gnss'; });
-		var gpsReady = !!(gpsModule && gpsModule.console_enabled && gpsModule.action_ready);
-		var gpsReason = gpsModule && gpsModule.readiness_reason ? gpsModule.readiness_reason : 'UNAVAILABLE';
-		var canModule = modules.find(function(module) { return module.id === 'can'; });
-		var canReady = !!(canModule && canModule.console_enabled && canModule.action_ready);
-		var canReason = canModule && canModule.readiness_reason ? canModule.readiness_reason : 'UNAVAILABLE';
-		var androidModule = modules.find(function(module) { return module.id === 'android-repair'; });
-		var androidReady = !!(androidModule && androidModule.console_enabled && androidModule.action_ready);
-		var androidReason = androidModule && androidModule.readiness_reason ? androidModule.readiness_reason : 'UNAVAILABLE';
-		var appleModule = modules.find(function(module) { return module.id === 'apple-repair'; });
-		var appleModes = appleModule && appleModule.mode_counts ? appleModule.mode_counts : {};
-		var appleNormalReady = !!(appleModule && appleModule.console_enabled && Number(appleModes.normal || 0) > 0);
-		var appleRecoveryReady = !!(appleModule && appleModule.console_enabled && Number(appleModes.recovery || 0) + Number(appleModes.dfu || 0) > 0);
-		var appleAnyReady = appleNormalReady || appleRecoveryReady;
-		var appleReason = appleModule && appleModule.readiness_reason ? appleModule.readiness_reason : 'UNAVAILABLE';
-		var firmwareModule = modules.find(function(module) { return module.id === 'firmware-programming'; });
-		var firmwareModes = firmwareModule && firmwareModule.mode_counts ? firmwareModule.mode_counts : {};
-		var openocdReady = !!(firmwareModule && firmwareModule.console_enabled && firmwareModule.software.installed && Number(firmwareModes.openocd || 0) > 0);
-		var avrdudeReady = !!(firmwareModule && firmwareModule.console_enabled && firmwareModule.software.installed && Number(firmwareModes.avrdude || 0) > 0);
-		var dfuReady = !!(firmwareModule && firmwareModule.console_enabled && firmwareModule.software.installed && Number(firmwareModes.dfu || 0) > 0);
-		var firmwareSerialReady = !!(firmwareModule && firmwareModule.console_enabled && firmwareModule.software.installed && Number(firmwareModes.serial_programmer || 0) > 0);
-		var firmwareReady = openocdReady || avrdudeReady || dfuReady || firmwareSerialReady;
-		var firmwareReason = firmwareModule && firmwareModule.readiness_reason ? firmwareModule.readiness_reason : 'UNAVAILABLE';
-		var storageModule = modules.find(function(module) { return module.id === 'storage-recovery'; });
-		var storageReady = !!(storageModule && storageModule.console_enabled && storageModule.software.installed && storageModule.action_ready);
-		var storageReason = storageModule && storageModule.readiness_reason ? storageModule.readiness_reason : 'UNAVAILABLE';
 		function saveBlob(blob, filename) {
 			var url = URL.createObjectURL(blob);
 			var link = h('a', { href: url, download: filename });
@@ -753,7 +763,7 @@
 				if (typeof artifact.filename !== 'string' || !/^ddk-job-\d+-\d+-[A-Za-z0-9][A-Za-z0-9_.-]+$/.test(artifact.filename) || artifact.filename.indexOf('..') >= 0)
 					throw new Error('The artifact download name did not match the DDK client allowlist.');
 				var expectedSize = Number(artifact.size || 0);
-				if (!Number.isInteger(expectedSize) || expectedSize <= 0 || expectedSize > 17179869184)
+				if (!Number.isInteger(expectedSize) || expectedSize <= 0 || expectedSize > 8796093022208)
 					throw new Error('The artifact metadata failed its size boundary.');
 				var storage = artifact.storage || 'tmp';
 				if (storage !== 'tmp' && storage !== 'extroot') throw new Error('The artifact storage class was not recognized.');
@@ -782,21 +792,48 @@
 			}
 			catch (error) { showModal('Artifact Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); }
 		}
+		function openSerialConsole(job) {
+			var output=h('pre',{class:'ddk-job-output'},job.stdout || 'Waiting for serial output…');
+			var input=h('textarea',{class:'ddk-input',rows:3,'aria-label':'Serial input'});
+			var encoding=h('select',{class:'ddk-input','aria-label':'Encoding'},h('option',{value:'text'},'Text'),h('option',{value:'hex'},'Hex bytes'));
+			var ending=h('select',{class:'ddk-input','aria-label':'Line ending'},h('option',{value:'crlf'},'CR + LF'),h('option',{value:'cr'},'CR'),h('option',{value:'lf'},'LF'),h('option',{value:'none'},'No line ending'));
+			var message=h('p',{}),closed=false,timer;
+			async function send() {
+				try {var result=await exec(['job','send',job.id,structuredEnvelope({data:input.value,encoding:encoding.value,ending:ending.value})]);message.textContent=result.queued_bytes+' bytes queued';input.value='';}
+				catch(error) {message.textContent=error.message;}
+			}
+			input.addEventListener('keydown',function(event){if(event.key==='Enter' && event.ctrlKey){event.preventDefault();send();}});
+			showModal('Serial console · '+job.metadata.target_summary,h('div',{},output,input,h('div',{class:'ddk-action-row'},encoding,ending,button('Send (Ctrl+Enter)','',send)),message),null,function(){closed=true;clearTimeout(timer);});
+			async function tick(){try{var state=await exec(['job','status',job.id]);if(closed)return;output.textContent=state.stdout || '';output.scrollTop=output.scrollHeight;if(state.status!=='running'){message.textContent='Session '+state.status;return;}}catch(error){message.textContent=error.message;}if(!closed)timer=setTimeout(tick,750);}
+			tick();input.focus();
+		}
 		function renderJobList(jobs) {
 			if (!jobs.length) { jobsNode.replaceChildren(h('div', { class: 'ddk-empty' }, 'No DDK jobs have run since the last reboot or cleanup.')); return; }
 			jobsNode.replaceChildren(h('div', { class: 'ddk-job-list' }, jobs.map(function(job) {
 				var active = [ 'queued', 'running', 'stopping' ].indexOf(job.status) >= 0;
 				var output = (job.stdout ? '[STDOUT]\n' + job.stdout : '') + (job.stderr ? (job.stdout ? '\n\n' : '') + '[STDERR]\n' + job.stderr : '');
 				var actions = [];
-				if (active) actions.push(button('Stop DDK Job', 'ddk-button-secondary', function() { stopJob(job.id); }));
+				if (active && job.metadata.action_id === 'cellular.profile') actions.push(button('Keep Cellular Settings','',async function(){ try{ await exec(['job','confirm-network',job.id]); await refresh(); }catch(error){showModal('Cellular Confirmation',h('p',{},error.message));} }));
+				if (active && job.metadata.action_id === 'serial.console') actions.push(button('Open Serial Console', '', function() { openSerialConsole(job); }));
+				if (active) actions.push(button('Stop and Keep Results', 'ddk-button-secondary', function() { stopJob(job.id); }));
+				if (job.saved) actions.push(button('Export Case', 'ddk-button-secondary', function() { openOperatorAction('cases.export', async function(created) { await refresh(); poll(created.id); }, {case:job.id}); }));
+				if (job.saved) actions.push(button('Name Case', 'ddk-button-secondary', async function() { var label=window.prompt('Case name',job.metadata.case_label || ''); if (!label) return; try { await exec(['job','label',job.id,structuredEnvelope({label:label})]); await refresh(); } catch(error) { showModal('Name Case',h('p',{},error.message)); } }));
+				if (!active && !job.saved) actions.push(button('Save Across Reboots', 'ddk-button-secondary', async function() { try { await exec([ 'job', 'save', job.id ]); await refresh(); } catch (error) { showModal('Save Job', h('p', {}, error.message)); } }));
+				if (!active) actions.push(button('Delete Job and Results', 'ddk-button-secondary', async function() { if (!window.confirm('Delete ' + job.id + ' and its results permanently?')) return; try { await exec([ 'job', 'delete', job.id ]); await refresh(); } catch (error) { showModal('Delete Job', h('p', {}, error.message)); } }));
 				if (job.artifact && job.artifact.kind === 'camera_snapshot') {
 					actions.push(button('View Snapshot', 'ddk-button-secondary', function() { viewSnapshot(job, false); }));
 					actions.push(button('Download JPEG', 'ddk-button-secondary', function() { viewSnapshot(job, true); }));
 				}
 				(job.artifacts || []).forEach(function(artifact) {
-					actions.push(button('Download ' + artifact.name, 'ddk-button-secondary', function() { downloadOperatorArtifact(job, artifact); }));
+					actions.push(button('Download ' + artifact.name + (artifact.partial ? ' (incomplete)' : ''), 'ddk-button-secondary', function() { downloadOperatorArtifact(job, artifact); }));
+					var extension = artifact.name.split('.').pop().toLowerCase();
+					var kind = ['pcap','pcapng','cap'].indexOf(extension)>=0 ? 'capture_input' : ['raw','img','squashfs','sqfs'].indexOf(extension)>=0 ? 'storage_image' : ['bin','hex','elf','uf2','dfu','fw','rom'].indexOf(extension)>=0 ? 'device_input' : ['txt','json','cfg','exe','dll','so','apk','zip'].indexOf(extension)>=0 ? 'forensics_input' : null;
+					if (kind) actions.push(button('Reuse ' + artifact.name, 'ddk-button-secondary', async function() {
+						try { var input=await exec(['job','reuse',job.id,artifact.name,kind]);var message=h('p',{},'Preparing input…');var modal=showModal('Preparing input',message);input=await waitForSealed(input,function(value){message.textContent=value;});modal.close();showModal('Input ready',h('p',{},input.original_name + ' is now available in tool input selectors. No download or re-upload is needed.')); }
+						catch(error) {showModal('Reuse result',h('p',{},error.message));}
+					}));
 				});
-				return h('article', { class: 'ddk-job' }, h('div', { class: 'ddk-job-head' }, h('h4', {}, job.metadata.label || job.metadata.action_id || job.id), statePill(job.status)), h('p', { class: 'ddk-job-meta' }, job.id + ' · PID ' + (job.pid || 'pending') + ' · ' + (job.metadata.class || 'INFO')), output ? h('pre', { class: 'ddk-job-output' }, output) : null, actions.length ? h('div', { class: 'ddk-action-row' }, actions) : null);
+				return h('article', { class: 'ddk-job', 'data-job':job.id }, h('div', { class: 'ddk-job-head' }, h('h4', {}, job.metadata.case_label || job.metadata.label || job.metadata.action_id || job.id), statePill(job.status)), h('p', { class: 'ddk-job-meta' }, (job.saved ? 'SAVED · ' : '') + job.id + ' · PID ' + (job.pid || 'pending') + ' · ' + (job.metadata.class || 'INFO')), output ? h('pre', { class: 'ddk-job-output' }, output) : null, actions.length ? h('div', { class: 'ddk-action-row' }, actions) : null);
 			})));
 		}
 		function download(report) {
@@ -813,50 +850,27 @@
 		}
 		async function refresh() { var jobs = await exec([ 'job', 'list' ]); var reports = await exec([ 'report', 'list' ]); renderJobList(jobs); renderReportList(reports); return jobs; }
 		function poll(id) { if (pollers[id]) return; pollers[id] = setTimeout(async function tick() { try { var job = await exec([ 'job', 'status', id ]); await refresh(); if ([ 'queued', 'running', 'stopping' ].indexOf(job.status) >= 0) pollers[id] = setTimeout(tick, 1200); else delete pollers[id]; } catch (_) { delete pollers[id]; } }, 1200); }
-		async function start(action) { if ([ 'network.nmap_lan_discovery', 'capture.lan_metadata_snapshot', 'throughput.iperf3', 'radio.rtl433_snapshot', 'camera.still_snapshot', 'serial.session', 'gps.snapshot', 'android.adb_diagnostics', 'android.adb_manage', 'apple.mobile_diagnostics', 'apple.mobile_capture', 'apple.mobile_manage', 'apple.recovery', 'apple.restore', 'firmware.openocd', 'firmware.avrdude', 'firmware.dfu', 'firmware.serial', 'storage.inspect', 'storage.repair', 'storage.image', 'storage.restore', 'storage.squashfs', 'monitoring.snapshot', 'wireless.survey', 'usb.inventory', 'forensics.inspect_file', 'capture.replay', 'adsb.receive', 'radio.ais', 'bluetooth.scan', 'automation.mqtt_publish', 'automation.relay', 'industrial.modbus_read', 'auth.inventory', 'auth.program', 'camera.stream', 'gps.ntrip' ].indexOf(action) >= 0) { openOperatorAction(action, async function(job) { await refresh(); poll(job.id); }); return; } try { var job = action === 'can.capture' ? await startCanCapture() : await exec([ 'job', 'start', action ]); if (!job) return; await refresh(); poll(job.id); } catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); } }
+        async function start(action) {
+            if (action !== 'report.system') { openOperatorAction(action,async function(job){await refresh();poll(job.id);});return; }
+            try {var job=await exec(['job','start',action]);await refresh();poll(job.id);}catch(error){showModal('Start Job',h('p',{},error.message));}
+        }
 		async function stopJob(id) { try { await exec([ 'job', 'stop', id ]); await refresh(); poll(id); } catch (error) { showModal('Job Error', h('div', { class: 'ddk-alert ddk-alert-error' }, error.message)); } }
 		app.replaceChildren(
-			brand('JOBS & REPORTS', 'Bounded asynchronous work without blocking LuCI'),
-			h('div', { class: 'ddk-alert ddk-alert-info' }, 'Only two DDK jobs may run at once. Structured native jobs use atomic resource locks; artifacts are authenticated, size-bounded, stored in DDK-owned transient or extroot paths, and removed by retention cleanup.'),
-			h('div', { class: 'ddk-alert' + (rtlReady ? ' ddk-alert-info' : '') }, 'RTL-433 receiver state: ' + rtlReason + '. Operator receive opens when a reviewed selectable tuner is ready.'),
-			h('div', { class: 'ddk-alert' + (cameraReady ? ' ddk-alert-info' : '') }, 'Camera state: ' + cameraReason + '. Reviewed hardware enables still capture and a confirmed duration-bounded authenticated IPv4 stream; packaged camera services remain disabled.'),
-			h('div', { class: 'ddk-alert' + (serialReady ? ' ddk-alert-info' : '') }, 'Serial state: ' + serialReason + '. Only reviewed non-EC25 USB serial nodes are selectable.'),
-			h('div', { class: 'ddk-alert' + (gpsReady ? ' ddk-alert-info' : '') }, 'GPS / GNSS state: ' + gpsReason + '. Operator receive opens when an idle reviewed receiver node is selectable; gpsd remains off.'),
-			h('div', { class: 'ddk-alert' + (androidReady ? ' ddk-alert-info' : '') }, 'Android ADB state: ' + androidReason + '. Opening a structured form performs a fresh authorized transport correlation before any job can start.'),
-			h('div', { class: 'ddk-alert' + (appleAnyReady ? ' ddk-alert-info' : '') }, 'Apple state: ' + appleReason + ' · normal ' + Number(appleModes.normal || 0) + ' · recovery ' + Number(appleModes.recovery || 0) + ' · DFU ' + Number(appleModes.dfu || 0) + '. Normal workflows start a temporary owned usbmuxd; recovery/DFU uses exact ECID selection.'),
-			h('div', { class: 'ddk-alert' + (firmwareReady ? ' ddk-alert-info' : '') }, 'Firmware programmer state: ' + firmwareReason + ' · OpenOCD ' + Number(firmwareModes.openocd || 0) + ' · AVRDUDE connections ' + Number(firmwareModes.avrdude || 0) + ' · DFU ' + Number(firmwareModes.dfu || 0) + ' · serial ' + Number(firmwareModes.serial_programmer || 0) + '. Each form opens only for its exact reviewed target class.'),
-			h('div', { class: 'ddk-alert' + (storageReady ? ' ddk-alert-info' : '') }, 'Storage target state: ' + storageReason + '. Router system, extroot, mounted router filesystems, and swap devices are excluded server-side.'),
-			h('div', { class: 'ddk-alert' + (canReady ? ' ddk-alert-info' : '') }, 'CAN state: ' + canReason + '. Capture remains disabled until one physical canN interface is already up and candump exists.'),
-			sectionHeading('Start Bounded Job', 'Exact action IDs plus server-validated Operator Mode parameters'),
-			h('div', { class: 'ddk-action-row' },
-				button('Run Async Proof', '', function() { start('diagnostic.demo'); }),
-				button('Generate DDK System Report', '', function() { start('report.system'); }),
-				button('Cellular Snapshot', 'ddk-button-secondary', function() { start('cellular.snapshot'); }),
-				button('Open Nmap Operator', 'ddk-button-security', function() { start('network.nmap_lan_discovery'); }),
-				button('Open Packet Capture', 'ddk-button-security', function() { start('capture.lan_metadata_snapshot'); }),
-				button('Open iperf3 Operator', 'ddk-button-action', function() { start('throughput.iperf3'); }),
-				button('Open RTL-433 Operator', 'ddk-button-action', function() { start('radio.rtl433_snapshot'); }, !rtlReady),
-				button('Open Camera Still Operator', 'ddk-button-action', function() { start('camera.still_snapshot'); }, !cameraReady),
-				button('Open Serial Operator', 'ddk-button-action', function() { start('serial.session'); }, !serialReady),
-				button('Open GPS / GNSS Operator', 'ddk-button-action', function() { start('gps.snapshot'); }, !gpsReady),
-				button('Open ADB Diagnostics', 'ddk-button-action', function() { start('android.adb_diagnostics'); }, !androidReady),
-				button('Open ADB Device Management', 'ddk-button-action', function() { start('android.adb_manage'); }, !androidReady),
-				button('Open Apple Diagnostics', 'ddk-button-action', function() { start('apple.mobile_diagnostics'); }, !appleNormalReady),
-				button('Open Apple Capture', 'ddk-button-action', function() { start('apple.mobile_capture'); }, !appleNormalReady),
-				button('Open Apple Device Management', 'ddk-button-action', function() { start('apple.mobile_manage'); }, !appleNormalReady),
-				button('Open Apple Recovery / DFU', 'ddk-button-action', function() { start('apple.recovery'); }, !appleRecoveryReady),
-				button('Open Apple IPSW Restore', 'ddk-button-action', function() { start('apple.restore'); }, !appleAnyReady),
-				button('Open OpenOCD Operator', 'ddk-button-action', function() { start('firmware.openocd'); }, !openocdReady),
-				button('Open AVRDUDE Operator', 'ddk-button-action', function() { start('firmware.avrdude'); }, !avrdudeReady),
-				button('Open DFU Operator', 'ddk-button-action', function() { start('firmware.dfu'); }, !dfuReady),
-				button('Open Serial Programmer', 'ddk-button-action', function() { start('firmware.serial'); }, !firmwareSerialReady),
-				button('Inspect Storage Target', 'ddk-button-action', function() { start('storage.inspect'); }, !storageReady),
-				button('Repair Storage Target', 'ddk-button-action', function() { start('storage.repair'); }, !storageReady),
-				button('Image Storage Target', 'ddk-button-action', function() { start('storage.image'); }, !storageReady),
-				button('Restore Storage Target', 'ddk-button-action', function() { start('storage.restore'); }, !storageReady),
-				button('Inspect / Recover SquashFS', 'ddk-button-action', function() { start('storage.squashfs'); }),
-				button('Passive CAN Frame Snapshot', 'ddk-button-action', function() { start('can.capture'); }, !canReady),
-				button('Refresh', 'ddk-button-secondary', refresh)),
+			brand('JOBS & CASES', 'Run tools, keep results, and return to saved work'),
+			h('div', { class: 'ddk-alert ddk-alert-info' }, 'Two jobs may run at once. Stop keeps partial results. Save a finished job to preserve it across reboots, name the case, export it, or reuse an artifact as input. Unsaved job cleanup is configurable in Settings.'),
+            sectionHeading('Start a workflow','Open a tool, select its target, and review the operation'),
+            h('div',{class:'ddk-action-row'},
+                button('Network Discovery','ddk-button-security',function(){start('network.nmap_lan_discovery');}),
+                button('ARP Discovery','ddk-button-security',function(){start('network.arp_scan');}),
+                button('Android Tools','ddk-button-action',function(){start('android.operator');}),
+                button('Packet Capture','ddk-button-action',function(){start('capture.ring');}),
+                button('Loss and Latency','',function(){start('network.fping');}),
+                button('Serial Console','',function(){start('serial.console');}),
+                button('Cellular Diagnostics','',function(){start('cellular.diagnostics');}),
+                button('Recovery Imaging','',function(){start('storage.ddrescue');}),
+                button('System Report','ddk-button-secondary',function(){start('report.system');}),
+                h('a',{class:'ddk-button ddk-button-secondary',href:config.base+'/tools'},'All Tools'),
+                button('Refresh','ddk-button-secondary',refresh)),
 			sectionHeading('Jobs', 'Only DDK-owned worker PIDs can be stopped · artifacts require authenticated access'), jobsNode,
 			sectionHeading('Reports', 'Authenticated view/download · 24-hour retention'), reportsNode);
 		var jobs = await refresh(); jobs.forEach(function(job) { if ([ 'queued', 'running', 'stopping' ].indexOf(job.status) >= 0) poll(job.id); });
@@ -864,22 +878,22 @@
 
 	async function renderSettings() {
 		var uploadKinds = {
-			forensics_input: { label: 'Forensic analysis input', maximum: 268435456, extensions: '.bin, .exe, .dll, .elf, .so, .apk, .zip, .img, .raw, .txt, .rules, .yar, .yara, .json, .cfg, .pcap, .pcapng' },
-			capture_input: { label: 'Packet replay capture', maximum: 1073741824, extensions: '.pcap, .pcapng, .cap' },
-			firmware_image: { label: 'Firmware / programmer image', maximum: 268435456, extensions: '.bin, .hex, .elf, .uf2, .dfu, .fw, .rom, .img' },
-			storage_image: { label: 'Storage / recovery image', maximum: 17179869184, extensions: '.raw, .img, .bin, .dd, .squashfs, .sqfs' },
-			android_package: { label: 'Android package', maximum: 268435456, extensions: '.apk, .apks, .zip' },
-			android_backup: { label: 'Android ADB backup', maximum: 1073741824, extensions: '.ab' },
-			apple_restore: { label: 'Apple IPSW restore archive', maximum: 12884901888, extensions: '.ipsw, .zip' },
-			apple_recovery_input: { label: 'Apple recovery / DFU input', maximum: 268435456, extensions: '.bin, .img, .dfu, .ibss, .ibec, .payload, .txt, .script, .cfg' },
+			forensics_input: { label: 'Forensic analysis input', maximum: 8796093022208, extensions: '.bin, .exe, .dll, .elf, .so, .apk, .zip, .img, .raw, .txt, .rules, .yar, .yara, .json, .cfg, .pcap, .pcapng' },
+			capture_input: { label: 'Packet replay capture', maximum: 8796093022208, extensions: '.pcap, .pcapng, .cap' },
+			firmware_image: { label: 'Firmware / programmer image', maximum: 8796093022208, extensions: '.bin, .hex, .elf, .uf2, .dfu, .fw, .rom, .img' },
+			storage_image: { label: 'Storage / recovery image', maximum: 8796093022208, extensions: '.raw, .img, .bin, .dd, .squashfs, .sqfs' },
+			android_package: { label: 'Android package', maximum: 8796093022208, extensions: '.apk, .apks, .zip' },
+			android_backup: { label: 'Android ADB backup', maximum: 8796093022208, extensions: '.ab' },
+			apple_restore: { label: 'Apple IPSW restore archive', maximum: 8796093022208, extensions: '.ipsw, .zip' },
+			apple_recovery_input: { label: 'Apple recovery / DFU input', maximum: 8796093022208, extensions: '.bin, .img, .dfu, .ibss, .ibec, .payload, .txt, .script, .cfg' },
 			apple_ticket: { label: 'Apple AP ticket', maximum: 1048576, extensions: '.shsh, .ticket, .bin, .plist' },
-			device_input: { label: 'Device workflow input', maximum: 268435456, extensions: '.bin, .hex, .elf, .uf2, .dfu, .fw, .rom, .img, .cfg, .json, .zip, .tar, .gz' }
+			device_input: { label: 'Device workflow input', maximum: 8796093022208, extensions: '.bin, .hex, .elf, .uf2, .dfu, .fw, .rom, .img, .cfg, .json, .zip, .tar, .gz' }
 		};
 		var kindSelect = h('select', { class: 'ddk-select' }, Object.keys(uploadKinds).map(function(kind) {
 			return h('option', { value: kind }, uploadKinds[kind].label);
 		}));
 		var fileInput = h('input', { class: 'ddk-input', type: 'file' });
-		var uploadStatus = h('div', { class: 'ddk-alert ddk-alert-info' }, 'Choose one bounded input file. The router seals it by ID and SHA-256; native actions never receive a browser path.');
+		var uploadStatus = h('div', { class: 'ddk-alert ddk-alert-info' }, 'Choose a file to upload. Available router storage determines how much it can hold. Files become ready for use after their integrity check finishes.');
 		var uploadsNode = h('div', { class: 'ddk-job-list' }, h('div', { class: 'ddk-empty' }, 'Loading sealed inputs…'));
 		var uploadButton;
 
@@ -887,7 +901,7 @@
 		function updateUploadHint() {
 			var policy = selectedUploadPolicy();
 			uploadStatus.className = 'ddk-alert ddk-alert-info';
-			uploadStatus.textContent = 'Allowed: ' + policy.extensions + ' · maximum ' + formatBytes(policy.maximum) + ' · reservation expires after one hour.';
+			uploadStatus.textContent = 'Allowed: ' + policy.extensions + ' · maximum ' + formatBytes(policy.maximum) + ' · inactive reservations expire after one hour; active transfers are retained.';
 		}
 		function renderUploads(uploads) {
 			if (!uploads.length) {
@@ -897,9 +911,10 @@
 			var uploadNodes = uploads.map(function(upload) {
 				var removeButton;
 				return h('article', { class: 'ddk-job' },
-					h('div', { class: 'ddk-job-head' }, h('h4', {}, upload.original_name), statePill('SEALED')),
+					h('div', { class: 'ddk-job-head' }, h('h4', {}, upload.original_name), statePill((upload.phase || 'sealed').toUpperCase())),
 					h('p', { class: 'ddk-job-meta' }, upload.id + ' · ' + upload.kind + ' · ' + formatBytes(upload.size)),
 					row('SHA-256', upload.sha256),
+					upload.phase==='sealing' ? row('Hash progress',formatBytes(upload.hash_bytes || 0)+' / '+formatBytes(upload.size)) : null,
 					row('Expires', new Date(Number(upload.expires_at) * 1000).toLocaleString()),
 					h('div', { class: 'ddk-action-row' }, removeButton = button('Delete Sealed Input', 'ddk-button-secondary', async function() {
 						if (!window.confirm('Delete sealed DDK input?\n\nFile: ' + upload.original_name + '\nID: ' + upload.id + '\nSHA-256: ' + upload.sha256 + '\n\nThis cannot be undone.')) return;
@@ -931,6 +946,7 @@
 				await uploadFile(reservation, file, function(percent) { uploadStatus.textContent = 'Uploading ' + file.name + '… ' + percent + '%'; });
 				uploadStatus.textContent = 'Validating size, signature, and SHA-256 on the router…';
 				var sealed = await exec([ 'upload', 'finalize', reservation.id ]);
+				sealed = await waitForSealed(sealed,function(value){uploadStatus.textContent=value;});
 				uploadStatus.textContent = 'Sealed ' + sealed.original_name + ' as ' + sealed.id + ' · SHA-256 ' + sealed.sha256;
 				fileInput.value = '';
 				await refreshUploads();
@@ -944,22 +960,30 @@
 			}
 			finally { uploadButton.disabled = false; }
 		}
-		var posture = [
-			[ 'Authentication', 'Inherited from the existing LuCI sysauth session. No public DDK endpoint.' ],
-				[ 'Network exposure', 'No persistent listener, nginx/uhttpd rule, firewall rule, or implicit WAN binding is created. Confirmed iperf3 server jobs are temporary and bind only to a selected current local address.' ],
-			[ 'Action policy', 'Exact server-side action IDs only. Browser command strings and executable paths are rejected.' ],
-			[ 'Arguments', 'Only known action IDs and versioned structured envelopes are accepted. Each backend schema rejects unknown fields and constructs a literal native argv.' ],
-			[ 'Private identity', 'Android, Apple mobile, and programmer snapshots read sanitized sysfs only and persist only in authenticated browser memory.' ],
-			[ 'Jobs', 'Maximum 2 active, 20 retained, 4-hour job cleanup, bounded stdout/stderr.' ],
-			[ 'Input files', 'Authenticated reservations use one exact DDK-owned path, atomic sealing, mode 0600, SHA-256 identity, 10-file retention, and no arbitrary router reads or writes.' ],
-			[ 'Camera artifacts', 'One 256 KiB JPEG maximum, mode 0600 under its DDK job, authenticated native LuCI download only.' ],
-			[ 'Reports', 'Stored in /tmp, 128 KiB maximum view, 24-hour cleanup, no secret configuration dumps.' ],
-			[ 'Idle footprint', 'No DDK daemon, database, timer, analytics, or background poller runs on the router.' ],
-			[ 'Operator Mode', 'Typed controls are validated server-side into exact native argv. Networking, radio, monitoring, automation, industrial, device, firmware, storage, and evidence workflows add live target selection, isolated inputs/artifacts, resource ownership, target-bound confirmation, cancellation, and cleanup.' ]
-		];
-		kindSelect.addEventListener('change', updateUploadHint);
-		uploadButton = button('Upload & Seal Input', 'ddk-button-action', stageUpload);
-		app.replaceChildren(brand('SETTINGS', 'Production safety posture and operating limits'), h('div', { class: 'ddk-alert ddk-alert-info' }, 'Operator Mode changes workflow inputs, not appliance networking or boot services. The approved swap boot entry remains managed only by guarded command-line tooling.'), h('div', { class: 'ddk-posture' }, posture.map(function(item) { return h('div', { class: 'ddk-posture-item' }, h('strong', {}, item[0]), h('span', {}, item[1])); })), sectionHeading('Authenticated Input Staging', 'For native operations that need a package, image, or device input file'), card('Upload to DDK-controlled storage', 'SEALED INPUT', [ h('div', { class: 'ddk-upload-grid' }, h('label', { class: 'ddk-operator-field' }, h('span', { class: 'ddk-operator-label' }, 'Input kind'), kindSelect), h('label', { class: 'ddk-operator-field' }, h('span', { class: 'ddk-operator-label' }, 'Local file'), fileInput)), uploadStatus, h('div', { class: 'ddk-action-row' }, uploadButton, button('Refresh Sealed Inputs', 'ddk-button-secondary', refreshUploads)), h('p', { class: 'ddk-job-meta' }, 'Reservations expire after 1 hour; sealed inputs expire after 24 hours. At most 10 are retained. A file is not available to a native action until final size, type signature where applicable, and SHA-256 validation succeed.'), uploadsNode ], 'ddk-card-full'), sectionHeading('Operator Mode Coverage', 'Native capability is enabled per exact installed tool'), card('Current Migration State', 'V2.1', [ row('Nmap 7.91', 'STRUCTURED OPERATOR SCANS + ARTIFACTS'), row('tcpdump 4.9.3 / tcpreplay 4.4.1', 'STRUCTURED CAPTURE + DECODE + PCAP + CONFIRMED REPLAY'), row('iperf3 3.11', 'STRUCTURED CLIENT + TEMPORARY SERVER'), row('rtl_433 20.11 / readsb 3.9.0 / rtl_ais 0.3', 'HARDWARE-GATED STRUCTURED RADIO RECEIVE'), row('fswebcam 20140113 / mjpg-streamer 2.0', 'STILL CAPTURE + TEMPORARY AUTHENTICATED IPV4 STREAM'), row('socat 1.7.4.1 / stty 9.0', 'STRUCTURED NON-EC25 SERIAL SESSIONS'), row('gpsdecode 3.23.1 / ntripclient 1.51', 'RECEIVE ARTIFACTS + CONFIRMED CORRECTION SESSION'), row('ADB 1.0.32', 'STRUCTURED DIAGNOSTICS + BACKUP + FILE/PACKAGE/DEVICE MANAGEMENT'), row('Apple tools 1.3.0 / irecovery 1.0.0 / idevicerestore 1.0.0', 'STRUCTURED NORMAL + RECOVERY/DFU + RESTORE WORKFLOWS'), row('OpenOCD 0.11 / AVRDUDE 6.3 / DFU / serial programmers', 'STRUCTURED PROBE + READ + VERIFY + WRITE + ERASE WORKFLOWS'), row('smartctl 7.2 / e2fsck / badblocks / BusyBox dd / unsquashfs 4.5', 'STRUCTURED INSPECT + REPAIR + IMAGE + RESTORE + RECOVERY ARTIFACTS'), row('vnStat 2.9 / iftop 1.0pre4 / iwinfo / iw', 'BOUNDED MONITORING + WIRELESS SURVEY'), row('file / hashdeep / ssdeep / checksec / YARA', 'SEALED FILE-ONLY FORENSIC ANALYSIS'), row('mosquitto_pub 2.0.15 / crelay 0.14', 'ONE-SHOT MQTT + HARDWARE-GATED RELAY CONTROL'), row('mbcollect / PCSC / ykpers / usbutils', 'MODBUS READ + TOKEN + USB WORKFLOWS'), row('Legacy v2 actions', 'COMPATIBILITY PATHS PRESERVED'), row('CAN transmit / configuration', 'UNAVAILABLE: NO CAN INTERFACE OR CANUTILS PAYLOAD'), row('Modbus write', 'UNAVAILABLE: INSTALLED MBTOOLS BUILD IS READ-ONLY'), row('USB power / USBIP attach', 'UNAVAILABLE ON SAFE TARGET TOPOLOGY/RUNTIME'), row('Wireless monitor-mode changes', 'UNAVAILABLE WITHOUT MANAGEMENT-SAFE RADIO ROLLBACK'), row('Fastboot / Flashrom executable', 'UNAVAILABLE ON TARGET'), row('Arbitrary shell / executable paths', 'REJECTED BY DESIGN'), row('Optional boot daemons', 'REMAIN DISABLED'), row('WAN service exposure', 'NOT IMPLEMENTED') ], 'ddk-card-full'));
+        var retained = await exec(['settings','get']);
+        var retainHours=h('input',{class:'ddk-input',type:'number',min:0,max:87600,value:retained.job_hours});
+        var retainCount=h('input',{class:'ddk-input',type:'number',min:0,max:10000,value:retained.job_count});
+        var inputHours=h('input',{class:'ddk-input',type:'number',min:0,max:87600,value:retained.input_hours});
+        var retainedStatus=h('p',{});
+        var retentionCard=card('Jobs and saved cases','RETENTION',[
+            h('p',{},'Saved cases remain until you delete them. Stop keeps partial results; Save Across Reboots preserves the job as a case. Unsaved jobs use the cleanup settings below. Zero disables that cleanup limit.'),
+            h('div',{class:'ddk-upload-grid'},h('label',{},'Unsaved job age (hours)',retainHours),h('label',{},'Unsaved job count',retainCount),h('label',{},'New sealed input lifetime (hours)',inputHours)),
+            button('Save Retention Settings','',async function(){try{await exec(['settings','set',structuredEnvelope({job_hours:Number(retainHours.value),job_count:Number(retainCount.value),input_hours:Number(inputHours.value)})]);retainedStatus.textContent='Saved. Job cleanup applies on the next refresh; input lifetime applies to newly sealed inputs.';}catch(error){retainedStatus.textContent=error.message;}}),retainedStatus
+        ],'ddk-card-full');
+        kindSelect.addEventListener('change', updateUploadHint);
+        uploadButton = button('Upload & Seal Input', 'ddk-button-action', stageUpload);
+        app.replaceChildren(brand('SETTINGS','Case storage and reusable input files'),retentionCard,
+            card('Upload input files','SEALED INPUT',[
+                h('div',{class:'ddk-upload-grid'},h('label',{},'Input kind',kindSelect),h('label',{},'Local file',fileInput)),uploadStatus,
+                h('div',{class:'ddk-action-row'},uploadButton,button('Refresh Inputs','ddk-button-secondary',refreshUploads)),
+                h('p',{},'Up to 64 sealed inputs are retained. Jobs can reuse their saved results directly. Available storage is checked before each operation.'),uploadsNode
+            ],'ddk-card-full'),
+            card('Running tools','V3',[
+                h('p',{},'Choose a workflow in Tools, select its target and operation, then review the command preview. Readiness is checked for the operation you choose. Missing hardware does not hide the controls.'),
+                h('p',{},'Two jobs can run concurrently on this 121 MB router. Operations lock the selected device or resource. Streaming and capture sessions have adjustable output budgets and can run until stopped. Outputs reserve free space for the router.'),
+                h('p',{},'Access uses your authenticated LuCI session. Temporary helpers belong to their jobs and are stopped with them. No background dashboard service is needed.')
+            ],'ddk-card-full'));
+
 		updateUploadHint();
 		await refreshUploads();
 	}

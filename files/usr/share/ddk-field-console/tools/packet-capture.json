@@ -2,7 +2,7 @@
   "id": "packet-capture",
   "name": "Capture & Traffic",
   "category": "Packet Capture",
-  "description": "Native tcpdump 4.9.3 capture with validated live interfaces, BPF filters, decode controls, and authenticated PCAP artifacts.",
+  "description": "Packet capture, rotating files, inspection, and replay from reusable captures.",
   "package_names": ["tcpdump", "tcpreplay", "netsniff-ng", "dnstop", "nfdump", "softflowd", "hping3"],
   "expected_binaries": ["tcpdump", "tcpreplay", "netsniff-ng", "dnstop"],
   "required_hardware": [],
@@ -11,7 +11,9 @@
   "enabled": true,
   "actions": [
     {"id": "capture.lan_metadata_snapshot", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "capture.replay", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
+    {"id": "capture.replay", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "capture.inspect", "label": "Inspect a saved capture", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "capture.ring", "label": "Rotating packet capture", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Capture supports structured BPF/decode/PCAP workflows. Replay separately binds a sealed validated PCAP to an exact current interface with loop, packet, duration, and native speed controls plus target-bound confirmation and cancellation."
+  "help_text": "Use rotating capture for long observations, inspect a saved PCAP, or reuse it in the replay workflow. Stop keeps partial captures. Output budgets are checked against available storage."
 }

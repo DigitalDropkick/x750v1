@@ -57,6 +57,10 @@ for _, action_id in ipairs(action_ids) do
 end
 
 local openocd_probe = assert(phase3.prepare("firmware.openocd", { device = "usb:1-9" }, context))
+context.programmer_devices[1].requires_enrollment=true
+expect(not phase3.prepare("firmware.openocd",{device="usb:1-9"},context),"Unfamiliar programmer needs identification")
+expect(phase3.prepare("firmware.openocd",{device="usb:1-9",accept_unrecognized=true},context),"An explicitly identified programmer must remain usable")
+context.programmer_devices[1].requires_enrollment=nil
 expect(openocd_probe.argv[1] == "/usr/bin/openocd" and contains(openocd_probe.argv, "/usr/share/openocd/scripts/interface/jlink.cfg"), "OpenOCD probe argv mismatch")
 expect(not openocd_probe.confirmation.required and not contains_text(openocd_probe.argv, "@UPLOAD@"), "OpenOCD probe boundary mismatch")
 
@@ -128,7 +132,7 @@ expect(rejected == nil, "non-inventoried system storage target was accepted")
 rejected = phase3.prepare("storage.image", { device = "/dev/sdb", offset = 67108863, length = 2 }, context)
 expect(rejected == nil, "out-of-range storage image was accepted")
 rejected = phase3.prepare("storage.restore", { device = "/dev/sdb", upload = "upload-1700000000-100-2", offset = 4096, verify = true }, context)
-expect(rejected == nil, "unsupported nonzero-offset restore verification was accepted")
+expect(rejected and rejected.options.offset==4096 and rejected.options.verify, "nonzero-offset restore verification failed")
 rejected = phase3.prepare("storage.squashfs", { upload = "upload-1700000000-100-3", operation = "extract", paths = { "../etc/shadow" } }, context)
 expect(rejected == nil, "SquashFS path traversal was accepted")
 

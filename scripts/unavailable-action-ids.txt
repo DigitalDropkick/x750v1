@@ -1,7 +1,1 @@
-# Exact action IDs unavailable because of reviewed target runtime, topology, or rollback blockers.
-can.transmit
-cellular.raw_command
-industrial.modbus_write
-usb.power
-usbip.attach
-wireless.monitor
+# Actions awaiting a concrete native implementation; hardware readiness is evaluated live.

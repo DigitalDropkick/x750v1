@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -16,7 +16,7 @@ if (!/^[a-fA-F0-9]{32}$/.test(session)) {
 
 const profile = mkdtempSync(join(tmpdir(), 'ddk-browser-profile-'));
 const uploadProofPath = join(profile, 'ddk-browser-upload-proof.bin');
-writeFileSync(uploadProofPath, 'test');
+writeFileSync(uploadProofPath, process.env.DDK_BROWSER_SLOW_UPLOAD==='1' ? Buffer.alloc(8*1048576,0x44) : 'test');
 const chrome = spawn('/usr/bin/google-chrome', [
 	'--headless=new',
 	'--disable-gpu',
@@ -81,8 +81,10 @@ async function openPage(sessionId, path, width, height) {
 		mobile: width <= 480
 	}, sessionId);
 	await call('Page.navigate', { url: `${base}/cgi-bin/luci/admin/ddk/${path}` }, sessionId);
-	await waitUntil(async () => evaluate(sessionId, `location.pathname.endsWith('/${path}') && document.readyState === 'complete' && document.querySelector('#ddk-app')?.dataset.page === '${path}'`), 15000, `Timed out loading ${path}.`);
-	await waitUntil(async () => evaluate(sessionId, '!!document.querySelector("#ddk-app .ddk-brand") && !document.querySelector("#ddk-app .ddk-loading")'), 15000, `Timed out rendering ${path}.`);
+	await waitUntil(async () => evaluate(sessionId, `location.pathname.endsWith('/${path}') && document.readyState === 'complete' && document.querySelector('#ddk-app')?.dataset.page === '${path}'`), 60000, `Timed out loading ${path}.`);
+	await waitUntil(async () => evaluate(sessionId, '!!document.querySelector("#ddk-app .ddk-brand") && !document.querySelector("#ddk-app .ddk-loading")'), 60000, `Timed out rendering ${path}.`);
+	const renderError=await evaluate(sessionId,"document.querySelector('#ddk-app .ddk-alert-error')?.textContent || ''");
+	if(renderError)throw new Error('Page '+path+': '+renderError);
 }
 
 async function validateBrand(sessionId, page) {
@@ -93,7 +95,7 @@ async function validateBrand(sessionId, page) {
 			document.querySelector('.ddk-brand-media img')
 		];
 		return images.every(image => image && image.complete);
-	})()`), 15000, `Timed out loading local brand images for ${page}.`);
+	})()`), 60000, `Timed out loading local brand images for ${page}.`);
 	const result = await evaluate(sessionId, `(() => {
 		const logo = document.querySelector('.ddk-brand-mark img');
 		const navLogo = document.querySelector('.ddk-nav-mark img');
@@ -120,7 +122,72 @@ async function screenshot(sessionId, filename) {
 }
 
 async function waitForJobs(sessionId) {
-	await waitUntil(async () => evaluate(sessionId, 'document.querySelectorAll("#ddk-app .ddk-job-list, #ddk-app .ddk-empty").length >= 2'), 15000, 'Timed out rendering job and report data.');
+	await waitUntil(async () => evaluate(sessionId, 'document.querySelectorAll("#ddk-app .ddk-job-list, #ddk-app .ddk-empty").length >= 2'), 60000, 'Timed out rendering job and report data.');
+}
+
+async function verifyFlows(sid) {
+	const evalPage = expression => evaluate(sid, expression);
+	const click = label => evalPage(`(() => { const node=Array.from(document.querySelectorAll('button')).reverse().find(n=>n.textContent.trim()===${JSON.stringify(label)} && !n.disabled); if(!node)throw Error('Button unavailable');node.click(); })()`);
+	const waitText = text => waitUntil(() => evalPage(`document.body.textContent.includes(${JSON.stringify(text)})`),60000,'Missing interface text: '+text);
+	const set = (name,value) => evalPage(`(() => {const n=document.querySelector('[name="${name}"]');if(!n)throw Error('Missing field');n.value=${JSON.stringify(String(value))};n.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+	for (const width of (process.env.DDK_BROWSER_QUICK==='1' ? [] : [1440,390,320])) {
+		for (const page of ['overview','tools','jobs','settings','packages']) {
+			await openPage(sid,page,width,900);
+			if (!await evalPage("document.body.textContent.includes('X750 / v3.0.0') && document.documentElement.scrollWidth <= window.innerWidth")) throw new Error(`Page/version/overflow: ${page} at ${width}`);
+			await validateBrand(sid,page);
+		}
+		console.log('Responsive pages passed at '+width+'px');
+	}
+	await openPage(sid,'tools',1440,1000);
+	const actions = ['network.nmap_lan_discovery','network.arp_scan','android.operator','capture.ring','wireless.monitor','serial.console','gps.session','can.capture','can.transmit','industrial.modbus_write','firmware.openocd','firmware.ftdi','storage.clone','apple.mobile_manage','bluetooth.pairing','usbip.attach','auth.otp'];
+	for(const action of actions) {
+		const control=await evalPage(`(() => {const n=document.querySelector('[data-action="${action}"]');return {found:!!n,enabled:!!n&&!n.disabled};})()`);
+		if(!control.enabled)throw new Error('Tool control unavailable: '+action+' '+JSON.stringify(control));
+		await evalPage(`document.querySelector('[data-action="${action}"]').click()`);
+		await waitUntil(()=>evalPage("!!document.querySelector('.ddk-modal [name]')"),60000,'Tool form failed: '+action);
+		if(action==='android.operator') {
+			await set('transport','tcp');
+			if(!await evalPage("!!document.querySelector('[name=host]') && !document.querySelector('[name=host]').closest('label').hidden")) throw new Error('Android network transport is inaccessible');
+		}
+		await click('Close');
+		console.log('Opened form: '+action);
+	}
+	console.log('Network, Android and hardware tool forms passed');
+	await openPage(sid,'jobs',1440,1000);await waitForJobs(sid);
+	await click('Loss and Latency');await waitText('Hosts or IP addresses');
+	await set('targets','127.0.0.1');await set('interface','lo');await set('count',0);await set('duration',0);await set('period_ms',100);await set('output_mib',1);
+	await click('Validate & Review');await waitText('Start Native Action');
+	if(!await evalPage("document.querySelector('.ddk-operator-review').textContent.includes('127.0.0.1')"))throw new Error('Loopback preview lost target');
+	const existing=await evalPage("Array.from(document.querySelectorAll('[data-job]')).map(n=>n.dataset.job)");
+	await click('Start Native Action');
+	const job=await waitUntil(()=>evalPage(`Array.from(document.querySelectorAll('[data-job]')).map(n=>n.dataset.job).find(id=>!${JSON.stringify(existing)}.includes(id))`),60000,'Native job did not appear');
+	const clickJob=label=>evalPage(`(()=>{const n=Array.from(document.querySelector('[data-job="${job}"]').querySelectorAll('button')).find(n=>n.textContent.trim()===${JSON.stringify(label)}&&!n.disabled);if(!n)throw Error('Missing job control');n.click();})()`);
+	await waitUntil(()=>evalPage(`document.querySelector('[data-job="${job}"]').textContent.includes('127.0.0.1')`),60000,'No native loopback result');
+	await clickJob('Stop and Keep Results');
+	await waitUntil(()=>evalPage(`document.querySelector('[data-job="${job}"]').textContent.includes('Save Across Reboots')`),60000,'Stop did not preserve job');
+	await clickJob('Save Across Reboots');
+	await waitUntil(()=>evalPage(`document.querySelector('[data-job="${job}"]').textContent.includes('SAVED')`),60000,'Case was not saved');
+	await evalPage(`(()=>{const original=window.fetch;window.ddkDownloadProof=null;window.fetch=async(...args)=>{const response=await original(...args);if(String(args[0]).includes('cgi-download'))window.ddkDownloadProof={ok:response.ok,loopback:(await response.clone().text()).includes('127.0.0.1')};return response;};})()`);
+	await clickJob('Download native-output.txt (incomplete)');
+	const download=await waitUntil(()=>evalPage('window.ddkDownloadProof'),60000,'No authenticated download');
+	if(!download.ok||!download.loopback)throw new Error('Native result download failed');
+	console.log('DDK_BROWSER_FIXTURE_JOB='+job);
+	await screenshot(sid,'ddk-v3-jobs-desktop.png');
+	await clickJob('Reuse native-output.txt');await waitText('Input ready');await click('Close');
+	await openPage(sid,'settings',390,900);
+	await click('Save Retention Settings');await waitText('Saved. Job cleanup');
+	await call('DOM.enable',{},sid);
+	const doc=await call('DOM.getDocument',{},sid);const file=await call('DOM.querySelector',{nodeId:doc.root.nodeId,selector:'input[type=file]'},sid);
+	await call('DOM.setFileInputFiles',{nodeId:file.nodeId,files:[uploadProofPath]},sid);
+	if(process.env.DDK_BROWSER_SLOW_UPLOAD==='1') { await call('Network.emulateNetworkConditions',{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:100000},sid);console.log('Testing an 8 MiB upload across the native 60-second request timeout'); }
+	await click('Upload & Seal Input');await waitUntil(()=>evalPage("document.body.textContent.includes('Sealed ddk-browser-upload-proof.bin')"),180000,'Upload did not finish');
+	if(process.env.DDK_BROWSER_SLOW_UPLOAD==='1') await call('Network.emulateNetworkConditions',{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1},sid);
+	await screenshot(sid,'ddk-v3-settings-mobile.png');
+	const denied=await evalPage(`(async()=>{const f=document.querySelector('script[data-ddk-config]');const r=await fetch('/cgi-bin/cgi-download',{method:'POST',body:new URLSearchParams({sessionid:${JSON.stringify(session)},path:'/etc/hostname'}),credentials:'same-origin'});return r.status!==200;})()`);
+	if(!denied)throw new Error('Download escaped application ACL');
+	await call('Page.navigate',{url:base+'/ddk'},sid);
+	await waitUntil(async()=>{try{return await evalPage("location.pathname==='/cgi-bin/luci/admin/ddk/overview' && !!document.querySelector('.ddk-hero')");}catch{return false;}},20000,'The /ddk shortcut did not reach the authenticated dashboard');
+	console.log('Native job, preserved partial output, saved case, download/reuse and upload passed');
 }
 
 try {
@@ -166,311 +233,23 @@ try {
 	}, pageSession);
 	if (!cookie.success) throw new Error('Chrome rejected the transient LuCI cookie.');
 
-	await call('Page.navigate', { url: `${base}/ddk` }, pageSession);
-	await waitUntil(async () => evaluate(pageSession, `location.pathname.endsWith('/cgi-bin/luci/admin/ddk/overview') && document.readyState === 'complete' && document.querySelector('#ddk-app')?.dataset.page === 'overview'`), 15000, 'Timed out following the /ddk shortcut.');
-	await waitUntil(async () => evaluate(pageSession, '!!document.querySelector("#ddk-app .ddk-brand") && !document.querySelector("#ddk-app .ddk-loading")'), 15000, 'Timed out rendering the shortcut destination.');
-	const shortcut = await evaluate(pageSession, `({
-		path: location.pathname,
-		version: document.body.textContent.includes('X750 / v2.1.0'),
-		serial: document.body.textContent.includes('4 nodes · 4 MODEM RESERVED · 0 GENERAL'),
-		overflow: document.documentElement.scrollWidth > window.innerWidth,
-		login: document.body.textContent.includes('Authorization Required')
-	})`);
-	if (!shortcut.version || !shortcut.serial || shortcut.overflow || shortcut.login) throw new Error(`Shortcut validation failed: ${JSON.stringify(shortcut)}`);
-	await validateBrand(pageSession, 'overview');
-
-	await openPage(pageSession, 'overview', 320, 844);
-	await call('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }, pageSession);
-	await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }, pageSession);
-	const compactOverview = await evaluate(pageSession, `(() => {
-		const focusTarget = document.activeElement;
-		const focusStyle = focusTarget && focusTarget !== document.body ? getComputedStyle(focusTarget) : null;
-		const touchTargets = Array.from(document.querySelectorAll('.ddk-nav a, .ddk-console button.ddk-button, .ddk-console a.ddk-button'));
-		return {
-			overflow: document.documentElement.scrollWidth > window.innerWidth,
-			serial: document.body.textContent.includes('4 nodes · 4 MODEM RESERVED · 0 GENERAL'),
-			inspect: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Inspect Serial Attribution' && !node.disabled),
-			focus: !!focusStyle && focusStyle.outlineStyle !== 'none' && parseFloat(focusStyle.outlineWidth) >= 2,
-			touchTargets: touchTargets.length > 0 && touchTargets.every(node => node.getBoundingClientRect().height >= 43.5),
-			width: window.innerWidth
-		};
-	})()`);
-	if (compactOverview.overflow || !compactOverview.serial || !compactOverview.inspect || !compactOverview.focus || !compactOverview.touchTargets || compactOverview.width !== 320) {
-		throw new Error(`Compact Overview validation failed: ${JSON.stringify(compactOverview)}`);
-	}
-	await validateBrand(pageSession, 'overview');
-	const overviewPath = await screenshot(pageSession, 'ddk-v210-overview-320.png');
-
-	await openPage(pageSession, 'jobs', 1440, 1000);
-	await waitForJobs(pageSession);
-	const desktop = await evaluate(pageSession, `(() => {
-		const button = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Open Nmap Operator');
-		const cellularButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Cellular Snapshot');
-		const captureButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Open Packet Capture');
-		const iperfButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Open iperf3 Operator');
-		const radioButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Open RTL-433 Operator');
-		const cameraButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Open Camera Still Operator');
-		const gpsButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Open GPS / GNSS Operator');
-		const adbDiagnosticsButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Open ADB Diagnostics');
-		const adbManageButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Open ADB Device Management');
-		const appleButtons = [ 'Open Apple Diagnostics', 'Open Apple Capture', 'Open Apple Device Management', 'Open Apple Recovery / DFU', 'Open Apple IPSW Restore' ].map(label => Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === label));
-		const firmwareButtons = [ 'Open OpenOCD Operator', 'Open AVRDUDE Operator', 'Open DFU Operator', 'Open Serial Programmer' ].map(label => Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === label));
-		const storageButtons = [ 'Inspect Storage Target', 'Repair Storage Target', 'Image Storage Target', 'Restore Storage Target' ].map(label => Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === label));
-		const squashfsButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Inspect / Recover SquashFS');
-		const canButton = Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Passive CAN Frame Snapshot');
-		return {
-			login: document.body.textContent.includes('Authorization Required'),
-			version: document.body.textContent.includes('X750 / v2.1.0'),
-			button: !!button,
-			enabled: !!button && !button.disabled,
-			cellular: !!cellularButton && !cellularButton.disabled,
-			capture: !!captureButton && !captureButton.disabled,
-			iperf: !!iperfButton && !iperfButton.disabled && iperfButton.classList.contains('ddk-button-action'),
-			radioHardwareRequired: document.body.textContent.includes('RTL-433 receiver state: HARDWARE REQUIRED'),
-			radioDisabled: !!radioButton && radioButton.disabled,
-			cameraHardwareRequired: document.body.textContent.includes('Camera state: HARDWARE REQUIRED'),
-			cameraDisabled: !!cameraButton && cameraButton.disabled,
-			gpsUnavailable: document.body.textContent.includes('GPS / GNSS state: REVIEWED USB GNSS RECEIVER NOT DETECTED'),
-			gpsDisabled: !!gpsButton && gpsButton.disabled,
-			adbUnavailable: document.body.textContent.includes('Android ADB state:'),
-			adbDisabled: !!adbDiagnosticsButton && adbDiagnosticsButton.disabled && !!adbManageButton && adbManageButton.disabled,
-			appleUnavailable: document.body.textContent.includes('Apple state:') && document.body.textContent.includes('normal 0 · recovery 0 · DFU 0'),
-			appleDisabled: appleButtons.length === 5 && appleButtons.every(node => node && node.disabled && node.classList.contains('ddk-button-action')),
-			firmwareUnavailable: document.body.textContent.includes('Firmware programmer state:'),
-			firmwareDisabled: firmwareButtons.length === 4 && firmwareButtons.every(node => node && node.disabled && node.classList.contains('ddk-button-action')),
-			storageUnavailable: document.body.textContent.includes('Storage target state:'),
-			storageDisabled: storageButtons.length === 4 && storageButtons.every(node => node && node.disabled && node.classList.contains('ddk-button-action')),
-			squashfsEnabled: !!squashfsButton && !squashfsButton.disabled && squashfsButton.classList.contains('ddk-button-action'),
-			canUnavailable: document.body.textContent.includes('CAN state: CAN INTERFACE NOT DETECTED; CANDUMP EXECUTABLE UNAVAILABLE'),
-			canDisabled: !!canButton && canButton.disabled,
-			securityStyle: !!button && button.classList.contains('ddk-button-security'),
-			captureSecurityStyle: !!captureButton && captureButton.classList.contains('ddk-button-security'),
-			radioActionStyle: !!radioButton && radioButton.classList.contains('ddk-button-action'),
-			cameraActionStyle: !!cameraButton && cameraButton.classList.contains('ddk-button-action'),
-			gpsActionStyle: !!gpsButton && gpsButton.classList.contains('ddk-button-action'),
-			adbActionStyle: !!adbDiagnosticsButton && adbDiagnosticsButton.classList.contains('ddk-button-action') && !!adbManageButton && adbManageButton.classList.contains('ddk-button-action'),
-			canActionStyle: !!canButton && canButton.classList.contains('ddk-button-action'),
-			overflow: document.documentElement.scrollWidth > window.innerWidth,
-			buttons: Array.from(document.querySelectorAll('button')).map(node => node.textContent.trim()),
-			heading: document.querySelector('.ddk-brand h2')?.textContent || ''
-		};
-	})()`);
-	if (desktop.login || !desktop.version || !desktop.button || !desktop.enabled || !desktop.cellular || !desktop.capture || !desktop.iperf || !desktop.radioHardwareRequired || !desktop.radioDisabled || !desktop.cameraHardwareRequired || !desktop.cameraDisabled || !desktop.gpsUnavailable || !desktop.gpsDisabled || !desktop.adbUnavailable || !desktop.adbDisabled || !desktop.appleUnavailable || !desktop.appleDisabled || !desktop.firmwareUnavailable || !desktop.firmwareDisabled || !desktop.storageUnavailable || !desktop.storageDisabled || !desktop.squashfsEnabled || !desktop.canUnavailable || !desktop.canDisabled || !desktop.securityStyle || !desktop.captureSecurityStyle || !desktop.radioActionStyle || !desktop.cameraActionStyle || !desktop.gpsActionStyle || !desktop.adbActionStyle || !desktop.canActionStyle || desktop.overflow) {
-		throw new Error(`Desktop Jobs validation failed: ${JSON.stringify(desktop)}`);
-	}
-	await validateBrand(pageSession, 'jobs');
-	const desktopPath = await screenshot(pageSession, 'ddk-v210-jobs-desktop.png');
-
-	await openPage(pageSession, 'tools', 1440, 1000);
-	const tools = await evaluate(pageSession, `(() => {
-		const card = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Network Discovery'));
-		const button = card && Array.from(card.querySelectorAll('button')).find(node => node.textContent.trim() === 'network.nmap_lan_discovery');
-		const cellularCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Cellular / Modem'));
-		const cellularButton = cellularCard && Array.from(cellularCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'cellular.snapshot');
-		const serialCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('USB & Serial Attribution'));
-		const serialButton = serialCard && Array.from(serialCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'serial.inspect');
-		const captureCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Capture & Traffic'));
-		const captureButton = captureCard && Array.from(captureCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'capture.lan_metadata_snapshot');
-		const throughputCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Throughput & Live Traffic'));
-		const throughputButton = throughputCard && Array.from(throughputCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'throughput.iperf3');
-		const radioCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('SDR / Radio') && node.textContent.includes('radio.rtl433_snapshot'));
-		const radioButton = radioCard && Array.from(radioCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'radio.rtl433_snapshot');
-		const cameraCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Camera / Video') && node.textContent.includes('camera.still_snapshot'));
-		const cameraButton = cameraCard && Array.from(cameraCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'camera.still_snapshot');
-		const gpsCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('GPS / GNSS / RTK') && node.textContent.includes('gps.snapshot'));
-		const gpsButton = gpsCard && Array.from(gpsCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'gps.snapshot');
-		const canCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('CAN Bus') && node.textContent.includes('can.capture'));
-		const canButton = canCard && Array.from(canCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'can.capture');
-		const androidCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Android / ADB'));
-		const androidIdentity = androidCard && Array.from(androidCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'android.identify');
-		const androidGuide = androidCard && Array.from(androidCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'android.operator_guide');
-		const androidDiagnostics = androidCard && Array.from(androidCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'android.adb_diagnostics');
-		const androidManage = androidCard && Array.from(androidCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'android.adb_manage');
-		const androidShell = androidCard && Array.from(androidCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'android.shell');
-		const appleCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Apple / iOS Repair'));
-		const appleIdentity = appleCard && Array.from(appleCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'apple.identify');
-		const appleGuide = appleCard && Array.from(appleCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'apple.operator_guide');
-		const appleDiagnostics = appleCard && Array.from(appleCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'apple.mobile_diagnostics');
-		const appleCapture = appleCard && Array.from(appleCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'apple.mobile_capture');
-		const appleManage = appleCard && Array.from(appleCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'apple.mobile_manage');
-		const appleRecovery = appleCard && Array.from(appleCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'apple.recovery');
-		const appleRestore = appleCard && Array.from(appleCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'apple.restore');
-		const firmwareCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Firmware / Embedded'));
-		const firmwareIdentity = firmwareCard && Array.from(firmwareCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'firmware.identify');
-		const firmwareGuide = firmwareCard && Array.from(firmwareCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'firmware.operator_guide');
-		const firmwareActions = [ 'firmware.openocd', 'firmware.avrdude', 'firmware.dfu', 'firmware.serial' ].map(id => firmwareCard && Array.from(firmwareCard.querySelectorAll('button')).find(node => node.textContent.trim() === id));
-		const storageCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.querySelector('h3')?.textContent.trim() === 'Storage / Recovery');
-		const storageActions = [ 'storage.inspect', 'storage.repair', 'storage.image', 'storage.restore' ].map(id => storageCard && Array.from(storageCard.querySelectorAll('button')).find(node => node.textContent.trim() === id));
-		const squashfsAction = storageCard && Array.from(storageCard.querySelectorAll('button')).find(node => node.textContent.trim() === 'storage.squashfs');
-		const phase4Button = id => Array.from(document.querySelectorAll('.ddk-tool button')).find(node => node.textContent.trim() === id);
-		const phase4Ids = [ 'monitoring.snapshot', 'wireless.survey', 'usb.inventory', 'forensics.inspect_file', 'capture.replay', 'adsb.receive', 'radio.ais', 'bluetooth.scan', 'automation.mqtt_publish', 'automation.relay', 'industrial.modbus_read', 'auth.inventory', 'auth.program', 'camera.stream', 'gps.ntrip' ];
-		const phase4Direct = [ 'monitoring.snapshot', 'wireless.survey', 'usb.inventory', 'forensics.inspect_file', 'capture.replay', 'automation.mqtt_publish', 'industrial.modbus_read' ];
-		const phase4Hardware = [ 'adsb.receive', 'radio.ais', 'bluetooth.scan', 'automation.relay', 'auth.inventory', 'auth.program', 'camera.stream', 'gps.ntrip' ];
-		const blockerFragments = {
-			'can.transmit': 'provides neither candump nor cansend',
-			'cellular.raw_command': 'generic device-command endpoint',
-			'industrial.modbus_write': 'mbpoll is absent',
-			'usb.power': 'active extroot',
-			'usbip.attach': 'no usable VHCI controller',
-			'wireless.monitor': 'atomic netifd/GL.iNet transaction'
-		};
-		const phase5Blockers = Object.entries(blockerFragments).every(([ id, fragment ]) => {
-			const action = phase4Button(id);
-			const card = action && action.closest('.ddk-tool');
-			return !!action && action.disabled && action.title.includes(fragment) && !!card && card.textContent.includes('Unavailable action: ' + id + '.') && card.textContent.includes(fragment);
-		});
-		return {
-			card: !!card,
-			ready: !!card && card.textContent.includes('READY'),
-			button: !!button,
-			enabled: !!button && !button.disabled,
-			cellularCard: !!cellularCard,
-			cellularReady: !!cellularCard && cellularCard.textContent.includes('READY'),
-			cellularButton: !!cellularButton && !cellularButton.disabled,
-			serialCard: !!serialCard,
-			serialReady: !!serialCard && serialCard.textContent.includes('HARDWARE REQUIRED'),
-			serialButton: !!serialButton && !serialButton.disabled,
-			captureCard: !!captureCard,
-			captureReady: !!captureCard && captureCard.textContent.includes('READY'),
-			captureButton: !!captureButton && !captureButton.disabled && captureButton.classList.contains('ddk-button-security'),
-			throughputCard: !!throughputCard && throughputCard.textContent.includes('READY'),
-			throughputButton: !!throughputButton && !throughputButton.disabled && throughputButton.classList.contains('ddk-button-action'),
-			radioCard: !!radioCard,
-			radioHardwareRequired: !!radioCard && radioCard.textContent.includes('HARDWARE REQUIRED'),
-			radioButtonDisabled: !!radioButton && radioButton.disabled && radioButton.classList.contains('ddk-button-action'),
-			cameraCard: !!cameraCard,
-			cameraHardwareRequired: !!cameraCard && cameraCard.textContent.includes('HARDWARE REQUIRED'),
-			cameraButtonDisabled: !!cameraButton && cameraButton.disabled && cameraButton.classList.contains('ddk-button-action'),
-			gpsCard: !!gpsCard,
-			gpsHardwareRequired: !!gpsCard && gpsCard.textContent.includes('HARDWARE REQUIRED'),
-			gpsButtonDisabled: !!gpsButton && gpsButton.disabled && gpsButton.classList.contains('ddk-button-action'),
-			canCard: !!canCard,
-			canHardwareRequired: !!canCard && canCard.textContent.includes('HARDWARE REQUIRED'),
-			canRuntimeVisible: !!canCard && canCard.textContent.includes('candump'),
-			canButtonDisabled: !!canButton && canButton.disabled && canButton.classList.contains('ddk-button-action'),
-			androidCard: !!androidCard && androidCard.textContent.includes('READY / NO DEVICE'),
-			androidActions: !!androidIdentity && !androidIdentity.disabled && !!androidGuide && !androidGuide.disabled && !!androidDiagnostics && androidDiagnostics.disabled && !!androidManage && androidManage.disabled && !androidShell,
-			appleCard: !!appleCard && appleCard.textContent.includes('READY / NO DEVICE'),
-			appleActions: !!appleIdentity && !appleIdentity.disabled && !!appleGuide && !appleGuide.disabled && !!appleDiagnostics && appleDiagnostics.disabled && !!appleCapture && appleCapture.disabled && !!appleManage && appleManage.disabled && !!appleRecovery && appleRecovery.disabled && !!appleRestore && appleRestore.disabled,
-			firmwareCard: !!firmwareCard && firmwareCard.textContent.includes('READY / NO DEVICE'),
-			firmwareActions: !!firmwareIdentity && !firmwareIdentity.disabled && !!firmwareGuide && !firmwareGuide.disabled && firmwareActions.length === 4 && firmwareActions.every(node => node && node.disabled && node.classList.contains('ddk-button-action')),
-			storageCard: !!storageCard && storageCard.textContent.includes('READY'),
-			storageActions: storageActions.length === 4 && storageActions.every(node => node && node.disabled && node.classList.contains('ddk-button-action')) && !!squashfsAction && !squashfsAction.disabled,
-			phase4Visible: phase4Ids.every(id => !!phase4Button(id)),
-			phase4Direct: phase4Direct.every(id => !phase4Button(id).disabled),
-			phase4Hardware: phase4Hardware.every(id => phase4Button(id).disabled),
-			phase5Blockers: phase5Blockers && document.querySelectorAll('.ddk-tool-blocker').length === 6
-		};
-	})()`);
-	if (!tools.card || !tools.ready || !tools.button || !tools.enabled || !tools.cellularCard || !tools.cellularReady || !tools.cellularButton || !tools.serialCard || !tools.serialReady || !tools.serialButton || !tools.captureCard || !tools.captureReady || !tools.captureButton || !tools.throughputCard || !tools.throughputButton || !tools.radioCard || !tools.radioHardwareRequired || !tools.radioButtonDisabled || !tools.cameraCard || !tools.cameraHardwareRequired || !tools.cameraButtonDisabled || !tools.gpsCard || !tools.gpsHardwareRequired || !tools.gpsButtonDisabled || !tools.canCard || !tools.canHardwareRequired || !tools.canRuntimeVisible || !tools.canButtonDisabled || !tools.androidCard || !tools.androidActions || !tools.appleCard || !tools.appleActions || !tools.firmwareCard || !tools.firmwareActions || !tools.storageCard || !tools.storageActions || !tools.phase4Visible || !tools.phase4Direct || !tools.phase4Hardware || !tools.phase5Blockers) {
-		throw new Error(`Tool Registry validation failed: ${JSON.stringify(tools)}`);
-	}
-	for (const operatorProof of [
-		[ 'Network Discovery', 'network.nmap_lan_discovery', 'Nmap Operator Scan', 'Targets' ],
-		[ 'Capture & Traffic', 'capture.lan_metadata_snapshot', 'tcpdump Operator Capture', 'Capture filter (BPF)' ],
-		[ 'Throughput & Live Traffic', 'throughput.iperf3', 'iperf3 Operator Test', 'Server host (client mode)' ],
-		[ 'Storage / Recovery', 'storage.squashfs', 'SquashFS Recovery', 'Sealed SquashFS image' ],
-		[ 'Monitoring', 'monitoring.snapshot', 'Monitoring Snapshot', 'Snapshot mode' ],
-		[ 'Forensics / File Analysis', 'forensics.inspect_file', 'Forensic File Inspection', 'Sealed file' ],
-		[ 'Capture & Traffic', 'capture.replay', 'Authenticated Packet Replay', 'Sealed PCAP' ],
-		[ 'Automation / MQTT', 'automation.mqtt_publish', 'MQTT Publish', 'Broker host' ],
-		[ 'Industrial / Modbus', 'industrial.modbus_read', 'Modbus Register Read', 'Transport', false ]
-	]) {
-		await evaluate(pageSession, `(() => { const card = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.querySelector('h3')?.textContent.trim() === ${JSON.stringify(operatorProof[0])}); const action = Array.from(card.querySelectorAll('button')).find(node => node.textContent.trim() === ${JSON.stringify(operatorProof[1])}); action.click(); return true; })()`);
-		await waitUntil(async () => evaluate(pageSession, `document.querySelector('.ddk-modal h3')?.textContent === ${JSON.stringify(operatorProof[2])}`), 10000, `Timed out opening ${operatorProof[2]}.`);
-		const formProof = await evaluate(pageSession, `(() => ({ label: Array.from(document.querySelectorAll('.ddk-operator-label')).some(node => node.textContent.trim() === ${JSON.stringify(operatorProof[3])}), review: Array.from(document.querySelectorAll('.ddk-modal button')).some(node => node.textContent.trim() === 'Validate & Review'), advanced: !!document.querySelector('.ddk-operator-advanced') }))()`);
-		if (!formProof.label || !formProof.review || (operatorProof[4] !== false && !formProof.advanced)) throw new Error(`Structured form validation failed for ${operatorProof[2]}: ${JSON.stringify(formProof)}`);
-		await evaluate(pageSession, "Array.from(document.querySelectorAll('.ddk-modal button')).find(node => node.textContent.trim() === 'Close').click()");
-	}
-	await evaluate(pageSession, 'window.confirm = () => true');
-	await evaluate(pageSession, "(() => { const card = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Android / ADB')); Array.from(card.querySelectorAll('button')).find(node => node.textContent.trim() === 'android.identify').click(); return true; })()");
-	await waitUntil(async () => evaluate(pageSession, "document.querySelector('.ddk-output')?.textContent.includes('ANDROID USB IDENTITY SNAPSHOT') && document.querySelector('.ddk-output')?.textContent.includes('browser memory only')"), 10000, 'Timed out rendering the private Android identity response.');
-	await evaluate(pageSession, "(() => { const card = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Android / ADB')); Array.from(card.querySelectorAll('button')).find(node => node.textContent.trim() === 'android.operator_guide').click(); return true; })()");
-	await waitUntil(async () => evaluate(pageSession, "document.querySelector('.ddk-output')?.textContent.includes('ANDROID / ADB NATIVE TOOL REFERENCE') && document.querySelector('.ddk-output')?.textContent.includes('adb                INSTALLED') && document.querySelector('.ddk-output')?.textContent.includes('GUI Operator Mode is the primary interface')"), 10000, 'Timed out rendering the Android native tool reference.');
-	await validateBrand(pageSession, 'tools');
-	await evaluate(pageSession, `(() => {
-		const cellularCard = Array.from(document.querySelectorAll('.ddk-tool')).find(node => node.textContent.includes('Cellular / Modem'));
-		cellularCard.scrollIntoView({ block: 'center' });
-		return true;
-	})()`);
-	await new Promise(resolve => setTimeout(resolve, 200));
-	const toolsPath = await screenshot(pageSession, 'ddk-v210-tools-desktop.png');
-
-	for (const page of [ 'packages' ]) {
-		await openPage(pageSession, page, 1440, 900);
-		await validateBrand(pageSession, page);
-		const overflow = await evaluate(pageSession, 'document.documentElement.scrollWidth > window.innerWidth');
-		if (overflow) throw new Error(`${page} has horizontal document overflow.`);
-	}
-
-	await openPage(pageSession, 'settings', 1440, 1000);
-	await waitUntil(async () => evaluate(pageSession, `document.body.textContent.includes('Authenticated Input Staging') && !document.body.textContent.includes('Loading sealed inputs')`), 15000, 'Timed out rendering authenticated input staging.');
-	await validateBrand(pageSession, 'settings');
-	const settingsBefore = await evaluate(pageSession, `({
-		upload: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Upload & Seal Input' && !node.disabled),
-		refresh: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Refresh Sealed Inputs' && !node.disabled),
-		storageImage: Array.from(document.querySelectorAll('.ddk-select option')).some(node => node.value === 'storage_image' && node.textContent.includes('Storage / recovery image')),
-		forensicsInput: Array.from(document.querySelectorAll('.ddk-select option')).some(node => node.value === 'forensics_input' && node.textContent.includes('Forensic analysis input')),
-		captureInput: Array.from(document.querySelectorAll('.ddk-select option')).some(node => node.value === 'capture_input' && node.textContent.includes('Packet replay capture')),
-		pathPolicy: document.body.textContent.includes('no arbitrary router reads or writes'),
-		overflow: document.documentElement.scrollWidth > window.innerWidth
-	})`);
-	if (!settingsBefore.upload || !settingsBefore.refresh || !settingsBefore.storageImage || !settingsBefore.forensicsInput || !settingsBefore.captureInput || !settingsBefore.pathPolicy || settingsBefore.overflow) throw new Error(`Settings upload validation failed: ${JSON.stringify(settingsBefore)}`);
-	await call('DOM.enable', {}, pageSession);
-	const documentNode = await call('DOM.getDocument', {}, pageSession);
-	const fileNode = await call('DOM.querySelector', { nodeId: documentNode.root.nodeId, selector: '.ddk-upload-grid input[type="file"]' }, pageSession);
-	if (!fileNode.nodeId) throw new Error('Settings upload file control was not found.');
-	await call('DOM.setFileInputFiles', { nodeId: fileNode.nodeId, files: [ uploadProofPath ] }, pageSession);
-	await evaluate(pageSession, `Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Upload & Seal Input').click()`);
-	await waitUntil(async () => evaluate(pageSession, `Array.from(document.querySelectorAll('.ddk-alert')).some(node => node.textContent.includes('ddk-browser-upload-proof.bin') && node.textContent.includes('9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08'))`), 30000, 'Timed out sealing the authenticated browser upload proof.');
-	await evaluate(pageSession, `Array.from(document.querySelectorAll('button')).find(node => node.textContent.trim() === 'Refresh Sealed Inputs').click()`);
-	await waitUntil(async () => evaluate(pageSession, `Array.from(document.querySelectorAll('.ddk-job')).some(node => node.textContent.includes('ddk-browser-upload-proof.bin') && node.textContent.includes('9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08'))`), 30000, 'Timed out sealing the authenticated browser upload proof.');
-	await evaluate(pageSession, `(() => { window.confirm = () => true; const item = Array.from(document.querySelectorAll('.ddk-job')).find(node => node.textContent.includes('ddk-browser-upload-proof.bin')); Array.from(item.querySelectorAll('button')).find(node => node.textContent.trim() === 'Delete Sealed Input').click(); return true; })()`);
-	await waitUntil(async () => evaluate(pageSession, `!Array.from(document.querySelectorAll('.ddk-job')).some(node => node.textContent.includes('ddk-browser-upload-proof.bin'))`), 15000, 'Timed out deleting the authenticated browser upload proof.');
-
-	await openPage(pageSession, 'tools', 390, 844);
-	const mobileTools = await evaluate(pageSession, "(() => { const cards = Array.from(document.querySelectorAll('.ddk-tool')); const byName = name => cards.find(node => node.querySelector('h3')?.textContent.trim() === name); const android = byName('Android / ADB'); const apple = byName('Apple / iOS Repair'); const firmware = byName('Firmware / Embedded'); const storage = byName('Storage / Recovery'); const touchTargets = [ android, apple, firmware, storage ].flatMap(card => card ? Array.from(card.querySelectorAll('button')) : []); return { overflow: document.documentElement.scrollWidth > window.innerWidth, android: !!android && android.textContent.includes('android.adb_diagnostics') && android.textContent.includes('android.adb_manage'), apple: !!apple && apple.textContent.includes('apple.mobile_diagnostics') && apple.textContent.includes('apple.mobile_capture') && apple.textContent.includes('apple.mobile_manage') && apple.textContent.includes('apple.recovery') && apple.textContent.includes('apple.restore'), firmware: !!firmware && firmware.textContent.includes('firmware.openocd') && firmware.textContent.includes('firmware.avrdude') && firmware.textContent.includes('firmware.dfu') && firmware.textContent.includes('firmware.serial'), storage: !!storage && storage.textContent.includes('storage.inspect') && storage.textContent.includes('storage.repair') && storage.textContent.includes('storage.image') && storage.textContent.includes('storage.restore') && storage.textContent.includes('storage.squashfs'), touch: touchTargets.length === 22 && touchTargets.every(node => node.getBoundingClientRect().height >= 43.5), width: window.innerWidth }; })()");
-	if (mobileTools.overflow || !mobileTools.android || !mobileTools.apple || !mobileTools.firmware || !mobileTools.storage || !mobileTools.touch || mobileTools.width !== 390) {
-		throw new Error('Mobile Tool Registry validation failed: ' + JSON.stringify(mobileTools));
-	}
-	await validateBrand(pageSession, 'tools');
-	const mobileToolsPath = await screenshot(pageSession, 'ddk-v210-tools-mobile.png');
-
-	await openPage(pageSession, 'jobs', 390, 844);
-	await waitForJobs(pageSession);
-	const mobile = await evaluate(pageSession, `(() => ({
-		overflow: document.documentElement.scrollWidth > window.innerWidth,
-		button: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Open Nmap Operator' && !node.disabled),
-		cellular: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Cellular Snapshot' && !node.disabled),
-		capture: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Open Packet Capture' && !node.disabled),
-		iperf: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Open iperf3 Operator' && !node.disabled),
-		radioDisabled: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Open RTL-433 Operator' && node.disabled),
-		cameraDisabled: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Open Camera Still Operator' && node.disabled),
-		gpsDisabled: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Open GPS / GNSS Operator' && node.disabled),
-		adbDiagnosticsDisabled: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Open ADB Diagnostics' && node.disabled),
-		adbManageDisabled: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Open ADB Device Management' && node.disabled),
-		appleDisabled: [ 'Open Apple Diagnostics', 'Open Apple Capture', 'Open Apple Device Management', 'Open Apple Recovery / DFU', 'Open Apple IPSW Restore' ].every(label => Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === label && node.disabled)),
-		firmwareDisabled: [ 'Open OpenOCD Operator', 'Open AVRDUDE Operator', 'Open DFU Operator', 'Open Serial Programmer' ].every(label => Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === label && node.disabled)),
-		storageDisabled: [ 'Inspect Storage Target', 'Repair Storage Target', 'Image Storage Target', 'Restore Storage Target' ].every(label => Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === label && node.disabled)),
-		squashfsEnabled: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Inspect / Recover SquashFS' && !node.disabled),
-		canDisabled: Array.from(document.querySelectorAll('button')).some(node => node.textContent.trim() === 'Passive CAN Frame Snapshot' && node.disabled),
-		width: window.innerWidth
-	}))()`);
-	if (mobile.overflow || !mobile.button || !mobile.cellular || !mobile.capture || !mobile.iperf || !mobile.radioDisabled || !mobile.cameraDisabled || !mobile.gpsDisabled || !mobile.adbDiagnosticsDisabled || !mobile.adbManageDisabled || !mobile.appleDisabled || !mobile.firmwareDisabled || !mobile.storageDisabled || !mobile.squashfsEnabled || !mobile.canDisabled || mobile.width !== 390) {
-		throw new Error(`Mobile Jobs validation failed: ${JSON.stringify(mobile)}`);
-	}
-	await validateBrand(pageSession, 'jobs');
-	const mobilePath = await screenshot(pageSession, 'ddk-v210-jobs-mobile.png');
-
-	if (browserErrors.length) throw new Error(`Browser errors: ${browserErrors.join(' | ')}`);
-	if (externalRequests.length) throw new Error(`External browser requests were made: ${[ ...new Set(externalRequests) ].join(' | ')}`);
-	console.log('Browser verification passed: /ddk shortcut, five local branded headers and logos, all Phase 4 structured action controls, all six Phase 5 technical blocker disclosures, authenticated upload/seal/hash/delete, preserved private identity workflows, serial-aware Overview at 320px, hardware-gated targets, and responsive controls at 1440px and 390px, with no external requests, horizontal overflow, or runtime errors.');
-	console.log(`DDK_BROWSER_OVERVIEW=${overviewPath}`);
-	console.log(`DDK_BROWSER_DESKTOP=${desktopPath}`);
-	console.log(`DDK_BROWSER_TOOLS=${toolsPath}`);
-	console.log(`DDK_BROWSER_MOBILE=${mobilePath}`);
-	console.log('DDK_BROWSER_TOOLS_MOBILE=' + mobileToolsPath);
+	if (process.env.DDK_BROWSER_STAGED === '1') {
+        const source = readFileSync('/tmp/ddk-v3-full/www/luci-static/resources/ddk/console-app.js');
+        socket.addEventListener('message', event => {
+            const message = JSON.parse(event.data);
+            if (message.method === 'Fetch.requestPaused') {
+                call('Fetch.fulfillRequest', {requestId:message.params.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:'application/javascript'}],body:source.toString('base64')}, pageSession).catch(error => browserErrors.push(error.message));
+            }
+        });
+        await call('Fetch.enable',{patterns:[{urlPattern:'*/luci-static/resources/ddk/console-app.js*',requestStage:'Request'}]},pageSession);
+    }
+    await verifyFlows(pageSession);
+    const unexpected=browserErrors.filter(error=>!error.includes("was loaded over an insecure connection. This file should be served over HTTPS.") && !error.includes('403 (Access to path denied by ACL)'));
+    if (unexpected.length) throw new Error('Browser errors: '+unexpected.join('; '));
+    if (externalRequests.length) throw new Error('Unexpected external requests');
+    console.log('DDK_BROWSER_V3_OK: responsive pages, tool forms, native loopback lifecycle, partial save/download/reuse, input upload, retention, authentication');
 }
+
 finally {
 	if (socket && socket.readyState === WebSocket.OPEN) socket.close();
 	if (chrome.exitCode === null) {

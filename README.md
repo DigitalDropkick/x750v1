@@ -1,151 +1,71 @@
-# Digital Dropkick Field Console
+# Digital Dropkick Field Console v3
 
-Production-oriented LuCI control dashboard for the GL.iNet GL-X750 field appliance. Version 2.1 introduces Operator Mode: authenticated, structured native-tool workflows whose values are validated server-side and converted to literal argv arrays by exact action-specific builders. It does not expose a shell, executable selector, arbitrary router path, generic PID, or raw command endpoint.
+An authenticated LuCI dashboard for the GL.iNet GL-X750 field appliance. Version 3 expands the installed native tools through structured forms, persistent cases, reusable inputs, and configurable capture/session budgets. The registry contains 24 modules and 92 enabled actions, including 78 structured workflows. These counts describe controls, not attached-hardware compatibility.
 
-The v2.1 migration provides practical Nmap, capture/replay, iperf3, RTL-433/ADS-B/AIS, UVC still/temporary stream, non-EC25 serial/GNSS/NTRIP, ADB, Apple normal/recovery/restore, firmware programming, storage/recovery, monitoring, Wi-Fi/USB inventory, forensics, MQTT/relay, Modbus-read, Bluetooth discovery, and smartcard/YubiKey controls. These use validated target/interface/device selection, native options, cancellation, resource locking, review/confirmation where consequential, authenticated artifacts, sealed file inputs, and one-time redacted secrets. Existing v2.0 behavior remains intact.
+Open **http://192.168.8.1/ddk** from the router LAN, or **http://100.122.115.85/ddk** through the configured Tailscale connection. Sign in with LuCI. The GL.iNet administration interface remains at the address root.
 
-## Safety status
+## Using v3
 
-The source is designed for the exact discovered target documented in [docs/TARGET-ENVIRONMENT.md](docs/TARGET-ENVIRONMENT.md). Deployment refuses a model, architecture, OpenWrt, extroot, free-space, swap, LuCI, or UI preflight mismatch before changing router files.
+1. Open **Jobs** for Network Discovery, ARP Discovery, Android Tools, Packet Capture, Loss and Latency, Serial Console, Cellular Diagnostics, or Recovery Imaging. **Tools** provides the full registry.
+2. Select the target and native operation. Common controls appear first; advanced parameters and browser presets are expandable. Missing hardware or one missing utility does not prevent opening the form. Execution checks the selected operation.
+3. Choose **Validate & Review**, inspect the exact target and command preview, and start the job. Consequential operations request the displayed target phrase.
+4. **Stop and Keep Results** preserves available output. **Save Across Reboots** creates a persistent case; **Name Case**, **Export Case**, and artifact reuse support subsequent work. Incomplete artifacts remain labelled.
+5. **Settings** manages retention and uploaded inputs. Zero disables the selected cleanup limit. Saved cases remain until explicitly deleted. Input hashing runs outside the HTTP request and reports progress.
 
-At initial discovery on 2026-08-09, `/proc/swaps` reported no active swap. After extroot media migration, the swapfile was confirmed active; `deploy.sh` still refuses deployment whenever `/overlay/ddk-install.swap` is not active. The separate, explicitly approved `configure-swap-autostart.sh` adds only a native fstab boot entry. It does not create, initialize, resize, stop, or directly activate the swapfile. See [docs/SWAP-AUTOSTART.md](docs/SWAP-AUTOSTART.md).
+## Expanded capabilities
 
-Boot persistence was proven on the target on 2026-08-09: the compact post-reboot profile passed 10 checks with no warnings. Burn One version 1.9 passed 35 comprehensive production checks with no warnings plus authenticated artifact and browser checks at 320 px, 390 px, and desktop widths. Burn Two version 2.0 passed 37 comprehensive production checks with no warnings and authenticated browser acceptance at 320 px, 390 px, and desktop widths. Positive/negative identity fixtures, no-device behavior, customer-identifier/report separation, full-CLI handoffs, source parity for all 40 deployed files, unchanged protected configuration/listener state, and zero residual device-tool processes were all proven. The router remained dark after the earlier software reboot and required an attended physical power cycle; after startup, extroot and the configured swapfile activated normally. Neither Burn One nor Burn Two requires a reboot.
+| Family | v3 controls |
+| --- | --- |
+| Network | Installed Nmap NSE scripts and private script arguments, presets, ARP discovery, IPv4/IPv6 loss/latency sessions, DNS queries and zone transfers |
+| Android | USB interface recognition independent of vendor, network ADB, properties/packages/dumpsys/logcat, files and directories, split APK installation, application/device management |
+| Capture and wireless | Larger extroot PCAPs, rotating captures, partial-result reuse/replay, concurrent monitor interfaces on the current channel, saved-file wireless analysis/decryption |
+| Cellular | Modem diagnostics, connection/mode controls, EC25 AT/GNSS operations, APN/profile changes with timed UCI rollback and explicit keep confirmation |
+| Serial and automation | Continuous device-specific serial console, text/hex transmission, file transfer, MQTT subscribe/publish/retained-message controls |
+| Bluetooth and GNSS | Adapter/service/GATT controls, pairing and connections, receiver configuration, temporary gpsd and RTKLIB sessions, NTRIP corrections |
+| CAN and Modbus | CAN bitrate/link setup, filtered capture, transmit and replay; Modbus TCP/RTU FC 1/2/3/4/5/6/15/16 with polling and optional write/readback |
+| Firmware | OpenOCD readback/debug/target control, AVR memories/fuses, native DFU/serial programmers, FTDI EEPROM backup/build/write, installed flashrom-usb workflows |
+| Storage | Partial/resumable ddrescue images, offset-aware verification, recovery directly between two selected external drives, existing SMART/filesystem/SquashFS tools |
+| Radio and camera | Native-supported tuner catalogue and exact serial/index resolution, SDR benchmark/IQ stream, longer receive sessions, per-camera ownership, controls and video recording |
+| Other tools | Persistent forensic input reuse, hex inspection, selected-process tracing/GDB, bandwidth/resource sessions, OTP/stoken, topology-aware USB power and native-compatible USB/IP client |
 
-Version 2.1 was deployed to the production GL-X750 on 2026-08-10 after the accepted v2.0 baseline was backed up. Comprehensive target verification passed 48 checks with no warnings; authenticated browser acceptance passed at 320 px, 390 px, and desktop widths; all 45 deployed files matched source byte for byte; protected configurations remained unchanged; and no DDK worker, operator-tool listener, or browser-proof upload remained. The full v2.0 rollback snapshot is `/root/ddk-backups/20260810T183331Z-field-console-v1`; the later UI-fix preinstall snapshot is `/root/ddk-backups/20260810T190440Z-field-console-v1`.
+Existing Apple normal/recovery/restore controls remain available. Newer phones still depend on the capabilities of the installed native libraries. Unfamiliar USB programmers can be explicitly identified in the advanced form; selected devices are revalidated before execution.
 
-Phase 4 was deployed on 2026-08-10 with final preinstall snapshot `/root/ddk-backups/20260810T200750Z-field-console-v1`. The final production suite passed 49 checks with no warnings; authenticated browser acceptance covered all 15 Phase 4 actions at desktop, 320 px, and 390 px; all 47 deployed files matched source byte for byte; protected configurations remained unchanged; and no DDK worker, native tool, private input, sealed proof upload, or temporary listener remained. Safe native acceptance completed monitoring, Wi-Fi, USB, Modbus-read, sealed-file forensics, and one-packet loopback replay workflows. MQTT’s deliberately closed local endpoint surfaced the native error while proving private payload/password redaction and cleanup.
+## Architecture and constraints
 
-Phase 5 closes the v2.1 release with a derived 24-module/59-action inventory, action-level technical reasons for all six unavailable operations, and visible disabled-control blocker disclosures. Production acceptance passed 50 checks with 0 warnings, authenticated 1440/390/320 px browser verification, 47-file byte parity, and final idle/private/upload cleanup. Its rollback snapshot is `/root/ddk-backups/20260810T210034Z-field-console-v1`. See [docs/PHASE5-ACCEPTANCE.md](docs/PHASE5-ACCEPTANCE.md).
+The application uses Lua 5.1, LuCI/nixio, small JavaScript, existing native executables, and small Python adapters. There is no permanent dashboard daemon or additional web framework. Inputs are validated server-side and passed as literal arguments. LuCI authentication, target identity, job-owned cancellation, private inputs and protected-router topology remain part of execution.
 
-## Architecture
+The router has about 121 MiB RAM and one CPU core. Two tool jobs may run concurrently; conflicting device operations lock their selected resource. Sessions offer explicit budgets and durations; newer continuous workflows accept duration zero. Artifact writes retain at least 100 MiB free space. The 32-bit kernel does not enforce large file quotas above 4 GiB, so a 200 ms watchdog also checks registered output sizes and storage; a small final-write overshoot is retained as incomplete output.
 
-- Native LuCI menu JSON, authenticated server template, and dependency-free JavaScript.
-- Existing nginx/LuCI authentication and `cgi-io` execution/download boundary.
-- Short-lived Lua 5.1 helper with exact action-to-builder-to-worker-to-executable mappings.
-- Versioned structured action envelopes, strict schemas, one-time prepared plans, and server-built literal argv arrays.
-- JSON tool modules with separate software and hardware state.
-- Dedicated conservative Lua USB-identity classifier with bounded sanitized fields.
-- `/tmp/ddk/` prepared-action, lock, job, artifact, and report framework with concurrency, size, age, and identity limits.
-- Local, optimized brand assets only; no website runtime, tracker, external font, CDN, or network request.
-- No package install, service, port, firewall rule, database, or router-side Node/Python runtime.
+Image files require adequate extroot capacity. Disk-to-disk recovery writes directly to a second external block device and stores only its recovery map/log on the router. This release does not mount external filesystems as alternative image-file destinations. Long transfers depend on available storage, power and a stable connection.
 
-See [docs/OPERATOR-MODE.md](docs/OPERATOR-MODE.md), [docs/PHASE4-OPERATOR.md](docs/PHASE4-OPERATOR.md), [docs/PHASE5-ACCEPTANCE.md](docs/PHASE5-ACCEPTANCE.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/SECURITY.md](docs/SECURITY.md), [docs/ANDROID-ADB.md](docs/ANDROID-ADB.md), [docs/APPLE-OPERATOR.md](docs/APPLE-OPERATOR.md), [docs/FIRMWARE-STORAGE-OPERATOR.md](docs/FIRMWARE-STORAGE-OPERATOR.md), [docs/DEVICE-IDENTITY.md](docs/DEVICE-IDENTITY.md), [docs/SSH-TOOL-HANDOFFS.md](docs/SSH-TOOL-HANDOFFS.md), [docs/BRAND-SYSTEM.md](docs/BRAND-SYSTEM.md), [docs/PACKET-CAPTURE.md](docs/PACKET-CAPTURE.md), [docs/RTL433-RECEIVE.md](docs/RTL433-RECEIVE.md), [docs/CAMERA-SNAPSHOT.md](docs/CAMERA-SNAPSHOT.md), [docs/GPS-GNSS-SNAPSHOT.md](docs/GPS-GNSS-SNAPSHOT.md), and [docs/CAN-PASSIVE-CAPTURE.md](docs/CAN-PASSIVE-CAPTURE.md).
+The native ADB build lacks modern wireless-pairing support; network ADB requires an already enabled TCP debugging endpoint. Fastboot and ideviceinstaller were absent during September discovery. No library/core firmware upgrades are part of v3. Actual Android/Apple phones, CAN/Modbus adapters, Bluetooth peripherals, programmers, tuners, cameras and external recovery disks require attached-device acceptance; synthetic/native startup tests do not establish physical-device compatibility.
 
-## Repository layout
+Monitor capture shares the current channel on a radio carrying active interfaces. A different channel requires an unused radio. The USB hub port carrying extroot, active swap, or the modem cannot be power-cycled through an unrelated tool operation. Targeted cellular settings use the router's independent rollback timer.
 
-```text
-files/                 Exact project-owned router filesystem tree
-scripts/               Local validation and remote install/verify/rollback logic
-docs/                  Target, architecture, security, registry, and roadmap docs
-deploy.sh              Validated one-connection deployment
-verify.sh              Local checks plus remote production verification
-rollback.sh            Restore a timestamped pre-deployment backup
-configure-swap-autostart.sh  Add the exact approved native swap boot entry
-rollback-swap-autostart.sh   Restore the exact pre-change fstab safely
-post-reboot-verify.sh        Compact read-only boot validation
-```
-
-## Local validation
-
-Requirements on the workstation: Bash, Git, Node (syntax only), jq, tar, and SSH.
+## Validate, deploy and roll back
 
 ```sh
 ./scripts/validate-local.sh
 ```
 
-The validator checks shell and JavaScript syntax, JSON, action/manifests review lists, Operator Mode schemas/builders/workers, fixed executable mappings, parameter and artifact boundaries, identity-classifier limits, private-output declarations, forbidden package/config mutations, exact brand assets and budgets, absence of remote presentation references, general asset limits, and whitespace errors. It also runs the Phase 5 release audit across all 59 actions and their exact enabled/structured/unavailable contracts.
+This runs shell/JavaScript/JSON checks, Lua planner and policy tests, USB identity/topology fixtures, input hashing, offset comparison, USB/IP protocol tests, recovery failures and rollback fixtures. Native staged and browser evidence is recorded in [V3-IMPLEMENTATION.md](docs/V3-IMPLEMENTATION.md).
 
-Lua 5.1 with the target's `nixio` and `luci.jsonc` modules is validated again on the router before the installer writes anything.
-
-## Deployment
-
-The target is intentionally fixed to `root@192.168.8.1`. Run from the repository root:
+The authenticated connection helper keeps credentials out of files:
 
 ```sh
+./scripts/connect-router.sh
+```
+
+With that connection open, authorized deployment and verification use:
+
+```sh
+export DDK_TARGET=root@100.122.115.85
+export DDK_SSH_CONTROL_PATH=/run/user/1000/ddk-router-1000/control
 ./deploy.sh
-```
-
-The script prompts for the router password through SSH. Do not place the password in an environment variable or command line.
-
-Deployment performs:
-
-1. local validation;
-2. remote target and safety preflight;
-3. staged router-side syntax/JSON validation;
-4. timestamped backup to `/root/ddk-backups/<timestamp>-field-console-v1/`;
-5. atomic installation of only allowlisted project files;
-6. exact LuCI cache-file removal;
-7. direct status/capability smoke tests.
-
-The installer sends rpcd its native reload signal so it recognizes the new ACL. No service is restarted and the router is not rebooted.
-
-## Dashboard
-
-After deployment and normal LuCI login:
-
-```text
-http://192.168.8.1/ddk
-```
-
-The content-free shortcut immediately redirects to `/cgi-bin/luci/admin/ddk/overview`. Authentication remains entirely within LuCI; the shortcut exposes no dashboard data.
-
-The top-level LuCI entry is **Digital Dropkick**.
-
-## Verification
-
-```sh
 ./verify.sh
+./scripts/verify-browser-authenticated.sh
 ```
 
-Verification covers identity, extroot, swap, installed-file parity, locally served brand assets, Lua/shell/JSON syntax, live APIs, INFO actions, USB identity fixtures, private-data separation, injection/generic-PID/traversal rejection, asynchronous jobs, structured-envelope rejection, one-time prepared requests, Nmap loopback execution/artifacts, tcpdump loopback PCAP and invalid-BPF behavior, iperf3 temporary server/client cleanup, ADB schema/target/server-lifecycle rejection, legacy workflows, hardware/runtime gates, authenticated artifact ACL isolation, system-report exclusions, GL.iNet UI, LuCI, Tailscale, protected configuration hashes, listener/worker absence, memory, disk, and recent errors.
+The installer validates this exact appliance, backs up every replaced file, installs only project paths and reloads rpcd ACLs. It compares current protected configuration hashes before/after; it does not require historical configuration values or optional services to remain disabled. No reboot or network restart is required. The narrowly scoped `scripts/install-can-tools.sh` installs the three matching CAN userspace payloads with verified checksums; it performs no bulk upgrades.
 
-The authenticated visual page and mobile layout should also be opened after deployment. `scripts/verify-browser-authenticated.sh` creates a five-minute LuCI session with only the DDK access group, runs the dependency-free Chrome DevTools checks, and destroys that session on exit. It verifies every page-specific image, both logo placements, the exact local-only request boundary, 320 px and 390 px mobile layouts, desktop layouts, overflow, and runtime errors. It requires the same already-authenticated SSH control socket as deployment and never accepts, prints, or stores a password or persistent browser session. The lower-level `scripts/verify-browser.mjs` still accepts a transient session through `DDK_BROWSER_SESSION` for manual test orchestration.
-
-After an explicitly authorized controlled reboot, run `./post-reboot-verify.sh`. It is intentionally much shorter than the full destructive-proof suite and checks only the boot-critical appliance invariants.
-
-## Rollback
-
-Use the latest successful deployment backup:
-
-```sh
-./rollback.sh
-```
-
-Or select the exact path printed by deployment:
-
-```sh
-./rollback.sh /root/ddk-backups/20260809T170000Z-field-console-v1
-```
-
-Rollback restores every pre-existing target file, removes only files recorded as newly created by this project, removes empty project directories, invalidates LuCI's exact menu index cache, and reloads rpcd ACLs. It does not factory reset, restart services, or touch UCI/network configuration.
-
-Swap boot configuration has a separate hash-guarded rollback because it owns one production-sensitive file:
-
-```sh
-./rollback-swap-autostart.sh
-```
-
-## Adding tools
-
-See [docs/ADDING-A-TOOL.md](docs/ADDING-A-TOOL.md). Adding a manifest cannot enable execution by itself.
-
-## Known limits
-
-- Operator Mode now covers the Phase 1-4 families listed above. Remaining unavailable operations are recorded with exact installed-runtime, hardware-topology, or rollback-architecture obstacles in [docs/PHASE4-OPERATOR.md](docs/PHASE4-OPERATOR.md); `ACTION`, `SECURITY`, or `DISRUPTIVE` classification is not itself a reason to keep one disabled.
-- The common request/resource limits—24 KiB structured envelopes, 64 explicit Nmap targets, two active jobs, five-minute one-time prepared plans, fixed artifact names, action-specific wall limits, and artifact ceilings—protect the 121 MiB single-core appliance. They do not clamp CIDR targets to `/24`, force one interface, or remove supported native output formats.
-- Authenticated input staging reserves one DDK-owned extroot path, validates name/type/size/free-space, atomically seals the result, computes SHA-256, and applies one-hour reservation/24-hour sealed retention. ADB, Apple, firmware, raw restore, and SquashFS consumers bind and revalidate sealed IDs; storage images are bounded at 16 GiB by the extroot/resource model.
-- RTL-433 now exposes reviewed tuner selection, receive frequency/sample/gain/PPM, decoder/analyzer/metadata choices, duration, decoded formats, and bounded raw I/Q artifacts supported by exact 20.11. Live RF acceptance remains pending an attached reviewed dongle.
-- Camera supports reviewed UVC stills plus a confirmed, duration-bounded, authenticated `mjpg_streamer` listener on one exact current IPv4 address. Motion, RTSP, boot enablement, audio, firewall changes, and arbitrary binds remain unavailable; live image/stream/cancellation acceptance requires approved attached hardware and privacy consent.
-- GPS/GNSS supports reviewed non-EC25 receive artifacts and confirmed NTRIP correction sessions with one-time credentials. `gpsd`, arbitrary receiver commands, reserved EC25 ports, and persistent network services remain disabled; live acceptance requires an approved receiver.
-- Passive CAN accepts no browser interface, bitrate, filter, duration, frame count, command, flag, or output path. It requires exactly one already-up physical `canN` plus `/usr/bin/candump`, receives at most 128 frames in a fixed bounded profile, and verifies interface flags remain unchanged. Transmit, replay, interface setup, persistent logs, and package repair remain disabled. This router currently has no CAN interface and no `candump` payload, so live capture/cancellation acceptance remains pending approved hardware and runtime availability.
-- Cellular snapshot accepts no device, action, or argument. It is fixed to the verified EC25-AF on `/dev/cdc-wdm0`, uses four read-only UQMI queries, and excludes subscriber identifiers, phone number, SIM contents, APN, location, scans, and raw commands.
-- Serial Operator Mode exposes receive and confirmed transmit/receive settings only for reviewed general-purpose USB serial adapters. All four EC25 `ttyUSB` functions remain `MODEM RESERVED` and are independently rejected by backend and worker; no eligible adapter is currently attached.
-- Android ADB 1.0.32 now exposes structured state/identity/property/package/logcat diagnostics, bugreport, pull, backup, push, APK install, uninstall, restore, reboot, root, remount, USB, and TCP-mode controls where represented by the reviewed action set. It uses only correlated USB ADB transports and a temporary localhost server on port 5038. Live device execution/cancellation remains pending an approved attached Android device.
-- Apple Operator Mode uses libimobiledevice 1.3.0, usbmuxd 1.1.1, irecovery 1.0.0, and idevicerestore 1.0.0 for structured diagnostics, pairing/settings/power/location, screenshot/syslog, recovery/DFU, and IPSW update/erase/no-action workflows. Normal mode requires an exact freshly rediscovered UDID; recovery/DFU requires ECID; temporary usbmuxd and restore-cache workspaces are always cleaned up. See [docs/APPLE-OPERATOR.md](docs/APPLE-OPERATOR.md). Live device acceptance remains pending approved hardware.
-- Firmware Operator Mode uses exact OpenOCD 0.11, AVRDUDE 6.3, dfu-util/dfu-programmer, STM32Flash, BOSSA, and LPC21ISP schemas with live reviewed target selection, installed config/part lists, backups, verification, writes/erase/boot controls, strong confirmation, and cleanup. Storage Operator Mode excludes system/extroot/swap media and provides SMART/read-only checks, confirmed repair, 16 GiB bounded imaging/restore, and isolated SquashFS recovery. See [docs/FIRMWARE-STORAGE-OPERATOR.md](docs/FIRMWARE-STORAGE-OPERATOR.md). Live hardware-changing acceptance remains pending an approved target.
-- Android detection requires a reviewed mobile vendor plus ADB, fastboot, MTP, or mobile descriptor evidence. Apple detection requires `05ac` plus a mobile/recovery/DFU descriptor. Programmer detection uses a conservative exact/token table; new hardware may require a classifier addition.
-- The installed fastboot and flashrom executables are unavailable despite the broader package inventory. The console reports live readiness and does not install substitutes.
-- Tool hardware detection is conservative and documents ambiguity.
-- Reports are transient across reboot and have a 24-hour cleanup horizon.
-- The browser polls only active jobs; there is no router-side polling process.
+Use the fresh backup path printed by deployment with `./rollback.sh /root/ddk-backups/<timestamp>-field-console-v3`. Rollback restores application files, removes newly introduced helpers and reloads ACLs. Saved case/input data remain on extroot. Earlier release evidence is retained in [V2-DEPLOYMENT-HISTORY.md](docs/V2-DEPLOYMENT-HISTORY.md) and the Phase acceptance documents.

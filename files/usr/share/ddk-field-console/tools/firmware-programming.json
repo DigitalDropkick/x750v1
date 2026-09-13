@@ -2,7 +2,7 @@
   "id": "firmware-programming",
   "name": "Firmware / Embedded",
   "category": "Firmware Programming",
-  "description": "Structured OpenOCD, AVRDUDE, USB DFU, and serial bootloader probe/read/backup/verify/write/erase workflows with exact live target selection.",
+  "description": "OpenOCD debugging/readback, AVR and DFU programming, serial programmers, FTDI EEPROM, and SPI flash.",
   "package_names": ["flashrom-usb", "openocd", "avrdude", "dfu-util", "dfu-programmer", "stm32flash", "bossa", "lpc21isp", "ftdi_eeprom"],
   "expected_binaries": ["flashrom", "openocd", "avrdude", "dfu-util", "stm32flash", "bossac", "lpc21isp", "ftdi_eeprom"],
   "required_hardware": ["programmer"],
@@ -16,7 +16,9 @@
     {"id": "firmware.openocd", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "openocd", "enabled": true},
     {"id": "firmware.avrdude", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "avrdude", "enabled": true},
     {"id": "firmware.dfu", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "dfu", "enabled": true},
-    {"id": "firmware.serial", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "serial_programmer", "enabled": true}
+    {"id": "firmware.serial", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "hardware_mode": "serial_programmer", "enabled": true},
+    {"id": "firmware.ftdi", "label": "FTDI EEPROM backup and configuration", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "firmware.flashrom", "label": "SPI flash read, write, and verify", "class": "DISRUPTIVE", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "The backend selects installed OpenOCD configs and native target lists, validates reviewed USB/serial hardware, binds sealed image hashes, builds literal argv, and requires target-bound confirmation for consequential operations. flashrom remains unavailable; FTDI EEPROM config serialization is documented as pending."
+  "help_text": "Select the programmer, target and image. OpenOCD includes readback, halt/resume/reset and temporary GDB access. AVR memory/fuse controls, FTDI configuration with pre-write backup, and the installed flashrom-usb runtime have dedicated operations."
 }

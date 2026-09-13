@@ -2,7 +2,7 @@
   "id": "network-discovery",
   "name": "Network Discovery",
   "category": "Network Diagnostics",
-  "description": "Native Nmap 7.91 discovery and operator-controlled TCP/UDP scanning with validated targets, timing, detection, and artifacts.",
+  "description": "Network mapping, ARP discovery, DNS queries, and continuous loss and latency monitoring.",
   "package_names": ["nmap-full", "netdiscover", "arp-scan", "fping", "mtr-nojson", "httping", "bind-dig", "lldpd", "snmp-utils"],
   "expected_binaries": ["nmap", "arp-scan", "fping", "dig"],
   "required_hardware": [],
@@ -10,7 +10,10 @@
   "risk_level": "SECURITY",
   "enabled": true,
   "actions": [
+    {"id": "network.dns", "label": "DNS query", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "network.fping", "label": "Loss and latency monitor", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
+    {"id": "network.arp_scan", "label": "ARP discovery", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
     {"id": "network.nmap_lan_discovery", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
   ],
-  "help_text": "Operator Mode validates structured IPv4, IPv6, CIDR, hostname, port, scan, timing, detection, interface, NSE-category, and artifact choices before the backend constructs the exact Nmap argv."
+  "help_text": "Nmap exposes scan types, installed NSE scripts and arguments, output files, and reusable browser presets. ARP, DNS and fping have separate controls. Select the network interface and targets; save job results as cases."
 }
