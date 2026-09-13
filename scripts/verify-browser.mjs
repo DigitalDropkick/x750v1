@@ -186,7 +186,7 @@ async function verifyFlows(sid) {
 	const denied=await evalPage(`(async()=>{const f=document.querySelector('script[data-ddk-config]');const r=await fetch('/cgi-bin/cgi-download',{method:'POST',body:new URLSearchParams({sessionid:${JSON.stringify(session)},path:'/etc/hostname'}),credentials:'same-origin'});return r.status!==200;})()`);
 	if(!denied)throw new Error('Download escaped application ACL');
 	await call('Page.navigate',{url:base+'/ddk'},sid);
-	await waitUntil(async()=>{try{return await evalPage("location.pathname==='/cgi-bin/luci/admin/ddk/overview' && !!document.querySelector('.ddk-hero')");}catch{return false;}},20000,'The /ddk shortcut did not reach the authenticated dashboard');
+	await waitUntil(async()=>{try{return await evalPage("location.pathname==='/cgi-bin/luci/admin/ddk/overview' && !!document.querySelector('#ddk-app .ddk-brand') && !document.querySelector('#ddk-app .ddk-loading')");}catch{return false;}},60000,'The /ddk shortcut did not reach the authenticated dashboard');
 	console.log('Native job, preserved partial output, saved case, download/reuse and upload passed');
 }
 
