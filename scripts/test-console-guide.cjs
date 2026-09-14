@@ -19,7 +19,9 @@ test('MSP summaries keep evidence, missing replies and next-step targets distinc
 	const snmp=result('network.snmp','.1.3.6.1.2.1.1.5.0 = STRING: Fixture\n.1.3.6.1.2.1.2.2.1.8.7 = INTEGER: 1');
 	assert.equal(snmp.rows[0][0],'System name');assert.equal(snmp.rows[1][0],'Interface 7: Operational state');
 	const diff=result('network.compare_scans','-22/tcp open ssh\n+22/tcp closed ssh');assert.equal(diff.rows.length,2);
-	const shares=result('network.smb','Disk|Field files|Fixture share\nIPC|IPC$|Service','',{metadata:{action_id:'network.smb',options:{host:'192.0.2.9',operation:'shares'}}});
+	// Some servers label IPC$ as Disk; it is still a service endpoint, not the
+	// useful default for the next directory-browsing operation.
+	const shares=result('network.smb','Disk|IPC$|Service\nDisk|Field files|Fixture share','',{metadata:{action_id:'network.smb',options:{host:'192.0.2.9',operation:'shares'}}});
 	assert.equal(shares.suggestions[0].options.share,'Field files');assert.equal(shares.suggestions[0].options.operation,'directory');assert(!('password' in shares.suggestions[0].options));
 	const transfer=result('network.smb','Transfer verified: PASS\nBytes verified: 1048576\nCleanup could not be confirmed.','',{metadata:{action_id:'network.smb',options:{operation:'transfer'}}});
 	assert.equal(transfer.metrics[0].value,'PASS');assert.equal(transfer.metrics[2].value,'Review output');

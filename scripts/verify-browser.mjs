@@ -11,6 +11,8 @@ const session = process.env.DDK_BROWSER_SESSION || '';
 const outputDir = process.env.DDK_BROWSER_OUTPUT_DIR || tmpdir();
 const orbit = process.env.DDK_BROWSER_ORBIT === '1';
 const layoutOnly = process.env.DDK_BROWSER_LAYOUT_ONLY === '1';
+const mspOnly = process.env.DDK_BROWSER_MSP_ONLY === '1';
+if (mspOnly && !process.env.DDK_BROWSER_SMB_PORT) throw Error('MSP browser verification needs its loopback fixture port');
 
 if (!/^[a-fA-F0-9]{32}$/.test(session)) {
 	throw new Error('DDK_BROWSER_SESSION must contain one transient 32-character LuCI session ID.');
@@ -190,6 +192,7 @@ async function verifyFlows(sid) {
 		createdJobs.add(id);
 		return id;
 	}
+	if (!mspOnly) {
 	if (process.env.DDK_BROWSER_QUICK !== '1') {
 		for (const width of (orbit ? [1440, 440, 390, 320] : [1440, 390, 320])) {
 			for (const page of ['overview', 'tools', 'jobs', 'settings', 'packages']) {
@@ -306,21 +309,23 @@ async function verifyFlows(sid) {
 	await key('k', 2);
 	await wait('!!document.querySelector(\'[aria-label="Find a tool"]\')', 'Keyboard search missing');
 	await key('Escape');
-	for (const width of [390, 320]) {
+	for (const width of (orbit ? [440, 390, 320] : [390, 320])) {
 		await call(
 			'Emulation.setDeviceMetricsOverride',
 			{ width, height: 900, deviceScaleFactor: 1, mobile: true },
 			sid
 		);
-		for (const id of ['network.nmap_lan_discovery', 'android.operator']) {
+		for (const id of ['network.nmap_lan_discovery', 'android.operator', 'network.lldp', 'network.snmp', 'network.compare_scans', 'network.tracepath', 'network.smb']) {
 			await openAction(id);
+			if (id === 'network.smb') { await set('operation', 'transfer'); await set('guest', false); }
+			if (id === 'network.snmp') { await set('version', '3'); await set('level', 'authPriv'); }
 			if (
 				!(await inspect(
 					"document.querySelector('.ddk-modal-panel').scrollWidth<=document.querySelector('.ddk-modal-panel').clientWidth"
 				))
 			)
 				throw Error('Mobile form overflow');
-			if (width === 390) await screenshot(sid, 'ddk-v4-' + id.replaceAll('.', '-') + '-390.png');
+			if (width === 390 || width === 440) await screenshot(sid, 'ddk-v4-' + id.replaceAll('.', '-') + '-' + width + '.png');
 			await key('Escape');
 		}
 	}
@@ -460,6 +465,30 @@ async function verifyFlows(sid) {
 	console.log(
 		'Native Nmap, observed-host handoff, live fping, stable polling, stop, save, export, file reuse and inline upload passed'
 	);
+	}
+	if (process.env.DDK_BROWSER_SMB_PORT) {
+		const port = Number(process.env.DDK_BROWSER_SMB_PORT);
+		if (!Number.isInteger(port) || port < 1 || port > 65535) throw Error('Invalid loopback SMB fixture port');
+		await openPage(sid, 'tools', 440, 1000);
+		await openAction('network.smb');
+		await set('host', '127.0.0.1'); await set('port', port);
+		await set('operation', 'shares'); await set('guest', true);
+		await set('timeout', 30); await set('duration', 180);
+		await startReviewed();
+		await waitUntil(() => inspect("document.querySelector('.ddk-job-detail .ddk-state')?.textContent==='complete'"), 120000, 'Native SMB share listing did not complete');
+		await label('Summary');
+		if (!await inspect("document.querySelector('.ddk-result-summary').innerText.toUpperCase().includes('ORBIT-TEST')")) throw Error('Native SMB shares did not reach the result table');
+		await screenshot(sid, 'ddk-v4-smb-shares-result-440.png');
+		await click('.ddk-next-steps .ddk-search-result');
+		await wait("!!document.querySelector('.ddk-modal [name]')");
+		if (!await inspect("document.querySelector('[name=operation]').value==='directory' && document.querySelector('[name=host]').value==='127.0.0.1' && document.querySelector('[name=share]').value.toUpperCase()==='ORBIT-TEST' && Number(document.querySelector('[name=port]').value)===" + port)) throw Error('SMB browse handoff lost the observed share or server');
+		await startReviewed();
+		await waitUntil(() => inspect("document.querySelector('.ddk-job-detail .ddk-state')?.textContent==='complete'"), 120000, 'Native SMB browse handoff did not complete');
+		await label('Summary');
+		if (!await inspect("document.querySelector('.ddk-result-summary').innerText.includes('Field notes.txt')")) throw Error('Native directory results did not parse');
+		await screenshot(sid, 'ddk-v4-smb-directory-result-440.png');
+		console.log('Native SMB share listing, mobile results and populated browse-next-step passed');
+	}
 }
 try {
 	await waitUntil(() => websocketUrl, 10000, 'Chrome DevTools endpoint did not start.');
@@ -554,7 +583,7 @@ try {
 	);
 	if (unexpected.length) throw new Error('Browser errors: ' + unexpected.join('; '));
 	if (externalRequests.length) throw new Error('Unexpected external requests');
-	console.log(layoutOnly ? 'DDK_BROWSER_LAYOUT_OK: five authenticated pages at three widths' :
+	console.log(mspOnly ? 'DDK_BROWSER_MSP_OK: native shares, mobile result tables and directory handoff' : layoutOnly ? 'DDK_BROWSER_LAYOUT_OK: authenticated responsive pages' :
 		'DDK_BROWSER_V4_OK: responsive pages, tool forms, native loopback lifecycle, partial save/download/reuse, input upload, retention, authentication');
 } finally {
 	if (activeSession) {

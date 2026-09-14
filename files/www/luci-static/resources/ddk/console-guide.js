@@ -1529,7 +1529,7 @@
 				if (nextId === 'network.smb' && id === 'network.smb') {
 					['host','port','share','path','guest','username','domain','protocol'].forEach(function (key) { if (options[key] !== undefined) initial[key] = options[key]; });
 					initial.operation = options.operation === 'shares' ? 'directory' : 'transfer';
-					if (options.operation === 'shares') { var disk = result.rows.find(function (row) { return row[1] === 'Disk'; }); if (disk) initial.share = disk[0]; }
+					if (options.operation === 'shares') { var disk = result.rows.find(function (row) { return row[1] === 'Disk' && row[0].toUpperCase() !== 'IPC$'; }); if (disk) initial.share = disk[0]; }
 				}
 				if ((nextId === 'network.fping' || nextId === 'network.nmap_lan_discovery') && result.hosts.length)
 					initial.targets = result.hosts.slice();
