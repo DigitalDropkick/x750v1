@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+ <defs>
+  <radialGradient id="space" cx=".7" cy=".2" r="1"><stop stop-color="#173657"/><stop offset="1" stop-color="#080d19"/></radialGradient>
+  <radialGradient id="world" cx=".2" cy=".15" r=".9"><stop stop-color="#c5f9ff"/><stop offset=".2" stop-color="#69d3ed"/><stop offset=".5" stop-color="#276f9c"/><stop offset="1" stop-color="#0a182b"/></radialGradient>
+ </defs>
+ <path fill="url(#space)" d="M0 0h1024v1024H0z"/>
+ <circle cx="512" cy="492" r="232" fill="url(#world)"/>
+ <ellipse cx="512" cy="492" rx="361" ry="115" fill="none" stroke="#8ce8f7" stroke-width="8" transform="rotate(-32 512 492)"/>
+ <ellipse cx="512" cy="492" rx="400" ry="157" fill="none" stroke="#7fcaee" stroke-opacity=".25" stroke-width="3" transform="rotate(-32 512 492)"/>
+ <circle cx="792" cy="306" r="15" fill="#efffff"/>
+ <path d="m206 263 5 13 13 5-13 5-5 13-5-13-13-5 13-5Z" fill="#aadeff"/>
+ <circle cx="754" cy="746" r="4" fill="#9ad6f6"/>
+ <path d="M342 844h340" stroke="#83e7f4" stroke-width="3" opacity=".5"/>
+</svg>

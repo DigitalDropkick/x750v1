@@ -1,0 +1,10 @@
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.p12
+*.mobileprovision
+*.ipa
+*.xcarchive
+*.xcresult
+ExportOptions.local.plist
