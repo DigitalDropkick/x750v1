@@ -8,9 +8,9 @@ struct OrbitApp: App {
         WindowGroup {
             ZStack {
                 Color.orbitNight.ignoresSafeArea()
-                // Keep WebKit renderable during sign-in; ConnectionView covers it.
-                // A zero-opacity web view can suspend its website data process.
+                // The native connection screen owns interaction until sign-in finishes.
                 ConsoleWebView(model:model).ignoresSafeArea(.container).privacySensitive()
+                    .opacity(model.connected ? 1 : 0)
                     .allowsHitTesting(model.connected && !model.locked && !model.obscured)
                     .accessibilityHidden(!model.connected || model.locked || model.obscured)
                 if model.connected {

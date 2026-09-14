@@ -42,8 +42,6 @@ final class OrbitModel: ObservableObject {
         webView.uiDelegate = coordinator
         webView.configuration.userContentController.add(coordinator, name:"orbit")
         webView.scrollView.contentInsetAdjustmentBehavior = .never
-        // Start WebKit's data process before the first authenticated cookie handoff.
-        webView.loadHTMLString("<!doctype html><html><body></body></html>",baseURL:nil)
     }
     func connect() {
         guard !connecting else { return }
@@ -82,7 +80,13 @@ final class OrbitModel: ObservableObject {
                 guard attempt == currentAttempt else { return }
                 let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
                 connectionProgress = "Opening your workspace…"
-                for cookie in cookies { await cookieStore.setCookie(cookie) }
+                // A real origin request starts WebKit's network process before
+                // cookie transfer. An empty document does not establish it.
+                endpoint = selected; connected = false; connectionSheet = false
+                webView.load(URLRequest(url:selected.console,cachePolicy:.reloadIgnoringLocalCacheData,timeoutInterval:15))
+                for cookie in cookies {
+                    try await CookieHandoff.perform { cookieStore.setCookie(cookie,completionHandler:$0) }
+                }
                 guard attempt == currentAttempt else { return }
                 if saveLogin && !password.isEmpty {
                     do { try CredentialVault.store(login,for:selected) }
@@ -110,6 +114,7 @@ final class OrbitModel: ObservableObject {
     }
     func cancelConnection() {
         attempt += 1; connecting = false; transport?.close(); candidateFingerprint = nil
+        webView.stopLoading()
         message = "Connection cancelled. Existing router jobs were not stopped."
     }
     func reconnect() {
@@ -144,6 +149,30 @@ final class OrbitModel: ObservableObject {
                 let success = try await LAContext().evaluatePolicy(.deviceOwnerAuthentication,localizedReason:"Unlock your field workspace.")
                 if success { locked = false }
             } catch { message = "Workspace is locked. Tap Unlock to continue." }
+        }
+    }
+}
+
+/// WebKit cookie callbacks have no error result. Bound the handoff so a stopped
+/// website process cannot retain a sign-in task (and its password) indefinitely.
+@MainActor
+final class CookieHandoff {
+    private var continuation: CheckedContinuation<Void,Error>?
+    private var timer: Task<Void,Never>?
+    private init(_ continuation:CheckedContinuation<Void,Error>) { self.continuation = continuation }
+    private func finish(_ error:Error? = nil) {
+        guard let completion = continuation else { return }
+        continuation = nil; timer?.cancel(); timer = nil
+        if let error { completion.resume(throwing:error) } else { completion.resume() }
+    }
+    static func perform(timeout:Duration = .seconds(15), install:(@escaping @MainActor ()->Void)->Void) async throws {
+        try await withCheckedThrowingContinuation { (continuation:CheckedContinuation<Void,Error>) in
+            let handoff = CookieHandoff(continuation)
+            handoff.timer = Task {
+                do { try await Task.sleep(for:timeout) } catch { return }
+                handoff.finish(OrbitError.message("The iPhone could not open the router session. Tap Connect to try again; router jobs are still running."))
+            }
+            install { handoff.finish() }
         }
     }
 }

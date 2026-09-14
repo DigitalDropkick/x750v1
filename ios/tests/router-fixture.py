@@ -89,14 +89,35 @@ class Handler(BaseHTTPRequestHandler):
 
 
 with tempfile.TemporaryDirectory(prefix="orbit-fixture-") as directory:
-    initial, cert, key = (Path(directory) / name for name in ("initial.pem", "cert.pem", "key.pem"))
-    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
-                    "-subj", "/CN=Orbit simulator fixture", "-addext", "subjectAltName=IP:127.0.0.1",
-                    "-keyout", str(key), "-out", str(initial)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    # Match the appliance's legacy expired, self-signed certificate. Only an
-    # explicitly paired fingerprint may authorize this otherwise untrusted TLS.
-    subprocess.run(["openssl", "x509", "-in", str(initial), "-signkey", str(key), "-days", "-1",
-                    "-out", str(cert)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    root = Path(directory)
+    cert, key, csr = (root / name for name in ("cert.pem", "key.pem", "request.pem"))
+    (root / "index.txt").write_text("")
+    (root / "serial").write_text("01\n")
+    config = root / "ca.cnf"
+    config.write_text(f"""[ca]
+default_ca = fixture
+[fixture]
+database = {root}/index.txt
+serial = {root}/serial
+new_certs_dir = {root}
+default_md = sha256
+policy = names
+[names]
+commonName = supplied
+[extensions]
+subjectAltName = IP:127.0.0.1
+""")
+    subprocess.run(["openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes",
+                    "-subj", "/CN=Orbit simulator fixture", "-keyout", str(key), "-out", str(csr)],
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # Explicit historical dates work with both macOS LibreSSL and OpenSSL.
+    # Match the appliance's expired self-signed certificate, without relying
+    # on a negative -days value (rejected by some OpenSSL implementations).
+    subprocess.run(["openssl", "ca", "-batch", "-selfsign", "-config", str(config),
+                    "-keyfile", str(key), "-in", str(csr), "-out", str(cert),
+                    "-startdate", "20200101000000Z", "-enddate", "20250101000000Z",
+                    "-extensions", "extensions"], check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     expired = subprocess.run(["openssl", "x509", "-in", str(cert), "-checkend", "0", "-noout"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     assert expired.returncode == 1, "Test certificate must be expired"

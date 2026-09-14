@@ -57,6 +57,16 @@ final class RouterIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testMissingCookieCallbackTimesOutAndIgnoresLateCompletion() async throws {
+        var lateCompletion: (@MainActor ()->Void)?
+        do {
+            try await CookieHandoff.perform(timeout:.milliseconds(30)) { lateCompletion = $0 }
+            XCTFail("A missing WebKit callback must not hold the connection open forever")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Tap Connect to try again")) }
+        lateCompletion?() // Must not resume the continuation twice after timeout.
+    }
+
+    @MainActor
     private func waitUntil(_ description:String, condition:()->Bool) async throws {
         let deadline = Date().addingTimeInterval(20)
         while !condition() && Date() < deadline { try await Task.sleep(nanoseconds:100_000_000) }

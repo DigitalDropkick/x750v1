@@ -59,7 +59,7 @@ final class ConsoleCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WK
         model?.connectionSheet = true
     }
     func webView(_ webView:WKWebView,didFinish navigation:WKNavigation!) {
-        guard webView === model?.webView else { return }
+        guard webView === model?.webView, model?.connected == true else { return }
         model?.pageLoading = false
         guard webView.url?.path.hasPrefix("/cgi-bin/luci/admin/ddk/") == true else { return }
         webView.evaluateJavaScript("Boolean(document.getElementById('ddk-app'))") { [weak self] result,_ in
