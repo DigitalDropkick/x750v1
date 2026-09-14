@@ -72,3 +72,13 @@ jobs:
             ${{ runner.temp }}/orbit-build.log
             ${{ runner.temp }}/orbit-device-build.log
           retention-days: 7
+      - name: Preserve quick review files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-iphone-review
+          path: |
+            ios/build/test-attachments
+            ${{ runner.temp }}/orbit-build.log
+            ${{ runner.temp }}/orbit-device-build.log
+          retention-days: 7

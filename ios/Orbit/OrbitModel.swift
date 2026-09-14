@@ -18,6 +18,7 @@ final class OrbitModel: ObservableObject {
     @Published var obscured = false
     @Published var downloadMessage: String?
     @Published var pageLoading = false
+    @Published var connectionProgress = "Contacting your router…"
     let webView: WKWebView
     var coordinator: ConsoleCoordinator!
     private(set) var transport: RouterTransport?
@@ -46,6 +47,7 @@ final class OrbitModel: ObservableObject {
         guard !connecting else { return }
         attempt += 1; let currentAttempt = attempt
         connecting = true; message = nil; candidateFingerprint = nil
+        connectionProgress = "Contacting your router…"
         Task {
             defer { if attempt == currentAttempt { connecting = false } }
             do {
@@ -68,13 +70,16 @@ final class OrbitModel: ObservableObject {
                 guard attempt == currentAttempt else { return }
                 var login = CredentialVault.Login(username:username, password:password)
                 if password.isEmpty {
+                    connectionProgress = "Unlock your saved sign-in…"
                     let existing = try await Task.detached { try CredentialVault.read(for:selected) }.value
                     guard let existing else { throw OrbitError.message("Enter your LuCI password for the first connection.") }
                     login = existing; username = existing.username
                 }
+                connectionProgress = "Signing in to your router…"
                 let cookies = try await connection.login(username:login.username,password:login.password)
                 guard attempt == currentAttempt else { return }
                 let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
+                connectionProgress = "Opening your workspace…"
                 for cookie in cookies { await cookieStore.setCookie(cookie) }
                 guard attempt == currentAttempt else { return }
                 if saveLogin && !password.isEmpty {

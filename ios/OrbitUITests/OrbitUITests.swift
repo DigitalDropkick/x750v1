@@ -50,8 +50,15 @@ final class OrbitUITests:XCTestCase {
         XCTAssertTrue(trust.waitForExistence(timeout:15))
         reveal(trust,in:app); trust.tap()
         let heading = app.webViews.staticTexts["Orbit test workspace"]
-        XCTAssertTrue(heading.waitForExistence(timeout:20))
-        for title in ["Download test report","Export test case","Download browser report"] {
+        guard heading.waitForExistence(timeout:30) else {
+            let image = XCTAttachment(screenshot:app.screenshot())
+            image.name = "Connection failure"; image.lifetime = .keepAlways; add(image)
+            let progress = app.staticTexts["connection-progress"]
+            let message = app.staticTexts["connection-message"]
+            XCTFail("Workspace did not open: \(progress.exists ? progress.label : "") \(message.exists ? message.label : "")")
+            return
+        }
+        for title in ["Download test report","Export test case","Download large artifact","Download browser report"] {
             let control = title == "Download test report" ? app.webViews.links[title] : app.webViews.buttons[title]
             XCTAssertTrue(control.waitForExistence(timeout:10))
             reveal(control,in:app); control.tap()

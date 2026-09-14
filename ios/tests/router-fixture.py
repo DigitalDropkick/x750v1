@@ -19,6 +19,8 @@ body {background:#080d19;color:#dceefa;font:18px system-ui;padding:30px} a,butto
 <p>This is a native integration fixture, not the live router.</p>
 <a href="/cgi-bin/luci/admin/ddk/download" download>Download test report</a>
 <form action="/cgi-bin/luci/admin/ddk/export" method="POST" target="_blank"><input type="hidden" name="format" value="text"><button>Export test case</button></form>
+<iframe name="orbit-download-frame" hidden></iframe>
+<form action="/cgi-bin/luci/admin/ddk/export" method="POST" target="orbit-download-frame"><input type="hidden" name="format" value="large"><button id="stream-export">Download large artifact</button></form>
 <button onclick="saveBlob(new Blob(['orbit blob report\\n'],{type:'text/plain'}),'orbit-blob.txt')">Download browser report</button>
 <button onclick="window.webkit.messageHandlers.orbit.postMessage({type:'connection'})">Connection settings</button>
 </main></body></html>'''
@@ -72,6 +74,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(403, b"Sign in")
         elif path == "/cgi-bin/luci/admin/ddk/export" and self.authorized() and form == {"format": ["text"]}:
             self.send(200, b"orbit POST case\n", "text/plain", Content_Disposition='attachment; filename="orbit-case.txt"')
+        elif path == "/cgi-bin/luci/admin/ddk/export" and self.authorized() and form == {"format": ["large"]}:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition", 'attachment; filename="orbit-streamed.bin"')
+            self.send_header("Content-Length", str(17 * 1024 * 1024))
+            self.end_headers()
+            for _ in range(17):
+                self.wfile.write(b"X" * 1024 * 1024)
         else:
             self.send(403, b"Not authorized")
 

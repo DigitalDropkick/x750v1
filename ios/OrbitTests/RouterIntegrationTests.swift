@@ -1,5 +1,6 @@
 import XCTest
 import WebKit
+import CryptoKit
 @testable import Orbit
 
 /// Real HTTPS and WebKit on the simulator, against tests/router-fixture.py.
@@ -96,13 +97,23 @@ final class RouterIntegrationTests: XCTestCase {
         for (script, expected) in [
             ("document.querySelector('a[download]').click()", "orbit native report\n"),
             ("document.querySelector('form button').click()", "orbit POST case\n"),
-            ("document.querySelectorAll('button')[1].click()", "orbit blob report\n")
+            ("document.querySelector('#stream-export').click()", "large artifact"),
+            ("document.querySelectorAll('button')[2].click()", "orbit blob report\n")
         ] {
             model.sharedFile = nil
             _ = try await model.webView.evaluateJavaScript(script + "; true")
             try await waitUntil("Download \(expected.trimmingCharacters(in:.whitespacesAndNewlines)) should stream; status: \(model.message ?? "none")") { model.sharedFile != nil }
             let file = try XCTUnwrap(model.sharedFile?.url)
-            XCTAssertEqual(try String(contentsOf:file,encoding:.utf8),expected)
+            if expected == "large artifact" {
+                let handle = try FileHandle(forReadingFrom:file)
+                defer { try? handle.close() }
+                var hash = SHA256(); var size = 0
+                while let data = try handle.read(upToCount:1024*1024), !data.isEmpty {
+                    size += data.count; hash.update(data:data)
+                }
+                XCTAssertEqual(size,17*1024*1024)
+                XCTAssertEqual(hash.finalize().map { String(format:"%02x",$0) }.joined(),"e348a8d9bb235ffc4b93bc5899fdf5503cdb68ca743d12dd06afde10f44e3fc7")
+            } else { XCTAssertEqual(try String(contentsOf:file,encoding:.utf8),expected) }
             XCTAssertFalse(model.connectionSheet,"A normal download should not show a connection failure")
             try FileManager.default.removeItem(at:file.deletingLastPathComponent())
         }

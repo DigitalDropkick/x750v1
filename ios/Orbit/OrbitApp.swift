@@ -8,8 +8,13 @@ struct OrbitApp: App {
         WindowGroup {
             ZStack {
                 Color.orbitNight.ignoresSafeArea()
+                // Mount WebKit before cookie handoff, including on first sign-in.
+                // Its website data process must be ready before revealing the page.
+                ConsoleWebView(model:model).ignoresSafeArea(.container).privacySensitive()
+                    .opacity(model.connected ? 1 : 0)
+                    .allowsHitTesting(model.connected && !model.locked && !model.obscured)
+                    .accessibilityHidden(!model.connected || model.locked || model.obscured)
                 if model.connected {
-                    ConsoleWebView(model:model).ignoresSafeArea(.container).privacySensitive()
                     if model.pageLoading && !model.locked {
                         VStack(spacing:14) { ProgressView(); Text("Opening your workspace…").font(.callout) }
                             .padding(24).background(Color.orbitPanel,in:RoundedRectangle(cornerRadius:20))
@@ -153,7 +158,7 @@ struct ConnectionView: View {
                         .accessibilityIdentifier("connection-message")
                 }
                 if model.connecting {
-                    HStack { ProgressView(); Text("Establishing your connection…").font(.callout) }.frame(maxWidth:.infinity)
+                    HStack { ProgressView(); Text(model.connectionProgress).font(.callout).accessibilityIdentifier("connection-progress") }.frame(maxWidth:.infinity)
                     Button("Cancel connection") { model.cancelConnection() }.frame(maxWidth:.infinity,minHeight:44)
                 } else if model.candidateFingerprint == nil {
                     Button { editing = false; model.connect() } label: {
