@@ -57,7 +57,8 @@ The IPA contains the app and privacy manifest, not tests or signing credentials.
 2. Verify the presented certificate SHA-256 against the router's trusted
    installation record. The public certificate fingerprint can be obtained
    through the existing authenticated SSH connection:
-   `openssl x509 -inform DER -in /etc/uhttpd.crt -noout -fingerprint -sha256`.
+   `openssl s_client -connect 127.0.0.1:443 -servername 192.168.8.1 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256`.
+   Nginx serves HTTPS; the internal `/etc/uhttpd.crt` is not its certificate.
 3. Enter the LuCI username/password on the phone. Sign-in uses the existing
    LuCI endpoint over the verified HTTPS connection. Optional saved sign-in
    uses a device-only Keychain item requiring user presence.

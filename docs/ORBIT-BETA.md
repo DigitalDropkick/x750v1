@@ -1,7 +1,7 @@
 # Orbit companion beta
 
 Router presentation: **4.1.0-beta.1**. Native companion source: **0.1.0**,
-prepared in the local `feature/orbit-companion` branch and not yet published.
+published in `feature/orbit-companion` with cloud validation.
 Baseline: verified router/dashboard v4.0.1 at `be0cf24`.
 
 ## Use the phone preview
@@ -81,15 +81,29 @@ peripheral compatibility.
 
 ## Router certificate identity
 
-Public SHA-256 fingerprint read over the existing authenticated router SSH
-connection during this build:
+Public SHA-256 fingerprint of the **active port 443 HTTPS listener**, verified
+over the existing authenticated router SSH connection and matched from the
+laptop on September 14, 2026 UTC. Both Wi-Fi and Tailscale addresses serve it:
 
-`0E:AF:1C:71:F9:94:B3:23:64:68:BD:34:AA:7A:B1:BB:5E:2B:F1:28:21:0A:7C:F0:C9:B0:D7:DF:84:9D:E9:22`
+`6A:58:C8:3A:7B:74:7A:CD:31:CE:34:A7:BE:59:A6:BA:EA:70:77:F8:98:64:1C:32:B1:3B:3B:37:4C:5D:F6:83`
 
 This is a public certificate fingerprint, not a password or private key.
-It lets the operator verify the native app's first HTTPS pairing. The router's
-certificate file is DER; use `openssl x509 -inform DER -in /etc/uhttpd.crt -noout
--fingerprint -sha256` through the trusted connection when checking it again.
+It lets the operator verify the native app's first HTTPS pairing. Nginx serves
+port 443 and proxies LuCI; `/etc/uhttpd.crt` is a different internal certificate
+and must not be used for this pairing. Read the active public certificate through
+the trusted SSH connection when checking it again:
+
+```sh
+openssl s_client -connect 127.0.0.1:443 -servername 192.168.8.1 </dev/null 2>/dev/null |
+  openssl x509 -noout -fingerprint -sha256 -dates
+```
+
+The current HTTPS certificate has a legacy April 2025 expiry. Orbit uses the
+operator-verified exact certificate fingerprint as its local trust decision,
+rather than public-CA validation. This does not renew or replace that certificate.
+No router keys or HTTPS service configuration were changed. A later certificate
+replacement will require pairing again. The HTTPS endpoint was also checked
+from the laptop: unauthenticated requests return the expected LuCI sign-in form.
 
 ## Rollback
 

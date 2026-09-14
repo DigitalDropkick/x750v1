@@ -19,9 +19,15 @@ body {background:#080d19;color:#dceefa;font:18px system-ui;padding:30px} a,butto
 <p>This is a native integration fixture, not the live router.</p>
 <a href="/cgi-bin/luci/admin/ddk/download" download>Download test report</a>
 <form action="/cgi-bin/luci/admin/ddk/export" method="POST" target="_blank"><input type="hidden" name="format" value="text"><button>Export test case</button></form>
-<button onclick="let a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['orbit blob report\\n'],{type:'text/plain'}));a.download='orbit-blob.txt';a.click()">Download browser report</button>
+<button onclick="saveBlob(new Blob(['orbit blob report\\n'],{type:'text/plain'}),'orbit-blob.txt')">Download browser report</button>
 <button onclick="window.webkit.messageHandlers.orbit.postMessage({type:'connection'})">Connection settings</button>
 </main></body></html>'''
+
+# Exercise the router's actual browser export helper, including URL lifetime.
+source = (Path(__file__).resolve().parents[2] / "files/www/luci-static/resources/ddk/console-app.js").read_text()
+save_blob = "function saveBlob" + source.split("function saveBlob", 1)[1].split("\n\tasync function loadSnapshot", 1)[0]
+helper = "function h(tag,attrs){let el=document.createElement(tag);Object.entries(attrs).forEach(([k,v])=>el.setAttribute(k,v));return el;}"
+PAGE = PAGE.replace(b"</head>", ("<script>" + helper + save_blob + "</script></head>").encode())
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -78,6 +84,8 @@ with tempfile.TemporaryDirectory(prefix="orbit-fixture-") as directory:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert, key)
     server = ThreadingHTTPServer(("127.0.0.1", 18443), Handler)
-    server.socket = context.wrap_socket(server.socket, server_side=True)
+    # Browsers speculatively open idle sockets. Handshake in each request thread,
+    # not accept(), so an idle socket cannot block every other connection.
+    server.socket = context.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
     print("Orbit test fixture ready at https://127.0.0.1:18443", flush=True)
     server.serve_forever()

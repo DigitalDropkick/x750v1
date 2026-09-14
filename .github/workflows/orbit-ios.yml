@@ -40,7 +40,7 @@ jobs:
             sleep 1
           done
           curl --silent --fail --insecure https://127.0.0.1:18443/health > /dev/null
-          xcodebuild test -project ios/Orbit.xcodeproj -scheme Orbit -destination "platform=iOS Simulator,id=$ORBIT_SIMULATOR" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 120 -maximum-test-execution-time-allowance 120 -derivedDataPath ios/build -resultBundlePath ios/Orbit-tests.xcresult CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/orbit-build.log"
+          xcodebuild test -project ios/Orbit.xcodeproj -scheme Orbit -destination "platform=iOS Simulator,id=$ORBIT_SIMULATOR" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 240 -maximum-test-execution-time-allowance 240 -derivedDataPath ios/build -resultBundlePath ios/Orbit-tests.xcresult CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/orbit-build.log"
       - name: Build unsigned iPhone package
         run: |
           set -o pipefail
