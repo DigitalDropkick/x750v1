@@ -1,6 +1,7 @@
 # Orbit companion beta
 
-Router presentation: **4.1.0-beta.1**. Native companion source: **0.1.0**.
+Router presentation: **4.1.0-beta.1**. Native companion source: **0.1.0**,
+prepared in the local `feature/orbit-companion` branch and not yet published.
 Baseline: verified router/dashboard v4.0.1 at `be0cf24`.
 
 ## Use the phone preview
@@ -19,6 +20,8 @@ does not include native Keychain/Face ID login. Session expiry requires signing
 in again. Keep the phone connected to the router's Wi-Fi, or use Tailscale when
 both devices have internet access. Local router tools work without an internet
 uplink when the router can reach their target.
+
+![Orbit, rendered in Chrome at iPhone-sized dimensions](screenshots/orbit-overview-iphone.png)
 
 Orbit is opt-in. The ordinary `/ddk` dashboard keeps its default appearance.
 Choose the connection badge and **Use dashboard appearance**, or append
@@ -50,9 +53,23 @@ forms; search/favorites; Android controls; and typed file handoffs. Real loopbac
 Nmap, continuous fping, stop/save/export, text/artifact download, file reuse and
 inline upload passed. Test-created jobs and inputs were cleaned up.
 
-Additional phone checks cover status expansion, the connection dialog, modal
-isolation, offline/reconnect behavior, readable input sizing and visible starting
-workflows. Final deployment evidence will be appended after live verification.
+Additional phone checks passed for status expansion, the connection dialog,
+modal isolation, offline/reconnect behavior, readable input sizing and visible
+starting workflows.
+
+The committed router application from `d1f0808` was deployed and verified live:
+
+- 62 installed application files match source SHA-256.
+- Nine protected configuration files, 39 listeners and existing application
+  data remain unchanged. GL.iNet, LuCI, Tailscale, extroot and swap are healthy.
+- The full Orbit browser suite passed on the installed assets, without asset
+  interception: 20 page/viewport checks, all 78 forms, the extra phone checks,
+  and the real job/file/case workflows described above.
+- The ordinary dashboard also passed all five pages at 1440, 390 and 320px.
+- Transient browser sessions were destroyed and verification data cleaned up.
+
+Local evidence: `/tmp/ddk-orbit-audit/release-local.log`, `browser-live.log`,
+`browser-standard-layout.log`, `deploy.log`, and `final-router-audit.log`.
 
 The native SwiftUI/WKWebView source has been prepared with HTTPS certificate
 binding, Keychain sign-in, device unlocking and streamed download sharing.
@@ -80,3 +97,22 @@ The normal installer backs up every replaced file and tracks new Orbit assets.
 Use the printed backup directory with `rollback.sh` to restore v4.0.1 and remove
 the newly installed assets. Saved cases and inputs remain on the router. Native
 source and cloud-build preparation do not change router networking or services.
+
+This deployment's rollback is:
+
+```sh
+DDK_TARGET=root@100.122.115.85 \
+DDK_SSH_CONTROL_PATH=/run/user/1000/ddk-router-1000/control \
+./rollback.sh /root/ddk-backups/20260914T012901Z-field-console-v4
+```
+
+## Remaining native steps
+
+1. Reauthorize GitHub's existing CLI login with `gh auth refresh -h github.com
+   -s workflow`. The rejected workflow upload did not create a cloud build.
+2. Publish the native work branch and run its macOS compiler, unit tests and
+   simulator UI test. Resolve any SDK-specific failures before signing.
+3. Establish the user's Apple signing arrangement and create a beta restricted
+   to the intended iPhone. No enrollment or paid service was purchased.
+4. Verify real-device sign-in, Face ID/passcode, local and Tailscale routes,
+   interrupted sessions, Files imports/exports and hardware workflows.

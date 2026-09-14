@@ -10,6 +10,7 @@ const base = process.env.DDK_BROWSER_BASE || 'http://192.168.8.1';
 const session = process.env.DDK_BROWSER_SESSION || '';
 const outputDir = process.env.DDK_BROWSER_OUTPUT_DIR || tmpdir();
 const orbit = process.env.DDK_BROWSER_ORBIT === '1';
+const layoutOnly = process.env.DDK_BROWSER_LAYOUT_ONLY === '1';
 
 if (!/^[a-fA-F0-9]{32}$/.test(session)) {
 	throw new Error('DDK_BROWSER_SESSION must contain one transient 32-character LuCI session ID.');
@@ -204,6 +205,7 @@ async function verifyFlows(sid) {
 			}
 			console.log('Five responsive pages passed at ' + width + 'px');
 		}
+        if (layoutOnly) return;
 		await openPage(sid, 'tools', 1440, 1000);
 		if ((await inspect("document.querySelectorAll('[data-action]').length")) !== 92)
 			throw Error('Tool coverage changed');
@@ -542,9 +544,8 @@ try {
 	);
 	if (unexpected.length) throw new Error('Browser errors: ' + unexpected.join('; '));
 	if (externalRequests.length) throw new Error('Unexpected external requests');
-	console.log(
-		'DDK_BROWSER_V4_OK: responsive pages, tool forms, native loopback lifecycle, partial save/download/reuse, input upload, retention, authentication'
-	);
+	console.log(layoutOnly ? 'DDK_BROWSER_LAYOUT_OK: five authenticated pages at three widths' :
+		'DDK_BROWSER_V4_OK: responsive pages, tool forms, native loopback lifecycle, partial save/download/reuse, input upload, retention, authentication');
 } finally {
 	if (activeSession) {
 		for (const id of createdJobs) {
