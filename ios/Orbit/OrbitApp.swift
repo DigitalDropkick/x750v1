@@ -10,9 +10,9 @@ struct OrbitApp: App {
                 Color.orbitNight.ignoresSafeArea()
                 // The native connection screen owns interaction until sign-in finishes.
                 ConsoleWebView(model:model).ignoresSafeArea(.container).privacySensitive()
-                    .opacity(model.connected ? 1 : 0)
-                    .allowsHitTesting(model.connected && !model.locked && !model.obscured)
-                    .accessibilityHidden(!model.connected || model.locked || model.obscured)
+                    .opacity(model.connected && !model.pageLoading ? 1 : 0)
+                    .allowsHitTesting(model.connected && !model.pageLoading && !model.locked && !model.obscured)
+                    .accessibilityHidden(!model.connected || model.pageLoading || model.locked || model.obscured)
                 if model.connected {
                     if model.pageLoading && !model.locked {
                         VStack(spacing:14) { ProgressView(); Text("Opening your workspace…").font(.callout) }

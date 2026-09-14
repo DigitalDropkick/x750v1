@@ -23,6 +23,7 @@ final class OrbitModel: ObservableObject {
     var coordinator: ConsoleCoordinator!
     private(set) var transport: RouterTransport?
     private(set) var endpoint: RouterEndpoint?
+    var openingNavigation: WKNavigation?
     private var savedPath: String?
     private var unlocking = false
     private var attempt = 0
@@ -99,7 +100,7 @@ final class OrbitModel: ObservableObject {
                 if let savedPath, let resumed = URL(string:savedPath,relativeTo:selected.origin), selected.contains(resumed) { destination = resumed }
                 connected = true; locked = false; connectionSheet = message != nil
                 pageLoading = true
-                webView.load(URLRequest(url:destination))
+                openingNavigation = webView.load(URLRequest(url:destination))
             } catch {
                 if attempt == currentAttempt { message = error.localizedDescription }
             }
@@ -134,6 +135,7 @@ final class OrbitModel: ObservableObject {
         attempt += 1; transport?.close(); transport = nil; connected = false; connecting = false
         webView.stopLoading(); savedPath = nil; password = ""; connectionSheet = false
         endpoint = nil; candidateFingerprint = nil; pageLoading = false; locked = false
+        openingNavigation = nil
         // Replacing the document also stops its JavaScript polling after sign-out.
         webView.loadHTMLString("<!doctype html><html><body></body></html>",baseURL:nil)
         // Remove this app's router session cookie, retaining preferences and presets.

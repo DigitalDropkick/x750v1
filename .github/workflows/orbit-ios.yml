@@ -34,7 +34,8 @@ jobs:
           set -o pipefail
           python3 ios/tests/router-fixture.py > "$RUNNER_TEMP/orbit-fixture.log" 2>&1 &
           ORBIT_FIXTURE_PID=$!
-          trap 'kill "$ORBIT_FIXTURE_PID" 2>/dev/null || true' EXIT
+          ORBIT_SNAPSHOT_PID=
+          trap 'kill "$ORBIT_FIXTURE_PID" ${ORBIT_SNAPSHOT_PID:+"$ORBIT_SNAPSHOT_PID"} 2>/dev/null || true' EXIT
           for attempt in {1..30}; do
             if curl --silent --fail --insecure https://127.0.0.1:18443/health > /dev/null; then break; fi
             if ! kill -0 "$ORBIT_FIXTURE_PID" 2>/dev/null; then
@@ -44,6 +45,14 @@ jobs:
             sleep 1
           done
           curl --silent --fail --insecure https://127.0.0.1:18443/health > /dev/null
+          mkdir -p ios/build/simulator-screenshots
+          (
+            for frame in {1..30}; do
+              sleep 30
+              xcrun simctl io "$ORBIT_SIMULATOR" screenshot "ios/build/simulator-screenshots/frame-$frame.png" >/dev/null 2>&1 || true
+            done
+          ) &
+          ORBIT_SNAPSHOT_PID=$!
           xcodebuild test -project ios/Orbit.xcodeproj -scheme Orbit -destination "platform=iOS Simulator,id=$ORBIT_SIMULATOR" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 240 -maximum-test-execution-time-allowance 240 -derivedDataPath ios/build -resultBundlePath ios/Orbit-tests.xcresult CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/orbit-build.log"
       - name: Build unsigned iPhone package
         run: |
@@ -64,6 +73,7 @@ jobs:
         run: |
           if [ -d ios/Orbit-tests.xcresult ]; then
             xcrun xcresulttool export attachments --path ios/Orbit-tests.xcresult --output-path ios/build/test-attachments
+            xcrun xcresulttool export diagnostics --path ios/Orbit-tests.xcresult --output-path ios/build/test-diagnostics
           fi
       - name: Preserve simulator results
         if: always()
@@ -73,6 +83,8 @@ jobs:
           path: |
             ios/Orbit-tests.xcresult
             ios/build/test-attachments
+            ios/build/test-diagnostics
+            ios/build/simulator-screenshots
             ${{ runner.temp }}/orbit-build.log
             ${{ runner.temp }}/orbit-device-build.log
             ${{ runner.temp }}/orbit-fixture.log
@@ -84,6 +96,7 @@ jobs:
           name: orbit-iphone-review
           path: |
             ios/build/test-attachments
+            ios/build/simulator-screenshots
             ${{ runner.temp }}/orbit-build.log
             ${{ runner.temp }}/orbit-device-build.log
             ${{ runner.temp }}/orbit-fixture.log

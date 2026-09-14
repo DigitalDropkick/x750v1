@@ -60,6 +60,10 @@ final class ConsoleCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WK
     }
     func webView(_ webView:WKWebView,didFinish navigation:WKNavigation!) {
         guard webView === model?.webView, model?.connected == true else { return }
+        // A bootstrap page may finish just after the authenticated navigation
+        // starts. Only that final navigation may reveal the workspace.
+        if let opening = model?.openingNavigation, navigation !== opening { return }
+        model?.openingNavigation = nil
         model?.pageLoading = false
         guard webView.url?.path.hasPrefix("/cgi-bin/luci/admin/ddk/") == true else { return }
         webView.evaluateJavaScript("Boolean(document.getElementById('ddk-app'))") { [weak self] result,_ in

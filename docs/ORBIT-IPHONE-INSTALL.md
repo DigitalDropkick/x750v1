@@ -85,13 +85,14 @@ pairing files through chat. No Apple account has been entered by the build agent
 1. Join the router Wi-Fi, then choose **Router Wi-Fi** in Orbit. This uses
    `https://192.168.8.1`. For remote access, connect the Tailscale app first and
    choose **Tailscale**, which uses `https://100.122.115.85`.
-2. Tap **Connect to router**. On first pairing, compare the certificate
+2. Enter the router's **LuCI** username/password. This is separate from its Wi-Fi
+   password and your Apple Account. Keep **Save sign-in with Face ID / passcode**
+   enabled if wanted. Allow Local Network access if iOS asks.
+3. Tap **Connect to router**. On first pairing, compare the certificate
    fingerprint with the [trusted router record](ORBIT-BETA.md#router-certificate-identity),
    then tap **Fingerprint verified · trust router** if it matches.
-3. Enter the router's **LuCI** username/password. This is separate from its Wi-Fi
-   password and your Apple Account. Allow Local Network access if iOS asks.
-4. Keep **Save sign-in with Face ID / passcode** enabled if wanted. Subsequent
-   launches can retrieve the saved login after iPhone authentication.
+4. Subsequent launches can retrieve the saved login after iPhone authentication.
+   If the app asks for a password instead, enter it and tap **Connect to router**.
 5. Run a simple workflow first. Check the result and save a report through the
    native share sheet using **Save to Files**. Then try your Android workflow
    with the intended device connected to the router.
