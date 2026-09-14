@@ -11,9 +11,9 @@ fail() {
 }
 
 git diff --check
-[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '4.0.1' ]] || fail 'source version is not 4.0.1'
-rg -F "X750 / v4.0.1" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 4.0.1'
-rg -F "Field Console version 4.0.1" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 4.0.1'
+[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '4.1.0-beta.1' ]] || fail 'source version is not 4.1.0-beta.1'
+rg -F "X750 / v4.1.0-beta.1" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 4.1.0-beta.1'
+rg -F "Field Console version 4.1.0-beta.1" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 4.1.0-beta.1'
 bash -n deploy.sh verify.sh rollback.sh configure-swap-autostart.sh rollback-swap-autostart.sh post-reboot-verify.sh scripts/verify-browser-authenticated.sh scripts/audit-operator-release.sh
 sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh \
 	scripts/router-configure-swap-autostart.sh scripts/router-rollback-swap-autostart.sh \
@@ -31,7 +31,7 @@ while IFS= read -r scene; do
 	[[ "$(stat -c %s "$scene")" -le 45056 ]] || fail "optimized scene exceeds 44 KiB: $scene"
 done < <(find "$brand_root" -maxdepth 1 -type f -name '*.webp' | sort)
 [[ "$(du -cb "$brand_root"/* | tail -n 1 | awk '{print $1}')" -le 174080 ]] || fail 'brand asset set exceeds 170 KiB'
-if rg -ni 'https?://|//[^/]' files/www/luci-static/resources/ddk/console.css files/www/luci-static/resources/ddk/console-app.js files/usr/lib/lua/luci/view/ddk/shell.htm | grep -v "document.createElementNS('http://www.w3.org/2000/svg'"; then
+if rg -ni 'https?://|//[^/]' files/www/luci-static/resources/ddk/console.css files/www/luci-static/resources/ddk/console-app.js files/www/luci-static/resources/ddk/orbit.css files/www/luci-static/resources/ddk/orbit.js files/usr/lib/lua/luci/view/ddk/shell.htm | grep -v "document.createElementNS('http://www.w3.org/2000/svg'"; then
 	fail 'console presentation contains a remote asset or request reference'
 fi
 

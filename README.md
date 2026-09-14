@@ -6,6 +6,10 @@ Open **http://192.168.8.1/ddk** from the router LAN, or **http://100.122.115.85/
 
 [Screenshots and verified release record](docs/V4-USABILITY.md#verified-screenshots).
 
+The [Orbit phone companion beta](docs/ORBIT-BETA.md) adds an opt-in space-themed
+phone interface while sharing every existing tool workflow. Its native iPhone
+build and signing status are tracked separately from the working browser preview.
+
 ## Using v4
 
 1. Start with a workflow on **Overview**, or search all 92 actions in **Tool library** by task, tool name or hardware. Filter by family, favorite frequent tools, or press **Ctrl/Cmd K** from any page.
