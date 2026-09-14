@@ -9,7 +9,7 @@ with tempfile.TemporaryDirectory(prefix='ddk-rollback-') as directory:
  for path in ['/root/ddk-backups','/usr/libexec','/usr/share','/usr/lib/lua','/www','/tmp/luci-indexcache','/etc/init.d/rpcd']:
   script=script.replace(path,str(root)+path)
  rpcd=root/'etc/init.d/rpcd';rpcd.parent.mkdir(parents=True);rpcd.write_text('#!/bin/sh\n[ "$1" = reload ]\n');rpcd.chmod(0o755)
- for version in ['1','3']:
+ for version in ['1','3','4']:
   backup=root/('root/ddk-backups/20260913T220000Z-field-console-v'+version)
   old=root/'usr/libexec/ddk-console';new=root/'usr/libexec/ddk-v3-worker'
   old.parent.mkdir(parents=True,exist_ok=True);old.write_text('replacement');new.write_text('new helper')
@@ -19,4 +19,4 @@ with tempfile.TemporaryDirectory(prefix='ddk-rollback-') as directory:
   assert result.returncode==0,result.stderr
   assert old.read_text()=='previous release' and old.stat().st_mode&0o777==0o755
   assert not new.exists()
- print('DDK_ROLLBACK_OK: v1/v3 snapshots, prior bytes and executable mode restored, new helper removed')
+ print('DDK_ROLLBACK_OK: v1/v3/v4 snapshots, prior bytes and executable mode restored, new helper removed')

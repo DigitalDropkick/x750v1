@@ -116,7 +116,7 @@ find "$source_root" -type f | while IFS= read -r source_file; do
 done
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-backup_path="/root/ddk-backups/${timestamp}-field-console-v3"
+backup_path="/root/ddk-backups/${timestamp}-field-console-v4"
 if [ -e "$backup_path" ]; then backup_path="${backup_path}-$$"; fi
 mkdir -p "$backup_path/files"
 : > "$backup_path/existing.list"

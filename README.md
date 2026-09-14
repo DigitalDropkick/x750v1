@@ -1,20 +1,22 @@
-# Digital Dropkick Field Console v3
+# Digital Dropkick Field Console v4
 
-An authenticated LuCI dashboard for the GL.iNet GL-X750 field appliance. Version 3 expands the installed native tools through structured forms, persistent cases, reusable inputs, and configurable capture/session budgets. The registry contains 24 modules and 92 enabled actions, including 78 structured workflows. These counts describe controls, not attached-hardware compatibility.
+An authenticated LuCI dashboard for the GL.iNet GL-X750 field appliance. Version 4 provides a redesigned dark workspace with action-level search, guided setup, live results, case management, and direct file handoffs. It retains the native tool coverage introduced in v3. The registry contains 24 modules and 92 enabled actions, including 78 structured workflows. These counts describe controls, not attached-hardware compatibility.
 
 Open **http://192.168.8.1/ddk** from the router LAN, or **http://100.122.115.85/ddk** through the configured Tailscale connection. Sign in with LuCI. The GL.iNet administration interface remains at the address root.
 
-## Using v3
+## Using v4
 
-1. Open **Jobs** for Network Discovery, ARP Discovery, Android Tools, Packet Capture, Loss and Latency, Serial Console, Cellular Diagnostics, or Recovery Imaging. **Tools** provides the full registry.
-2. Select the target and native operation. Common controls appear first; advanced parameters and browser presets are expandable. Missing hardware or one missing utility does not prevent opening the form. Execution checks the selected operation.
-3. Choose **Validate & Review**, inspect the exact target and command preview, and start the job. Consequential operations request the displayed target phrase.
-4. **Stop and Keep Results** preserves available output. **Save Across Reboots** creates a persistent case; **Name Case**, **Export Case**, and artifact reuse support subsequent work. Incomplete artifacts remain labelled.
-5. **Settings** manages retention and uploaded inputs. Zero disables the selected cleanup limit. Saved cases remain until explicitly deleted. Input hashing runs outside the HTTP request and reports progress.
+1. Start with a workflow on **Overview**, or search all 92 actions in **Tool library** by task, tool name or hardware. Filter by family, favorite frequent tools, or press **Ctrl/Cmd K** from any page.
+2. Select the target and operation. Use a quick setup or saved preset, expand advanced options as needed, and **Refresh devices & files** after connecting hardware. Upload compatible inputs directly beside the file selector.
+3. Choose **Review setup**, inspect the target and native invocation, then **Start job**. **Edit setup** preserves your choices. Consequential operations still require the displayed target phrase.
+4. The job opens in **Jobs & cases**. **Summary** interprets recognized native output and suggests next tools; **Output** provides live text, filtering, copying and downloads; **Files** provides artifacts and direct input reuse. Observed hosts can carry forward into another reviewed test.
+5. **Stop & keep results** retains partial output. **Save as case** adds an optional name and preserves results across reboots. Export, rename, rerun or continue from saved work. **Input files** manages reusable uploads; **Settings** controls retention.
+
+Keyboard focus stays in the active dialog, Escape closes it, and validation errors preserve the form. Favorites and presets stay in the current browser. Results and saved cases stay on the router. Summaries are observations from available output, not an automated diagnosis; raw output and incomplete-result labels remain available.
 
 ## Expanded capabilities
 
-| Family | v3 controls |
+| Family | Available controls |
 | --- | --- |
 | Network | Installed Nmap NSE scripts and private script arguments, presets, ARP discovery, IPv4/IPv6 loss/latency sessions, DNS queries and zone transfers |
 | Android | USB interface recognition independent of vendor, network ADB, properties/packages/dumpsys/logcat, files and directories, split APK installation, application/device management |
@@ -38,7 +40,7 @@ The router has about 121 MiB RAM and one CPU core. Two tool jobs may run concurr
 
 Image files require adequate extroot capacity. Disk-to-disk recovery writes directly to a second external block device and stores only its recovery map/log on the router. This release does not mount external filesystems as alternative image-file destinations. Long transfers depend on available storage, power and a stable connection.
 
-The native ADB build lacks modern wireless-pairing support; network ADB requires an already enabled TCP debugging endpoint. Fastboot and ideviceinstaller were absent during September discovery. No library/core firmware upgrades are part of v3. Actual Android/Apple phones, CAN/Modbus adapters, Bluetooth peripherals, programmers, tuners, cameras and external recovery disks require attached-device acceptance; synthetic/native startup tests do not establish physical-device compatibility.
+The native ADB build lacks modern wireless-pairing support; network ADB requires an already enabled TCP debugging endpoint. Fastboot and ideviceinstaller were absent during September discovery. No library/core firmware upgrades are part of v4. Actual Android/Apple phones, CAN/Modbus adapters, Bluetooth peripherals, programmers, tuners, cameras and external recovery disks require attached-device acceptance; synthetic/native startup tests do not establish physical-device compatibility.
 
 Monitor capture shares the current channel on a radio carrying active interfaces. A different channel requires an unused radio. The USB hub port carrying extroot, active swap, or the modem cannot be power-cycled through an unrelated tool operation. Targeted cellular settings use the router's independent rollback timer.
 
@@ -48,7 +50,7 @@ Monitor capture shares the current channel on a radio carrying active interfaces
 ./scripts/validate-local.sh
 ```
 
-This runs shell/JavaScript/JSON checks, Lua planner and policy tests, USB identity/topology fixtures, input hashing, offset comparison, USB/IP protocol tests, recovery failures and rollback fixtures. Native staged and browser evidence is recorded in [V3-IMPLEMENTATION.md](docs/V3-IMPLEMENTATION.md).
+This runs shell/JavaScript/JSON checks, Lua planner and policy tests, USB identity/topology fixtures, input hashing, offset comparison, USB/IP protocol tests, recovery failures and rollback fixtures. The v4 browser and native input regression evidence is recorded in [V4-USABILITY.md](docs/V4-USABILITY.md). Earlier native capability evidence remains in [V3-IMPLEMENTATION.md](docs/V3-IMPLEMENTATION.md).
 
 The authenticated connection helper keeps credentials out of files:
 
@@ -68,4 +70,4 @@ export DDK_SSH_CONTROL_PATH=/run/user/1000/ddk-router-1000/control
 
 The installer validates this exact appliance, backs up every replaced file, installs only project paths and reloads rpcd ACLs. It compares current protected configuration hashes before/after; it does not require historical configuration values or optional services to remain disabled. No reboot or network restart is required. The narrowly scoped `scripts/install-can-tools.sh` installs the three matching CAN userspace payloads with verified checksums; it performs no bulk upgrades.
 
-Use the fresh backup path printed by deployment with `./rollback.sh /root/ddk-backups/<timestamp>-field-console-v3`. Rollback restores application files, removes newly introduced helpers and reloads ACLs. Saved case/input data remain on extroot. Earlier release evidence is retained in [V2-DEPLOYMENT-HISTORY.md](docs/V2-DEPLOYMENT-HISTORY.md) and the Phase acceptance documents.
+Use the fresh backup path printed by deployment with `./rollback.sh /root/ddk-backups/<timestamp>-field-console-v4`. Rollback restores application files, removes newly introduced helpers and reloads ACLs. Saved case/input data remain on extroot. Earlier release evidence is retained in [V2-DEPLOYMENT-HISTORY.md](docs/V2-DEPLOYMENT-HISTORY.md) and the Phase acceptance documents.

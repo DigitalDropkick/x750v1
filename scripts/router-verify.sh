@@ -1,9 +1,9 @@
 #!/bin/sh
-# Functional v3 acceptance on the installed appliance. Only owned loopback jobs.
+# Functional v4 acceptance on the installed appliance. Only owned loopback jobs.
 set -eu
 [ "$(ubus call system board | jsonfilter -e '@.model')" = 'GL.iNet GL-X750' ]
-[ "$(cat /usr/share/ddk-field-console/VERSION)" = '3.0.0' ]
-printf '%s\n' 'PASS Field Console version 3.0.0 and target identity'
+[ "$(cat /usr/share/ddk-field-console/VERSION)" = '4.0.0' ]
+printf '%s\n' 'PASS Field Console version 4.0.0 and target identity'
 mount | grep -q '^/dev/sda1 on /overlay type ext4 '
 grep -q '^/overlay/ddk-install.swap[[:space:]]' /proc/swaps
 for worker in ddk-console ddk-job-worker ddk-apple-worker ddk-phase3-worker ddk-phase4-worker ddk-v3-worker ddk-device-session ddk-modbus-client ddk-usbip-client ddk-compare-range ddk-input-sealer; do
@@ -61,8 +61,8 @@ finally:
 assert hashes()==before,'Protected router configuration changed'
 print('PASS owned test cleanup and protected configuration preservation',flush=True)
 PYTHON_VERIFY
-for route in / /ddk /luci-static/resources/ddk/console-app.js /luci-static/resources/ddk/console.css; do
+for route in / /ddk /luci-static/resources/ddk/console-app.js /luci-static/resources/ddk/console-guide.js /luci-static/resources/ddk/console.css; do
  code="$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 10 "http://127.0.0.1$route")"
  [ "$code" = 200 ] || { printf 'HTTP check failed: %s %s\n' "$route" "$code"; exit 1; }
 done
-printf '%s\n' 'DDK_ROUTER_V3_OK: installed runtime, all schemas, native jobs, results, cleanup and web services'
+printf '%s\n' 'DDK_ROUTER_V4_OK: installed runtime, all schemas, native jobs, results, cleanup and web services'

@@ -74,8 +74,7 @@ done < <(jq -s -r '.[].actions[] | select(.enabled == true and .parameter_schema
 
 for gui_guard in \
 	'action.unavailable_reason' \
-	'ddk-tool-blocker' \
-	'Unavailable action: '
+	'data-unavailable-action'
 do
 	rg -F "$gui_guard" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail "GUI blocker disclosure is missing: $gui_guard"
 done

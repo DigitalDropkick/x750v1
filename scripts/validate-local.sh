@@ -11,9 +11,9 @@ fail() {
 }
 
 git diff --check
-[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '3.0.0' ]] || fail 'source version is not 3.0.0'
-rg -F "X750 / v3.0.0" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 3.0.0'
-rg -F "Field Console version 3.0.0" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 3.0.0'
+[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '4.0.0' ]] || fail 'source version is not 4.0.0'
+rg -F "X750 / v4.0.0" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 4.0.0'
+rg -F "Field Console version 4.0.0" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 4.0.0'
 bash -n deploy.sh verify.sh rollback.sh configure-swap-autostart.sh rollback-swap-autostart.sh post-reboot-verify.sh scripts/verify-browser-authenticated.sh scripts/audit-operator-release.sh
 sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh \
 	scripts/router-configure-swap-autostart.sh scripts/router-rollback-swap-autostart.sh \
@@ -31,7 +31,7 @@ while IFS= read -r scene; do
 	[[ "$(stat -c %s "$scene")" -le 45056 ]] || fail "optimized scene exceeds 44 KiB: $scene"
 done < <(find "$brand_root" -maxdepth 1 -type f -name '*.webp' | sort)
 [[ "$(du -cb "$brand_root"/* | tail -n 1 | awk '{print $1}')" -le 174080 ]] || fail 'brand asset set exceeds 170 KiB'
-if rg -ni 'https?://|//[^/]' files/www/luci-static/resources/ddk/console.css files/www/luci-static/resources/ddk/console-app.js files/usr/lib/lua/luci/view/ddk/shell.htm; then
+if rg -ni 'https?://|//[^/]' files/www/luci-static/resources/ddk/console.css files/www/luci-static/resources/ddk/console-app.js files/usr/lib/lua/luci/view/ddk/shell.htm | grep -v "document.createElementNS('http://www.w3.org/2000/svg'"; then
 	fail 'console presentation contains a remote asset or request reference'
 fi
 
@@ -435,29 +435,35 @@ for worker_guard in \
 do
 	rg -F -- "$worker_guard" "$capture_worker" >/dev/null || fail "Operator Mode worker guard is missing: $worker_guard"
 done
-for browser_guard in \
-	'function structuredEnvelope(options)' \
-	"exec([ 'action', 'describe', actionId ])" \
-	"exec([ 'action', 'prepare', actionId, structuredEnvelope" \
-	"[ 'job', 'start', prepared.prepared_id ]" \
-	'Server-built native invocation' \
-	'function applyOperatorConditions(registry)' \
-	"field.type === 'integer_list'" \
-	"field.type === 'multiline'" \
-	'function downloadOperatorArtifact(job, artifact)' \
-	"storage === 'extroot' ? '/overlay/ddk-field-console/artifacts/'" \
-	"expectedSize > 16777216" \
-	"h('form', { method: 'POST', action: config.download" \
-	'frame.remove(); }, 2 * 60 * 60 * 1000)' \
-	"action.parameter_schema === 'operator-v1'" \
-	"'[STDERR]\\n' + job.stderr" \
-	'function uploadFile(reservation, file, progress)' \
-	"exec([ 'upload', 'reserve', kindSelect.value, structuredEnvelope" \
-	"exec([ 'upload', 'finalize', reservation.id ])" \
-	"exec([ 'upload', 'delete', upload.id ])"
-do
-	rg -F -- "$browser_guard" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail "Operator Mode browser guard is missing: $browser_guard"
-done
+python3 - <<'PY_CHECK'
+from pathlib import Path
+source = Path('files/www/luci-static/resources/ddk/console-app.js').read_text()
+# Ignore formatting while retaining string content and all boundary expressions.
+compact = ''.join(source.split())
+for guard in [
+    'function structuredEnvelope(options)',
+    "exec(['action','describe',actionId])",
+    "prepared=await exec(['action','prepare',actionId,structuredEnvelope(collectOperatorOptions(registry))])",
+    "['job','start',prepared.prepared_id]",
+    'Server-built native invocation',
+    'function applyOperatorConditions(registry)',
+    "field.type === 'integer_list'", "field.type === 'multiline'",
+    'function downloadOperatorArtifact(job, artifact)',
+    "storage === 'extroot' ? '/overlay/ddk-field-console/artifacts/'",
+    'expectedSize > 16777216',
+    "h('form',{method:'POST',action:config.download,target:frameName,hidden:true}",
+    'frame.remove();},2*60*60*1000)',
+    "action.parameter_schema === 'operator-v1'",
+    "'[STDERR]\\n' + job.stderr",
+    'function uploadFile(reservation, file, progress)',
+    "exec(['upload','reserve',kindSelect.value,structuredEnvelope",
+    "exec(['upload','finalize',reservation.id])",
+    "exec(['upload','delete',upload.id])",
+    'modalStack', 'background.inert=true',
+]:
+    assert ''.join(guard.split()) in compact, 'Missing browser contract: ' + guard
+PY_CHECK
+
 rg -F 'data-upload="/cgi-bin/cgi-upload"' files/usr/lib/lua/luci/view/ddk/shell.htm >/dev/null || fail 'native authenticated upload endpoint is not passed to the browser'
 rg -F '"cgi-io": [ "upload" ]' files/usr/share/rpcd/acl.d/ddk-field-console.json >/dev/null || fail 'authenticated upload transport ACL is missing'
 rg -F '"/overlay/ddk-field-console/uploads/upload-[0-9]*-[0-9]*-[0-9]*/payload.bin": [ "write" ]' files/usr/share/rpcd/acl.d/ddk-field-console.json >/dev/null || fail 'DDK upload write ACL is missing or broader than reviewed'
@@ -600,3 +606,5 @@ python3 scripts/test-device-session.py
 python3 scripts/test-rollback.py
 python3 scripts/test-input-sealer.py
 python3 scripts/test-usbip.py
+
+node --test scripts/test-console-guide.cjs

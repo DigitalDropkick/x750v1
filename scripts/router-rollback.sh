@@ -36,8 +36,8 @@ fi
 case "$backup_path" in /root/ddk-backups/*) ;; *) fail 'backup path is outside /root/ddk-backups' ;; esac
 backup_name="${backup_path#/root/ddk-backups/}"
 case "$backup_name" in
-	[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z-field-console-v[13]|\
-	[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z-field-console-v[13]-[0-9]*) ;;
+	[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z-field-console-v[134]|\
+	[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z-field-console-v[134]-[0-9]*) ;;
 	*) fail 'backup name does not match a DDK Field Console backup' ;;
 esac
 case "$backup_name" in *..*|*/*|*[!A-Za-z0-9_.-]*) fail 'backup name contains unsafe characters' ;; esac

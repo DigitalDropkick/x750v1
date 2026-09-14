@@ -3204,7 +3204,11 @@ local function reuse_artifact(job_id, name, kind)
 	local key, owner="save-"..job_id, "probe-"..os.time().."-"..nixio.getpid()
 	if not acquire_lock(key,owner) then return nil,"This job is being saved or deleted" end
 	local source=(selected.storage=="extroot" and ARTIFACT_ROOT.."/"..job_id or JOB_ROOT.."/"..job_id).."/"..name
-	local reserved,err=reserve_upload(kind,nil,{name=name,size=selected.size},selected.storage=="extroot")
+	-- tcpdump rotation appends a numeric suffix after .pcap; retain the source
+	-- name but give its verified input a supported capture extension.
+	local input_name=name
+	if kind=="capture_input" and selected.kind=="pcap" and name:match("%.pcap%d+$") then input_name=name..".pcap" end
+	local reserved,err=reserve_upload(kind,nil,{name=input_name,size=selected.size},selected.storage=="extroot")
 	if not reserved then release_lock(key,owner);return nil,err end
 	local copied
 	if selected.storage=="extroot" then copied=fs.link(source,reserved.upload_path) else copied=fs.copy(source,reserved.upload_path) end

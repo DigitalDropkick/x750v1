@@ -12,7 +12,7 @@ if [[ "$target" != "root@192.168.8.1" && "$target" != "root@100.122.115.85" ]]; 
 	exit 64
 fi
 
-if [[ -n "$backup_path" && ! "$backup_path" =~ ^/root/ddk-backups/[0-9]{8}T[0-9]{6}Z-field-console-v[13](-[0-9]+)?$ ]]; then
+if [[ -n "$backup_path" && ! "$backup_path" =~ ^/root/ddk-backups/[0-9]{8}T[0-9]{6}Z-field-console-v[134](-[0-9]+)?$ ]]; then
 	printf 'Refusing invalid backup path: %s\n' "$backup_path" >&2
 	exit 64
 fi
