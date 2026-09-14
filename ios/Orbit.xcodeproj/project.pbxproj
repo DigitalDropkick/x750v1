@@ -27,8 +27,10 @@ D089E5BB42A14F4F50391640 = {isa = XCConfigurationList; buildConfigurations = (04
 C394F292405373A2DD7719A4 = {isa = PBXNativeTarget; buildConfigurationList = D089E5BB42A14F4F50391640; buildPhases = (181080F081328B78F86D9702, 5E9E211E89EB94D1CB6262DE, 5D83D94E847DEF4F432AF5BE); buildRules = (); dependencies = (); name = Orbit; productName = Orbit; productReference = 10C28BEED03066D6009D94FA; productType = "com.apple.product-type.application";};
 A8D5A978608CDF5B9BE747DF = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RouterEndpointTests.swift"; sourceTree = "<group>";};
 6DF8C5B3AB4781A964AA36B1 = {isa = PBXBuildFile; fileRef = A8D5A978608CDF5B9BE747DF;};
-A054626505388CFC4202B60F = {isa = PBXGroup; children = (A8D5A978608CDF5B9BE747DF); path = OrbitTests; sourceTree = "<group>";};
-7FE3F10F6A3D657AC5DA5C4B = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (6DF8C5B3AB4781A964AA36B1); runOnlyForDeploymentPostprocessing = 0;};
+1C9EA904994201E40FB592A5 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RouterIntegrationTests.swift"; sourceTree = "<group>";};
+437D81C7E900AAD37B3A4FAA = {isa = PBXBuildFile; fileRef = 1C9EA904994201E40FB592A5;};
+A054626505388CFC4202B60F = {isa = PBXGroup; children = (A8D5A978608CDF5B9BE747DF, 1C9EA904994201E40FB592A5); path = OrbitTests; sourceTree = "<group>";};
+7FE3F10F6A3D657AC5DA5C4B = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (6DF8C5B3AB4781A964AA36B1, 437D81C7E900AAD37B3A4FAA); runOnlyForDeploymentPostprocessing = 0;};
 1CABF33A41D2A694361C67D3 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
 C2EE6455F666243727096A99 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
 88FE448C1DFB0910AA715158 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OrbitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR;};

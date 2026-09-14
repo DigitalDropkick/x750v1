@@ -1,4 +1,6 @@
 build/
+build-device/
+__pycache__/
 DerivedData/
 *.xcuserstate
 xcuserdata/

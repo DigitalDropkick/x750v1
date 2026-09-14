@@ -18,7 +18,7 @@ final class RouterTransport: NSObject, URLSessionDelegate, URLSessionTaskDelegat
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }()
     static func fingerprint(_ trust: SecTrust) -> String? {
-        guard let cert = SecTrustGetCertificateAtIndex(trust, 0) else { return nil }
+        guard let cert = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first else { return nil }
         return SHA256.hash(data: SecCertificateCopyData(cert) as Data).map { String(format:"%02X", $0) }.joined(separator: ":")
     }
     func authenticate(_ challenge: URLAuthenticationChallenge, completion: (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {

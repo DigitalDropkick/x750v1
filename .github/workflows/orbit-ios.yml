@@ -32,7 +32,35 @@ jobs:
       - name: Compile and test iPhone app
         run: |
           set -o pipefail
-          xcodebuild test -project ios/Orbit.xcodeproj -scheme Orbit -destination "platform=iOS Simulator,id=$ORBIT_SIMULATOR" -derivedDataPath ios/build -resultBundlePath ios/Orbit-tests.xcresult CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/orbit-build.log"
+          python3 ios/tests/router-fixture.py > "$RUNNER_TEMP/orbit-fixture.log" 2>&1 &
+          ORBIT_FIXTURE_PID=$!
+          trap 'kill "$ORBIT_FIXTURE_PID" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --silent --fail --insecure https://127.0.0.1:18443/health > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --silent --fail --insecure https://127.0.0.1:18443/health > /dev/null
+          xcodebuild test -project ios/Orbit.xcodeproj -scheme Orbit -destination "platform=iOS Simulator,id=$ORBIT_SIMULATOR" -parallel-testing-enabled NO -derivedDataPath ios/build -resultBundlePath ios/Orbit-tests.xcresult CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/orbit-build.log"
+      - name: Build unsigned iPhone package
+        run: |
+          set -o pipefail
+          xcodebuild build -project ios/Orbit.xcodeproj -scheme Orbit -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath ios/build-device CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/orbit-device-build.log"
+          python3 ios/package-unsigned.py ios/build-device/Build/Products/Release-iphoneos/Orbit.app ios/build-device/Orbit-unsigned.ipa
+          shasum -a 256 ios/build-device/Orbit-unsigned.ipa > ios/build-device/SHA256SUMS
+      - name: Preserve unsigned iPhone package
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-unsigned-iphone
+          path: |
+            ios/build-device/Orbit-unsigned.ipa
+            ios/build-device/SHA256SUMS
+          retention-days: 30
+      - name: Export simulator screenshots
+        if: always()
+        run: |
+          if [ -d ios/Orbit-tests.xcresult ]; then
+            xcrun xcresulttool export attachments --path ios/Orbit-tests.xcresult --output-path ios/build/test-attachments
+          fi
       - name: Preserve simulator results
         if: always()
         uses: actions/upload-artifact@v4
@@ -40,5 +68,7 @@ jobs:
           name: orbit-simulator-evidence
           path: |
             ios/Orbit-tests.xcresult
+            ios/build/test-attachments
             ${{ runner.temp }}/orbit-build.log
+            ${{ runner.temp }}/orbit-device-build.log
           retention-days: 7
