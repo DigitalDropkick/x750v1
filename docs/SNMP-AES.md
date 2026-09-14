@@ -86,6 +86,42 @@ view, supported MIBs, configured credentials, encryption variant and network pat
 The earlier unrelated watchdog restart recorded in MSP-TOOLS.md remains an
 unresolved observation; this encryption update does not claim to fix its cause.
 
+## Installed acceptance: September 14, 2026
+
+- Published application payload: `c5a7ed4`, branch `feature/orbit-snmp-aes`.
+  Deployment completed as 4.2.1, with no reboot or service restart.
+- Installed Orbit jobs passed all six privacy selections with SHA-1, AES-128
+  with SHA-256, six encrypted walks, IPv6, v1/v2c, explicit non-private v3,
+  incorrect authentication/privacy, unknown-user failure, Stop, saved cases
+  and private-file cleanup. These were actual jobs, not mocked commands.
+- Authenticated Orbit browser acceptance passed at 320/390/440 px: encryption
+  preset, masked passphrases, encrypted native results, requested-security
+  display, case save and observed-address handoff. Public job data contained
+  neither raw nor JSON-escaped fixture passphrases. Screenshots were inspected.
+- General installed verification passed all 83 structured schemas, native
+  loopback jobs, Stop, retained output, case save, cleanup and web routes.
+- The fixture observed 508 encrypted requests and 502 encrypted responses over
+  the complete acceptance run; encrypted packets never exposed the synthetic
+  equipment description as plaintext. Discovery and deliberately non-private
+  compatibility requests were counted separately.
+- All 73 deployed project files and permissions match the published payload.
+  All 895 package versions and 16 checked stock/configuration files are
+  unchanged. The boot ID is unchanged; extroot and swap remain active.
+- Owned fixture jobs, saved cases, temporary agents, loopback bridges, the SSH
+  test forward and private fixture directories were removed. Accepted release
+  staging was removed from RAM; the persistent rollback backup is retained.
+  The user's authenticated SSH connection remains available.
+
+Acceptance logs and phone screenshots are in
+`/home/astro/Downloads/Orbit-4.2.1-AES-Acceptance-2026-09-14/` on the laptop.
+To roll back this update from the repository, using the existing SSH connection:
+
+```sh
+DDK_TARGET=root@100.122.115.85 \
+DDK_SSH_CONTROL_PATH=/run/user/1000/ddk-router-1000/control \
+./rollback.sh /root/ddk-backups/20260914T161842Z-field-console-v4
+```
+
 ## Upstream references
 
 - [Net-SNMP release source](https://www.net-snmp.org/download.html)

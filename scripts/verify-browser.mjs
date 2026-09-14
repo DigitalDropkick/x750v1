@@ -482,10 +482,18 @@ async function verifyFlows(sid) {
 		await set('username', user.username); await set('auth', user.auth);
 		await set('authpass', user.authpass); await set('privpass', user.privpass);
 		await set('timeout', 3); await set('retries', 0);
+		for (const width of [320, 390, 440]) {
+			await call('Emulation.setDeviceMetricsOverride', { width, height: 956, deviceScaleFactor: 1, mobile: true }, sid);
+			if (!await inspect("document.querySelector('.ddk-modal-panel').scrollWidth<=document.querySelector('.ddk-modal-panel').clientWidth")) throw Error('SNMP form overflow at ' + width);
+		}
 		if (!await inspect("document.querySelector('[name=authpass]').type==='password' && document.querySelector('[name=privpass]').type==='password' && document.querySelector('.ddk-modal-panel').scrollWidth<=document.querySelector('.ddk-modal-panel').clientWidth")) throw Error('SNMP secret masking or mobile layout failed');
 		await screenshot(sid, 'ddk-v4-snmp-aes-form-440.png');
-		await startReviewed();
+		const snmpJob = await startReviewed();
 		await waitUntil(() => inspect("document.querySelector('.ddk-job-detail .ddk-state')?.textContent==='complete'"), 60000, 'Encrypted SNMP browser job did not complete');
+		const snmpState = JSON.stringify(await backend(['job', 'status', snmpJob]));
+		for (const value of [user.authpass, user.privpass]) {
+			if (snmpState.includes(value) || snmpState.includes(JSON.stringify(value).slice(1, -1))) throw Error('SNMP credentials appeared in public job data');
+		}
 		await label('Summary');
 		if (!await inspect("document.querySelector('.ddk-result-summary').innerText.includes('Orbit AES acceptance fixture') && document.querySelector('.ddk-result-summary').innerText.includes('AES-128')")) throw Error('Encrypted result did not show native measurements and selected privacy');
 		await screenshot(sid, 'ddk-v4-snmp-aes-results-440.png');
