@@ -40,13 +40,13 @@ jobs:
             sleep 1
           done
           curl --silent --fail --insecure https://127.0.0.1:18443/health > /dev/null
-          xcodebuild test -project ios/Orbit.xcodeproj -scheme Orbit -destination "platform=iOS Simulator,id=$ORBIT_SIMULATOR" -parallel-testing-enabled NO -derivedDataPath ios/build -resultBundlePath ios/Orbit-tests.xcresult CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/orbit-build.log"
+          xcodebuild test -project ios/Orbit.xcodeproj -scheme Orbit -destination "platform=iOS Simulator,id=$ORBIT_SIMULATOR" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 120 -maximum-test-execution-time-allowance 120 -derivedDataPath ios/build -resultBundlePath ios/Orbit-tests.xcresult CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/orbit-build.log"
       - name: Build unsigned iPhone package
         run: |
           set -o pipefail
           xcodebuild build -project ios/Orbit.xcodeproj -scheme Orbit -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath ios/build-device CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/orbit-device-build.log"
           python3 ios/package-unsigned.py ios/build-device/Build/Products/Release-iphoneos/Orbit.app ios/build-device/Orbit-unsigned.ipa
-          shasum -a 256 ios/build-device/Orbit-unsigned.ipa > ios/build-device/SHA256SUMS
+          (cd ios/build-device && shasum -a 256 Orbit-unsigned.ipa > SHA256SUMS)
       - name: Preserve unsigned iPhone package
         uses: actions/upload-artifact@v4
         with:

@@ -62,6 +62,7 @@ final class OrbitModel: ObservableObject {
                         message = pin == nil ? "Verify this router’s certificate before signing in." : "The router certificate has changed. Verify it before trusting this connection."
                         return
                     }
+                    if let consoleError = error as? OrbitError { throw consoleError }
                     throw OrbitError.message("The router could not be reached securely. Join its Wi-Fi or enable Tailscale, then try again.")
                 }
                 guard attempt == currentAttempt else { return }
@@ -85,7 +86,7 @@ final class OrbitModel: ObservableObject {
                 UserDefaults.standard.set(selected.key,forKey:"orbit.endpoint")
                 var destination = selected.console
                 if let savedPath, let resumed = URL(string:savedPath,relativeTo:selected.origin), selected.contains(resumed) { destination = resumed }
-                connected = true; locked = false; connectionSheet = false
+                connected = true; locked = false; connectionSheet = message != nil
                 pageLoading = true
                 webView.load(URLRequest(url:destination))
             } catch {

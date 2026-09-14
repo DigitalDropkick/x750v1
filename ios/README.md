@@ -6,37 +6,49 @@ tool library, schemas, native jobs, input uploads and results. Native code adds
 HTTPS certificate binding, iPhone Keychain sign-in, workspace unlocking and
 download sharing. It does not run the Linux tools on the phone.
 
-Status: implementation under validation. A successful simulator run does not
+Status: simulator compilation and initial UI/unit checks passed; expanded
+native integration and device packaging checks are being added. A successful simulator run does not
 establish real-device Face ID, local-network permissions, Wi-Fi/Tailscale
 roaming, or attached-hardware compatibility. No signed install is included yet.
 
 ## Build without owning a Mac
 
 The `Orbit iPhone validation` GitHub Actions workflow uses a standard macOS
-runner to compile and run unit/UI tests. It needs no Apple signing secrets and
-does not distribute an app. Standard runners in this public repository are
+runner to compile and run unit/UI tests, then produce an **unsigned arm64
+iPhone IPA**. It needs no Apple signing secrets. Standard runners in this public repository are
 covered by GitHub's public-repository Actions policy.
 
-An install on an iPhone still requires Apple signing. For this single-device
-beta, an Apple Developer Program membership plus a registered-device Ad Hoc
-profile provides a private distribution route. TestFlight is another option,
-with expiring beta builds. Enrollment and signing are separate from compiling
-the source. Never commit a signing key, certificate private key, provisioning
-profile or router credential. Do not paste these into chat or build logs.
+An install on an iPhone still requires Apple signing, but **paid membership is
+optional**. A free Apple Account can sign this IPA locally through iloader or
+SideStore, with seven-day refreshes. Paid membership supports Ad Hoc signing or
+TestFlight. See the [installation guide](../docs/ORBIT-IPHONE-INSTALL.md) for the
+prepared Linux launcher, phone steps and optional enrollment. Never commit a
+signing key, certificate private key, provisioning profile or router credential.
+Do not paste these into chat or build logs.
 
 On a Mac or macOS runner:
 
 ```sh
 python3 ios/generate-project.py
+# In a separate terminal, keep the loopback HTTPS test fixture running:
+python3 ios/tests/router-fixture.py
+# Then run the simulator suite:
 xcodebuild test -project ios/Orbit.xcodeproj -scheme Orbit \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro Max' \
-  -derivedDataPath ios/build CODE_SIGNING_ALLOWED=NO
+  -parallel-testing-enabled NO -derivedDataPath ios/build CODE_SIGNING_ALLOWED=NO
 ```
 
 The Xcode project is checked in. Generation uses Python's standard library;
 the app uses Apple frameworks without third-party packages. Minimum target is
 iOS 18; the intended acceptance device is Addam's iPhone 17 Pro Max on iOS 26.
 Confirm its exact version in Settings → General → About before acceptance.
+
+The local HTTPS fixture uses synthetic sign-in data and a temporary certificate.
+Integration tests exercise unknown/changed certificate handling, sign-in
+failure, exact-origin redirects, session transfer to WebKit, and normal, POST
+and browser-blob downloads. They do not invoke router tools. CI exports XCTest
+results, screenshot attachments and build logs separately from the unsigned IPA.
+The IPA contains the app and privacy manifest, not tests or signing credentials.
 
 ## Connection design
 

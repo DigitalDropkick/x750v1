@@ -29,7 +29,7 @@ struct OrbitApp: App {
             .sheet(isPresented:$model.connectionSheet) { ConnectionView(model:model).presentationDragIndicator(.visible) }
             .sheet(item:$model.sharedFile) { file in FileShare(url:file.url) }
             .overlay(alignment:.top) {
-                if let message = model.downloadMessage {
+                if !model.locked && !model.obscured, let message = model.downloadMessage {
                     HStack { ProgressView(); Text(message).font(.caption) }
                         .padding(14).background(.ultraThinMaterial,in:Capsule()).padding(.top,8)
                 }
@@ -114,6 +114,7 @@ struct ConnectionView: View {
                         TextField("https://192.168.8.1",text:$model.address).keyboardType(.URL).textContentType(.URL)
                             .textInputAutocapitalization(.never).autocorrectionDisabled().focused($editing)
                             .accessibilityIdentifier("router-address")
+                            .onChange(of:model.address) { _,_ in model.candidateFingerprint = nil }
                     }
                     Divider().overlay(.white.opacity(0.06))
                     HStack(spacing:16) {

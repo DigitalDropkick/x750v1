@@ -59,7 +59,10 @@ final class RouterIntegrationTests: XCTestCase {
     private func waitUntil(_ description:String, condition:()->Bool) async throws {
         let deadline = Date().addingTimeInterval(20)
         while !condition() && Date() < deadline { try await Task.sleep(nanoseconds:100_000_000) }
-        XCTAssertTrue(condition(),description)
+        guard condition() else {
+            XCTFail(description)
+            throw OrbitError.message(description)
+        }
     }
 
     @MainActor
@@ -88,13 +91,13 @@ final class RouterIntegrationTests: XCTestCase {
             ("document.querySelectorAll('button')[1].click()", "orbit blob report\n")
         ] {
             model.sharedFile = nil
-            _ = try await model.webView.evaluateJavaScript(script)
+            _ = try await model.webView.evaluateJavaScript(script + "; true")
             try await waitUntil("Authenticated download should stream into a shareable file") { model.sharedFile != nil }
             let file = try XCTUnwrap(model.sharedFile?.url)
             XCTAssertEqual(try String(contentsOf:file,encoding:.utf8),expected)
             try FileManager.default.removeItem(at:file.deletingLastPathComponent())
         }
-        _ = try await model.webView.evaluateJavaScript("window.webkit.messageHandlers.orbit.postMessage({type:'connection'})")
+        _ = try await model.webView.evaluateJavaScript("window.webkit.messageHandlers.orbit.postMessage({type:'connection'}); true")
         try await waitUntil("Trusted console bridge should open connection settings") { model.connectionSheet }
     }
 }
