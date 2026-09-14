@@ -57,8 +57,11 @@ def main():
     # Offline local archives for the entire dependency closure: opkg has no reason
     # to fetch/upgrade anything. The post-install audit enforces that invariant.
     empty_lists=backup/'empty-package-lists';empty_lists.mkdir(mode=0o700)
-    subprocess.run(['opkg','--lists-dir',str(empty_lists),'--noaction','install']+[str(package_dir/p['filename']) for p in missing],check=True)
-    subprocess.run(['opkg','--lists-dir',str(empty_lists),'install']+[str(package_dir/p['filename']) for p in missing],check=True)
+    config=backup/'offline-opkg.conf'
+    config.write_text('dest root /\nlists_dir ext '+str(empty_lists)+'\narch all 1\narch noarch 1\narch mips_24kc 10\n')
+    offline_env=dict(os.environ,OPKG_CONF_DIR=str(empty_lists))
+    subprocess.run(['opkg','--conf',str(config),'--noaction','install']+[str(package_dir/p['filename']) for p in missing],check=True,env=offline_env,timeout=180)
+    subprocess.run(['opkg','--conf',str(config),'install']+[str(package_dir/p['filename']) for p in missing],check=True,env=offline_env)
     after=installed()
     assert all(after.get(n,{}).get('Version')==p['Version'] for n,p in before.items()),'An existing package changed'
     assert set(after)-set(before)=={p['package'] for p in missing},'Unexpected added package'

@@ -59,8 +59,9 @@ python3 install-msp-tools.py /path/to/staged-ipks msp-packages.lock.json
 ```
 
 The installer checks this exact device/release, archive hashes, dependencies,
-free space and existing package versions. It uses an empty available-package
-list and the local archive closure, first in no-action mode. It records added
+free space and existing package versions. It uses an isolated configuration, empty feed/config directories and the local
+archive closure, first in no-action mode. The firmware loads feed snippets even
+with an alternate config file, so `OPKG_CONF_DIR` is isolated explicitly. It records added
 packages under `/root/ddk-backups/msp-packages-<timestamp>` and verifies every
 previously installed version is preserved. It performs no feed refresh, kernel
 change or bulk upgrade. Then use the normal `deploy.sh` with the router's SSH
