@@ -1,0 +1,12 @@
+{
+  "id": "/cgi-bin/luci/admin/ddk/?orbit=1",
+  "name": "Digital Dropkick Orbit",
+  "short_name": "Orbit",
+  "description": "Your Digital Dropkick field appliance, at your fingertips.",
+  "start_url": "/cgi-bin/luci/admin/ddk/overview?orbit=1",
+  "scope": "/cgi-bin/luci/admin/ddk/",
+  "display": "standalone",
+  "background_color": "#080d19",
+  "theme_color": "#080d19",
+  "icons": [{ "src": "orbit-icon.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" }]
+}

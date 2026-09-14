@@ -101,12 +101,21 @@
 			command += ' ' + escapeArgument(value);
 		});
 		var body = new URLSearchParams({ sessionid: config.session, command: command });
-		var response = await fetch(config.cgi, {
-			method: 'POST',
-			credentials: 'same-origin',
-			headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-			body: body.toString()
-		});
+		var response;
+		try {
+			response = await fetch(config.cgi, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+				body: body.toString()
+			});
+		} catch (error) {
+			window.dispatchEvent(new CustomEvent('ddk:connection', { detail: { state: 'offline' } }));
+			throw error;
+		}
+		window.dispatchEvent(new CustomEvent('ddk:connection', {
+			detail: { state: response.ok ? 'connected' : response.status === 403 ? 'authentication' : 'error' }
+		}));
 		if (!response.ok)
 			throw new Error(
 				response.status === 403
@@ -362,7 +371,7 @@
 				h('h1', {}, section),
 				h('p', {}, description)
 			),
-			h('span', { class: 'ddk-appliance-tag' }, 'X750 / v4.0.1')
+			h('span', { class: 'ddk-appliance-tag' }, 'X750 / v4.1.0-beta.1')
 		);
 	}
 	function sectionHeading(title, detail) {
@@ -409,7 +418,7 @@
 				routes.map(function (route) {
 					var active =
 						config.page === route[0].split('#')[0] &&
-						(config.page !== 'settings' || (location.hash === '#inputs') === route[0].indexOf('#') >= 0);
+						(config.page !== 'settings' || (location.hash === '#inputs') === (route[0].indexOf('#') >= 0));
 					return h(
 						'a',
 						{
@@ -3136,5 +3145,11 @@
 		.then(function () {
 			return (renderers[config.page] || renderOverview)();
 		})
-		.catch(showError);
+		.then(function () {
+			window.dispatchEvent(new Event('ddk:rendered'));
+		})
+		.catch(function (error) {
+			showError(error);
+			window.dispatchEvent(new Event('ddk:rendered'));
+		});
 })();

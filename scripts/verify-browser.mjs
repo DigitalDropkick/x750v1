@@ -9,6 +9,8 @@ import { once } from 'node:events';
 const base = process.env.DDK_BROWSER_BASE || 'http://192.168.8.1';
 const session = process.env.DDK_BROWSER_SESSION || '';
 const outputDir = process.env.DDK_BROWSER_OUTPUT_DIR || tmpdir();
+const orbit = process.env.DDK_BROWSER_ORBIT === '1';
+const layoutOnly = process.env.DDK_BROWSER_LAYOUT_ONLY === '1';
 
 if (!/^[a-fA-F0-9]{32}$/.test(session)) {
 	throw new Error('DDK_BROWSER_SESSION must contain one transient 32-character LuCI session ID.');
@@ -127,7 +129,7 @@ async function screenshot(sid, filename) {
 		{ format: 'png', fromSurface: true, captureBeyondViewport: false },
 		sid
 	);
-	const target = join(outputDir, filename);
+	const target = join(outputDir, orbit ? filename.replace('ddk-v4-', 'ddk-orbit-') : filename);
 	writeFileSync(target, Buffer.from(capture.data, 'base64'));
 	return target;
 }
@@ -189,19 +191,21 @@ async function verifyFlows(sid) {
 		return id;
 	}
 	if (process.env.DDK_BROWSER_QUICK !== '1') {
-		for (const width of [1440, 390, 320]) {
+		for (const width of (orbit ? [1440, 440, 390, 320] : [1440, 390, 320])) {
 			for (const page of ['overview', 'tools', 'jobs', 'settings', 'packages']) {
 				await openPage(sid, page, width, 900);
 				const result = await inspect(
-					"({version:document.body.innerText.includes('X750 / v4.0.1'),overflow:document.documentElement.scrollWidth>innerWidth,coerced:/\\[object (?:HTML|Object)|^null$/m.test(document.body.innerText),logo:document.querySelector('.ddk-nav-home img')?.naturalWidth})"
+					"({version:document.body.innerText.includes('X750 / v4.1.0-beta.1'),overflow:document.documentElement.scrollWidth>innerWidth,coerced:/\\[object (?:HTML|Object)|^null$/m.test(document.body.innerText),logo:document.querySelector('.ddk-nav-home img')?.naturalWidth})"
 				);
 				if (!result.version || result.overflow || result.coerced || !result.logo)
 					throw Error(page + ' at ' + width + ': ' + JSON.stringify(result));
+                if(orbit && !await inspect("document.documentElement.dataset.orbit==='true' && !!document.querySelector('.orbit-masthead') && document.querySelectorAll('.ddk-nav-links [aria-current=page]').length===1"))throw Error('Orbit navigation did not initialize correctly');
                 if(page==='tools' && !await inspect("(()=>{const input=document.querySelector('.ddk-library-search input'),icon=document.querySelector('.ddk-library-search svg');return input.getBoundingClientRect().left+parseFloat(getComputedStyle(input).paddingLeft)>=icon.getBoundingClientRect().right+8;})()"))throw Error('Tool search text overlaps its icon');
-				if (width === 1440 || width === 390) await screenshot(sid, 'ddk-v4-' + page + '-' + width + '.png');
+				if (width === 1440 || width === 390 || width === 440) await screenshot(sid, 'ddk-v4-' + page + '-' + width + '.png');
 			}
 			console.log('Five responsive pages passed at ' + width + 'px');
 		}
+        if (layoutOnly) return;
 		await openPage(sid, 'tools', 1440, 1000);
 		if ((await inspect("document.querySelectorAll('[data-action]').length")) !== 92)
 			throw Error('Tool coverage changed');
@@ -249,6 +253,32 @@ async function verifyFlows(sid) {
 			}
 		console.log('All 78 tool forms and typed input handoffs passed');
 	}
+    if (orbit) {
+        await openPage(sid, 'overview', 440, 956);
+        if (!await inspect("document.querySelector('.ddk-quick-grid [data-action]').getBoundingClientRect().top < innerHeight - 90")) throw Error('Orbit buries starting workflows below the phone viewport');
+        await click('.orbit-telemetry summary');
+        if (!await inspect("document.querySelector('.orbit-telemetry').open && document.querySelector('.ddk-health-strip').getClientRects().length > 0")) throw Error('Appliance telemetry cannot be expanded');
+        await click('.orbit-telemetry summary');
+        await click('.orbit-connection');
+        await wait("!!document.querySelector('.orbit-dialog[open]')", 'Connection dialog did not open');
+        await label('Done');
+        if (!await inspect("document.activeElement.classList.contains('orbit-connection')")) throw Error('Connection dialog lost focus');
+        await call('Network.emulateNetworkConditions', {offline:true,latency:0,downloadThroughput:-1,uploadThroughput:-1}, sid);
+        try {
+            await click('[data-action="network.nmap_lan_discovery"]');
+            await wait("document.querySelector('.orbit-connection').dataset.state==='offline'", 'Lost router connection was not surfaced');
+            if (!await inspect("document.querySelector('.orbit-masthead').inert")) throw Error('Companion header remains interactive behind a modal');
+        } finally {
+            await call('Network.emulateNetworkConditions', {offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1}, sid);
+        }
+        await key('Escape');
+        await openAction('network.nmap_lan_discovery');
+        await wait("document.querySelector('.orbit-connection').dataset.state==='connected'", 'Connection status did not recover');
+        if (!await inspect("Array.from(document.querySelectorAll('.ddk-modal input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=file]), .ddk-modal textarea, .ddk-modal select')).every(n=>parseFloat(getComputedStyle(n).fontSize)>=16)")) throw Error('Orbit form text triggers iPhone focus zoom');
+        await key('Escape');
+        await screenshot(sid, 'ddk-v4-overview-440.png');
+        console.log('Orbit telemetry, connection dialog, modal isolation, offline/reconnect and phone field sizing passed');
+    }
 	await openPage(sid, 'tools', 1440, 1000);
 	await inspect(
 		"(()=>{let n=document.querySelector('[aria-label=\"Search tool library\"]');n.value='loss latency';n.dispatchEvent(new Event('input'));})()"
@@ -453,6 +483,7 @@ try {
 	await call('Runtime.enable', {}, pageSession);
 	await call('Log.enable', {}, pageSession);
 	await call('Network.enable', {}, pageSession);
+    if(orbit) await call('Page.addScriptToEvaluateOnNewDocument', {source:"sessionStorage.setItem('ddk-orbit','1');"}, pageSession);
 	const cookie = await call(
 		'Network.setCookie',
 		{
@@ -473,10 +504,12 @@ try {
 			if (message.method !== 'Fetch.requestPaused') return;
 			const filename = new URL(message.params.request.url).pathname.split('/').pop();
 			const body = Buffer.concat([
+				filename === 'console-app.js' && orbit ? readFileSync(new URL('orbit.js', assetRoot)) : Buffer.alloc(0),
 				filename === 'console-app.js'
 					? readFileSync(new URL('console-guide.js', assetRoot))
 					: Buffer.alloc(0),
-				readFileSync(new URL(filename, assetRoot))
+				readFileSync(new URL(filename, assetRoot)),
+				filename === 'console.css' && orbit ? readFileSync(new URL('orbit.css', assetRoot)) : Buffer.alloc(0)
 			]);
 			call(
 				'Fetch.fulfillRequest',
@@ -506,13 +539,13 @@ try {
 	const unexpected = browserErrors.filter(
 		(error) =>
 			!error.includes('was loaded over an insecure connection. This file should be served over HTTPS.') &&
+			!(orbit && error.includes('net::ERR_INTERNET_DISCONNECTED')) &&
 			!error.includes('403 (Access to path denied by ACL)')
 	);
 	if (unexpected.length) throw new Error('Browser errors: ' + unexpected.join('; '));
 	if (externalRequests.length) throw new Error('Unexpected external requests');
-	console.log(
-		'DDK_BROWSER_V4_OK: responsive pages, tool forms, native loopback lifecycle, partial save/download/reuse, input upload, retention, authentication'
-	);
+	console.log(layoutOnly ? 'DDK_BROWSER_LAYOUT_OK: five authenticated pages at three widths' :
+		'DDK_BROWSER_V4_OK: responsive pages, tool forms, native loopback lifecycle, partial save/download/reuse, input upload, retention, authentication');
 } finally {
 	if (activeSession) {
 		for (const id of createdJobs) {

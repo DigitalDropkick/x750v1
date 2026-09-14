@@ -45,7 +45,7 @@ Confirm its exact version in Settings → General → About before acceptance.
 2. Verify the presented certificate SHA-256 against the router's trusted
    installation record. The public certificate fingerprint can be obtained
    through the existing authenticated SSH connection:
-   `openssl x509 -in /etc/uhttpd.crt -noout -fingerprint -sha256`.
+   `openssl x509 -inform DER -in /etc/uhttpd.crt -noout -fingerprint -sha256`.
 3. Enter the LuCI username/password on the phone. Sign-in uses the existing
    LuCI endpoint over the verified HTTPS connection. Optional saved sign-in
    uses a device-only Keychain item requiring user presence.

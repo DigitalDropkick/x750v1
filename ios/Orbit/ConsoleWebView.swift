@@ -50,8 +50,20 @@ final class ConsoleCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WK
     func webView(_ webView:WKWebView,didFail navigation:WKNavigation!,withError error:Error) { failed(error) }
     private func failed(_ error:Error) {
         if (error as NSError).code == NSURLErrorCancelled { return }
+        model?.pageLoading = false
         model?.message = "The console connection was interrupted. Reconnect to resume your router workspace."
         model?.connectionSheet = true
+    }
+    func webView(_ webView:WKWebView,didFinish navigation:WKNavigation!) {
+        guard webView === model?.webView else { return }
+        model?.pageLoading = false
+        guard webView.url?.path.hasPrefix("/cgi-bin/luci/admin/ddk/") == true else { return }
+        webView.evaluateJavaScript("Boolean(document.getElementById('ddk-app'))") { [weak self] result,_ in
+            if result as? Bool == false {
+                self?.model?.message = "Your router session needs a fresh sign-in. Reconnect to continue."
+                self?.model?.connectionSheet = true
+            }
+        }
     }
     func webViewWebContentProcessDidTerminate(_ webView:WKWebView) {
         model?.message = "iOS closed the console view to recover memory. Reconnect to resume your jobs."
@@ -79,7 +91,11 @@ final class ConsoleCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WK
             downloads[ObjectIdentifier(download)] = target
             model?.downloadMessage = "Downloading \(name)…"
             completionHandler(target)
-        } catch { model?.message = "iPhone storage could not accept this download."; completionHandler(nil) }
+        } catch {
+            model?.message = "iPhone storage could not accept this download. Free space and try again; the original remains on the router."
+            model?.connectionSheet = true
+            completionHandler(nil)
+        }
     }
     func downloadDidFinish(_ download:WKDownload) {
         model?.downloadMessage = nil

@@ -15,7 +15,9 @@ final class OrbitModel: ObservableObject {
     @Published var connectionSheet = false
     @Published var sharedFile: SharedFile?
     @Published var locked = false
+    @Published var obscured = false
     @Published var downloadMessage: String?
+    @Published var pageLoading = false
     let webView: WKWebView
     var coordinator: ConsoleCoordinator!
     private(set) var transport: RouterTransport?
@@ -73,6 +75,7 @@ final class OrbitModel: ObservableObject {
                 guard attempt == currentAttempt else { return }
                 let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
                 for cookie in cookies { await cookieStore.setCookie(cookie) }
+                guard attempt == currentAttempt else { return }
                 if saveLogin && !password.isEmpty {
                     do { try CredentialVault.store(login,for:selected) }
                     catch { message = error.localizedDescription }
@@ -83,6 +86,7 @@ final class OrbitModel: ObservableObject {
                 var destination = selected.console
                 if let savedPath, let resumed = URL(string:savedPath,relativeTo:selected.origin), selected.contains(resumed) { destination = resumed }
                 connected = true; locked = false; connectionSheet = false
+                pageLoading = true
                 webView.load(URLRequest(url:destination))
             } catch {
                 if attempt == currentAttempt { message = error.localizedDescription }

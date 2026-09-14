@@ -10,7 +10,11 @@ struct OrbitApp: App {
                 Color.orbitNight.ignoresSafeArea()
                 if model.connected {
                     ConsoleWebView(model:model).ignoresSafeArea(.container).privacySensitive()
-                    if model.locked {
+                    if model.pageLoading && !model.locked {
+                        VStack(spacing:14) { ProgressView(); Text("Opening your workspace…").font(.callout) }
+                            .padding(24).background(Color.orbitPanel,in:RoundedRectangle(cornerRadius:20))
+                    }
+                    if model.locked || model.obscured {
                         Color.orbitNight.ignoresSafeArea()
                         VStack(spacing:24) {
                             Image(systemName:"faceid").font(.system(size:52)).foregroundStyle(Color.orbitCyan)
@@ -31,6 +35,7 @@ struct OrbitApp: App {
                 }
             }
             .onChange(of:scenePhase) { _,phase in
+                model.obscured = phase != .active
                 if phase == .background { model.locked = model.connected }
                 if phase == .active { model.resume() }
             }

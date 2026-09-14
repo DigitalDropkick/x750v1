@@ -30,6 +30,8 @@ for name in target_names:
     if name == 'Orbit':
         assets = add('assets','isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>";')
         files.append(assets); resources.append(add('assets-build',f'isa = PBXBuildFile; fileRef = {assets};'))
+        privacy = add('privacy','isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>";')
+        files.append(privacy); resources.append(add('privacy-build',f'isa = PBXBuildFile; fileRef = {privacy};'))
     groups.append(add('group:'+name,f'isa = PBXGroup; children = {array(files)}; path = {name}; sourceTree = "<group>";'))
     source_phase = add('sources:'+name,f'isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = {array(builds)}; runOnlyForDeploymentPostprocessing = 0;')
     resource_phase = add('resources:'+name,f'isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = {array(resources)}; runOnlyForDeploymentPostprocessing = 0;')
