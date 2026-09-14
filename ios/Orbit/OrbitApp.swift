@@ -8,10 +8,9 @@ struct OrbitApp: App {
         WindowGroup {
             ZStack {
                 Color.orbitNight.ignoresSafeArea()
-                // Mount WebKit before cookie handoff, including on first sign-in.
-                // Its website data process must be ready before revealing the page.
+                // Keep WebKit renderable during sign-in; ConnectionView covers it.
+                // A zero-opacity web view can suspend its website data process.
                 ConsoleWebView(model:model).ignoresSafeArea(.container).privacySensitive()
-                    .opacity(model.connected ? 1 : 0)
                     .allowsHitTesting(model.connected && !model.locked && !model.obscured)
                     .accessibilityHidden(!model.connected || model.locked || model.obscured)
                 if model.connected {
@@ -148,7 +147,7 @@ struct ConnectionView: View {
                         Label("Verify your router",systemImage:"checkmark.shield").font(.headline)
                         Text("Match this SHA-256 certificate fingerprint with the router’s trusted installation record before continuing.").font(.caption).foregroundStyle(.secondary)
                         Text(fingerprint).font(.system(size:12,design:.monospaced)).textSelection(.enabled).fixedSize(horizontal:false,vertical:true)
-                        Button("Fingerprint verified · trust router") { model.trustCertificate() }.buttonStyle(OrbitButton())
+                        Button("Fingerprint verified · trust router") { editing = false; model.trustCertificate() }.buttonStyle(OrbitButton())
                             .accessibilityIdentifier("trust-router")
                         Button("Cancel") { model.candidateFingerprint = nil }.frame(maxWidth:.infinity,minHeight:44)
                     }.padding(20).background(Color.orbitPanel,in:RoundedRectangle(cornerRadius:24))
