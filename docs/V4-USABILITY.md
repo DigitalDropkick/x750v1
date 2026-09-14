@@ -106,7 +106,60 @@ software limitations inherited from v3. No firmware/library upgrades are include
 
 ## Release and rollback
 
-Publication and live installation evidence will be appended after deployment.
-The v4 installer creates a fresh application backup and supports restoring v1,
-v3 or v4 backup folders. It retains existing saved cases and reusable inputs.
+Final release: **v4.0.1**, code commit
+`83bd73cf9d4cb2c775f1481dff17323ed0fabf29`, published to GitHub and installed
+on 2026-09-14 UTC (September 13 local time). The original `v4.0.0` tag remains
+available in the release history.
 
+Deployment used `./deploy.sh`. `./verify.sh` passed the installed native runtime
+checks. The complete authenticated browser verifier passed against live v4.0.1
+assets, including all 78 forms, every workflow assertion and the added search
+icon/text geometry check at 1440, 390 and 320 pixels. Local validation passed.
+
+The final visual patch fixes a CSS specificity conflict that had overridden
+padding beside the tool-search icon. It changes no native tool behavior.
+
+- All 58 installed application files match the committed source by SHA-256.
+- All nine protected configuration files and all 39 listeners match the fresh
+  deployment baseline. The existing retention-data file is unchanged.
+- GL.iNet, LuCI, Tailscale, extroot and swap passed the final health check.
+- The final live browser run passed all 15 page viewports, all 78 forms and typed
+  handoffs, and the actual network/file/case workflows described above.
+- Zero test jobs and zero uploaded test inputs remain. The isolated native
+  validation tree was removed. Transient browser sessions were destroyed.
+
+The application rollback snapshot is:
+`/root/ddk-backups/20260914T000631Z-field-console-v4`.
+It contains the prior v3 files. The additional snapshot
+`/root/ddk-backups/20260914T002403Z-field-console-v4` contains the v4.0.0 files
+before the final visual patch. To restore v3 with the connection helper open:
+
+```sh
+DDK_TARGET=root@100.122.115.85 \
+DDK_SSH_CONTROL_PATH=/run/user/1000/ddk-router-1000/control \
+./rollback.sh /root/ddk-backups/20260914T000631Z-field-console-v4
+```
+
+Rollback restores the application and reloads its ACLs. It retains saved cases
+and reusable inputs. The rollback fixtures passed for v1, v3 and v4 folder names.
+
+## Changed files
+
+| Area | Files and purpose |
+| --- | --- |
+| Interface | `console-app.js`, `console.css`, `shell.htm`: navigation, responsive design, dialogs, job workspace and files |
+| Guidance | `console-guide.js`: all action descriptions, presets, output summaries and compatible handoffs |
+| Runtime | `ddk-console`: canonical input names for rotated PCAP reuse; `VERSION`: 4.0.1 |
+| Release tooling | `router-install.sh`, `router-verify.sh`, `router-rollback.sh`, `rollback.sh`: v4 deployment, verification and rollback |
+| Validation | `validate-local.sh`, `audit-operator-release.sh`, `verify-browser.mjs`, `test-rollback.py`, `test-console-guide.cjs`, `test-v4-input-native.py`: updated contracts and regressions |
+| Documentation | `README.md`, this release record and the screenshots below |
+
+## Verified screenshots
+
+[Desktop overview](screenshots/v4-overview-desktop.png) ·
+[Mobile overview](screenshots/v4-overview-mobile.png) ·
+[Tool library](screenshots/v4-tool-library.png) ·
+[Live case and observed results](screenshots/v4-live-case.png)
+
+The case screenshot contains public loopback test data. Those test jobs and
+inputs were deleted after verification; customer data were not used.

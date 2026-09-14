@@ -4,6 +4,8 @@ An authenticated LuCI dashboard for the GL.iNet GL-X750 field appliance. Version
 
 Open **http://192.168.8.1/ddk** from the router LAN, or **http://100.122.115.85/ddk** through the configured Tailscale connection. Sign in with LuCI. The GL.iNet administration interface remains at the address root.
 
+[Screenshots and verified release record](docs/V4-USABILITY.md#verified-screenshots).
+
 ## Using v4
 
 1. Start with a workflow on **Overview**, or search all 92 actions in **Tool library** by task, tool name or hardware. Filter by family, favorite frequent tools, or press **Ctrl/Cmd K** from any page.
