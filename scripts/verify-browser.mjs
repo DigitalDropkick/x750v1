@@ -221,6 +221,16 @@ async function verifyFlows(sid) {
 			);
 			if (!contract.focused || contract.overflow) throw Error('Form focus/overflow: ' + action.id);
 			contracts.push({ id: action.id, ...contract });
+			if (action.id === 'network.snmp') {
+				await set('version', '3'); await set('level', 'authPriv');
+				if (!await inspect("!document.querySelector('[name=privpass]').closest('label').hidden && document.querySelector('[name=community]').closest('label').hidden")) throw Error('SNMPv3 privacy fields did not follow protocol selection');
+				await set('level', 'noAuthNoPriv');
+				if (!await inspect("document.querySelector('[name=authpass]').closest('label').hidden && document.querySelector('[name=privpass]').closest('label').hidden")) throw Error('SNMP no-auth form retained irrelevant secret fields');
+			}
+			if (action.id === 'network.smb') {
+				await set('operation', 'transfer'); await set('guest', false);
+				if (!await inspect("!document.querySelector('[name=share]').closest('label').hidden && !document.querySelector('[name=password]').closest('label').hidden && !document.querySelector('[name=transfer_mib]').closest('label').hidden")) throw Error('SMB transfer or authentication fields hidden');
+			}
 			if (action.id === 'android.operator') {
 				await set('transport', 'tcp');
 				if (!(await inspect("!document.querySelector('[name=host]').closest('label').hidden")))

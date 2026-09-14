@@ -27,7 +27,7 @@ class NetworkTests(unittest.TestCase):
                 self.assertEqual(native.call_args.args[0], ["/usr/bin/ndiff", "--text", str(before), str(after)])
             attacks = ['<!DOCTYPE nmaprun SYSTEM "file:///etc/passwd">' + VALID,
                        '<!DOCTYPE nmaprun [<!ENTITY x SYSTEM "https://example.invalid/">]>' + VALID,
-                       '<notnmap/>', '<nmaprun><host/></nmaprun>', VALID.encode('utf-16')]
+                       '<notnmap/>', '<nmaprun><host/></nmaprun>', '<nmaprun><broken', VALID.encode('utf-16')]
             for attack in attacks:
                 after.write_bytes(attack if isinstance(attack, bytes) else attack.encode())
                 with self.assertRaises((ValueError, helper.sys.modules['xml.etree.ElementTree'].ParseError)):

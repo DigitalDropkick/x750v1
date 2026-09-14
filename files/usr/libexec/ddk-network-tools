@@ -98,16 +98,19 @@ def validate_scan(path):
             carry = data[-512:]
     root = None
     finished = False
-    for event, element in ElementTree.iterparse(path, events=("start", "end")):
-        if root is None:
-            root = element
-            if root.tag != "nmaprun":
-                raise ValueError("Input is not Nmap XML")
-        if event == "end":
-            if element.tag == "finished":
-                finished = element.get("exit") == "success"
-            if element.tag == "host":
-                root.clear()
+    try:
+        for event, element in ElementTree.iterparse(path, events=("start", "end")):
+            if root is None:
+                root = element
+                if root.tag != "nmaprun":
+                    raise ValueError("Input is not Nmap XML")
+            if event == "end":
+                if element.tag == "finished":
+                    finished = element.get("exit") == "success"
+                if element.tag == "host":
+                    root.clear()
+    except ElementTree.ParseError as exc:
+        raise ValueError("Scan XML is malformed; choose a completed Nmap XML artifact") from exc
     if not finished:
         raise ValueError("Save two completed Nmap scans with XML output; this scan is incomplete")
 
