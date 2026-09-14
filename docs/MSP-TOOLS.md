@@ -26,9 +26,10 @@ observed targets carried forward; review the selected target before starting.
 - LLDP reports only received advertisements. An empty list is an observation,
   not evidence that a cable or switch failed. Switch advertising configuration
   and the connected Ethernet port determine what can be discovered.
-- SNMP supports v1/v2c and the installed Net-SNMP 5.9.1 v3 authentication
-  algorithms. This firmware's client has **DES only** for v3 privacy; AES is not
-  compiled in. Printer/UPS profiles need the corresponding MIB implemented and
+- Orbit 4.2.1 uses isolated Net-SNMP 5.9.5.2 clients with AES-128, AES-192/256
+  (Blumenthal and Cisco/Reeder variants), DES and the existing v1/v2c/v3 modes.
+  See [SNMP encryption](SNMP-AES.md) for setup, build and verification details.
+  Printer/UPS profiles need the corresponding MIB implemented and
   exposed by the device. Counters are snapshots, not calculated traffic rates.
 - SNMP credentials and SMB passwords use private files in the RAM-backed job
   directory. They are excluded from prepared metadata, native argv and saved

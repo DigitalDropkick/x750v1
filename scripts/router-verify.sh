@@ -2,13 +2,14 @@
 # Functional v4 acceptance on the installed appliance. Only owned loopback jobs.
 set -eu
 [ "$(ubus call system board | jsonfilter -e '@.model')" = 'GL.iNet GL-X750' ]
-[ "$(cat /usr/share/ddk-field-console/VERSION)" = '4.2.0' ]
-printf '%s\n' 'PASS Field Console version 4.2.0 and target identity'
+[ "$(cat /usr/share/ddk-field-console/VERSION)" = '4.2.1' ]
+printf '%s\n' 'PASS Field Console version 4.2.1 and target identity'
 mount | grep -q '^/dev/sda1 on /overlay type ext4 '
 grep -q '^/overlay/ddk-install.swap[[:space:]]' /proc/swaps
 for worker in ddk-console ddk-job-worker ddk-apple-worker ddk-phase3-worker ddk-phase4-worker ddk-v3-worker ddk-device-session ddk-modbus-client ddk-usbip-client ddk-compare-range ddk-input-sealer ddk-network-tools; do
  [ -x "/usr/libexec/$worker" ]
 done
+python3 /usr/share/ddk-field-console/snmp-aes/verify.py / --native
 python3 - <<'PYTHON_VERIFY'
 import base64,hashlib,json,pathlib,subprocess,time
 backend='/usr/libexec/ddk-console'

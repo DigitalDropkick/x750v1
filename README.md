@@ -6,6 +6,9 @@ Open **http://192.168.8.1/ddk** from the router LAN, or **http://100.122.115.85/
 
 [Screenshots and verified release record](docs/V4-USABILITY.md#verified-screenshots).
 
+Orbit 4.2.1 adds [SNMPv3 AES encryption](docs/SNMP-AES.md) using isolated clients.
+The existing iPhone app loads the updated form when it reconnects.
+
 The [Orbit phone companion beta](docs/ORBIT-BETA.md) adds an opt-in space-themed
 phone interface while sharing every existing tool workflow. The native iPhone
 beta passed all 13 simulator tests and its arm64 build; an unsigned IPA is ready

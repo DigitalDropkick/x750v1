@@ -80,6 +80,33 @@ class NetworkTests(unittest.TestCase):
                 self.assertIn(state['probe'],report.getvalue())
                 self.assertTrue((root/'workspace/smb-probe.json').exists())
 
+    def test_v3_selected_encryption_reaches_private_native_config(self):
+        for privacy in ('AES', 'AES-192', 'AES-256', 'AES-192-C', 'AES-256-C', 'DES'):
+            with self.subTest(privacy=privacy), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                auth, private = root/'auth', root/'privacy'
+                auth.write_text('  fixture "auth" \\ value  ')
+                private.write_text('  fixture "privacy" \\ value  ')
+                a = argparse.Namespace(private_dir=str(root/'private'), host='192.0.2.4', port=161,
+                    timeout=3, retries=0, profile='walk', oid='.1.3.6.1.2.1.1', version='3',
+                    username='fixture', level='authPriv', auth='SHA-256', privacy=privacy,
+                    authpass=str(auth), privpass=str(private), context='test context')
+                with patch.object(helper, 'run', return_value=0) as native:
+                    self.assertEqual(helper.snmp(a), 0)
+                argv = native.call_args.args[0]
+                self.assertEqual(argv[0], '/usr/libexec/ddk-snmp/snmpwalk')
+                self.assertNotIn('-A', argv)
+                self.assertNotIn('-X', argv)
+                for value in (auth.read_text(), private.read_text()):
+                    self.assertNotIn(value, ' '.join(argv))
+                config = (root/'private/snmp.conf').read_text()
+                self.assertIn('defPrivType ' + privacy + '\n', config)
+                self.assertIn('defAuthType SHA-256\n', config)
+                self.assertIn('defSecurityLevel authPriv\n', config)
+                self.assertIn('defPrivPassphrase ' + helper.quoted(private.read_text()), config)
+                self.assertEqual((root/'private').stat().st_mode & 0o777, 0o700)
+                self.assertEqual((root/'private/snmp.conf').stat().st_mode & 0o777, 0o600)
+
     def test_secret_line_injection_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)/'secret';p.write_text('value\ndefVersion 1')

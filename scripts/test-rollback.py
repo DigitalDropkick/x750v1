@@ -14,9 +14,11 @@ with tempfile.TemporaryDirectory(prefix='ddk-rollback-') as directory:
   old=root/'usr/libexec/ddk-console';new=root/'usr/libexec/ddk-v3-worker'
   old.parent.mkdir(parents=True,exist_ok=True);old.write_text('replacement');new.write_text('new helper')
   archived=backup/'files'/str(old).lstrip('/');archived.parent.mkdir(parents=True);archived.write_text('previous release');archived.chmod(0o755)
-  (backup/'existing.list').write_text(str(old)+'\n');(backup/'new.list').write_text(str(new)+'\n')
+  snmp=root/'usr/libexec/ddk-snmp/snmpget';snmp.parent.mkdir(parents=True,exist_ok=True);snmp.write_text('new isolated client');snmp.chmod(0o755)
+  (backup/'existing.list').write_text(str(old)+'\n');(backup/'new.list').write_text(str(new)+'\n'+str(snmp)+'\n')
   result=subprocess.run(['sh','-s','--',str(backup)],input=script,text=True,capture_output=True)
   assert result.returncode==0,result.stderr
   assert old.read_text()=='previous release' and old.stat().st_mode&0o777==0o755
   assert not new.exists()
+  assert not snmp.exists()
  print('DDK_ROLLBACK_OK: v1/v3/v4 snapshots, prior bytes and executable mode restored, new helper removed')

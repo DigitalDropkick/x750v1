@@ -90,7 +90,7 @@ class SNMPFixture:
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--smb-port',type=int);args=parser.parse_args()
-    assert Path('/usr/share/ddk-field-console/VERSION').read_text().strip()=='4.2.0'
+    assert Path('/usr/share/ddk-field-console/VERSION').read_text().strip()=='4.2.1'
     protected=['network','wireless','firewall','uhttpd','rpcd','gpsd','rtl_tcp','motion','mjpg-streamer']
     def hashes():return {n:hashlib.sha256(Path('/etc/config',n).read_bytes()).hexdigest() for n in protected}
     before=hashes();fixture=SNMPFixture();listener=socket.socket();listener.bind(('127.0.0.1',0));listener.listen(2)

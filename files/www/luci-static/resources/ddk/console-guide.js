@@ -7,7 +7,7 @@
 	'use strict';
 	var catalog = {
 		'network.lldp': { name: 'Switch & port', summary: 'Identify the connected switch, remote port and advertised management address.', output: 'Neighbor and switch-port inventory', module: 'network-discovery', group: 'network', requires: 'Connect the Ethernet cable to an LLDP/CDP-advertising switch. No neighbors means no advertisement was observed; it does not prove the cable is disconnected.', native: ['lldpcli'] },
-		'network.snmp': { name: 'Equipment check', summary: 'Read switch interfaces, printer supplies, UPS status or a custom SNMP OID.', output: 'Numeric OIDs with equipment values', module: 'network-discovery', group: 'network', requires: 'Enter the target and its SNMP credentials. System checks use GET; other profiles walk the selected MIB subtree. The installed SNMPv3 build supports DES encryption only; AES-only devices need a compatible client build.', native: ['snmpget', 'snmpwalk'] },
+		'network.snmp': { name: 'Equipment check', summary: 'Read switch interfaces, printer supplies, UPS status or a custom SNMP OID.', output: 'Numeric OIDs with equipment values', module: 'network-discovery', group: 'network', requires: 'Enter the target and its SNMP credentials. System checks use GET; other profiles walk the selected MIB subtree. SNMPv3 authPriv supports AES-128, AES-192/256 and DES. Match the equipment settings; AES-192/256 variants must also match.', native: ['snmpget', 'snmpwalk'] },
 		'network.compare_scans': { name: 'Compare scans', summary: 'See what changed between two saved Nmap cases.', output: 'Host, port and service differences', module: 'network-discovery', group: 'network', requires: 'Run and save two completed Nmap jobs with XML or All artifact output. Choose earlier and later cases. Match targets and scan settings for a meaningful before/after comparison.', native: ['ndiff'] },
 		'network.tracepath': { name: 'Path & MTU', summary: 'Locate path hops and packet-size constraints behind VPN or application failures.', output: 'Hop responses and reported path MTU', module: 'network-discovery', group: 'network', requires: 'Enter the destination. UDP probes and ICMP replies must pass along the route. Missing replies can indicate filtering; they do not prove a hop is down.', native: ['tracepath'] },
 		'network.smb': { name: 'Windows & NAS shares', summary: 'List shares, browse a folder, or verify an upload/download round trip.', output: 'Share access, directory listing and verified transfer results', module: 'network-discovery', group: 'network', requires: 'Choose guest or enter credentials. Transfer tests create a unique orbit-test file in the selected folder, compare SHA-256 and attempt deletion even after Stop. Review cleanup results. SMB2 is the default; select NT1 only when the server requires SMB1.', native: ['smbclient'] },
@@ -979,6 +979,7 @@
 	var presets = {
 		'network.lldp': [{ name: 'All ports', detail: 'Inspect every advertising neighbor', options: { interface: '' } }],
 		'network.snmp': [
+			{ name: 'Encrypted SNMPv3', detail: 'AES-128 with authentication; match the device settings', options: { version: '3', level: 'authPriv', privacy: 'AES', profile: 'system' } },
 			{ name: 'Identity & uptime', detail: 'System name, description and uptime', options: { profile: 'system' } },
 			{ name: 'Switch interfaces', detail: 'Status, errors and octet counters', options: { profile: 'interfaces' } },
 			{ name: '64-bit counters', detail: 'High-capacity interface counters', options: { profile: 'interfaces64' } },
@@ -1142,6 +1143,12 @@
 	}
 	function friendly(value) {
 		var labels = {
+			AES: 'AES-128 (standard)',
+			'AES-192': 'AES-192 (Blumenthal)',
+			'AES-256': 'AES-256 (Blumenthal)',
+			'AES-192-C': 'AES-192 (Cisco / Reeder)',
+			'AES-256-C': 'AES-256 (Cisco / Reeder)',
+			DES: 'DES (legacy)',
 			syn: 'TCP SYN',
 			connect: 'TCP connect',
 			syn_udp: 'TCP SYN + UDP',
@@ -1327,8 +1334,9 @@
 			});
 			result.columns = ['Measurement', 'OID', 'Value'];
 			result.metrics.push({ label: 'Values in preview', value: String(result.rows.length) });
+			if (options.version === '3') result.metrics.push({ label: 'Requested security', value: options.level === 'authPriv' ? options.auth + ' / ' + friendly(options.privacy) : options.level });
 			if (/No Such (?:Object|Instance)|End of MIB/i.test(text)) result.note = 'The agent does not expose some requested OIDs. Check its MIB support and access view; try System or a custom OID.';
-			if (/Timeout|Authentication|authorization|Unknown user|pass phrase|decryption/i.test(text + error)) result.errorHint = 'Check UDP reachability, SNMP version, credentials and the agent access view. For v3, match authentication and privacy settings; this router build cannot use AES.';
+			if (/Timeout|Authentication|authorization|Unknown user|pass phrase|decryption/i.test(text + error)) result.errorHint = 'Check UDP reachability, SNMP version, credentials and the agent access view. For v3, match the authentication method and exact encryption variant configured on the equipment. Encryption is never silently downgraded.';
 		} else if (id === 'network.compare_scans') {
 			text.split(/\r?\n/).forEach(function (line) { if (/^[+-][^+-]/.test(line)) result.rows.push([line[0] === '+' ? 'Added / current' : 'Removed / previous', line.slice(1)]); });
 			result.columns = ['Change', 'Native difference'];

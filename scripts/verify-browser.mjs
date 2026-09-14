@@ -12,6 +12,8 @@ const outputDir = process.env.DDK_BROWSER_OUTPUT_DIR || tmpdir();
 const orbit = process.env.DDK_BROWSER_ORBIT === '1';
 const layoutOnly = process.env.DDK_BROWSER_LAYOUT_ONLY === '1';
 const mspOnly = process.env.DDK_BROWSER_MSP_ONLY === '1';
+const snmpOnly = process.env.DDK_BROWSER_SNMP_ONLY === '1';
+if (snmpOnly && (!process.env.DDK_BROWSER_SNMP_SETTINGS || !process.env.DDK_BROWSER_SNMP_PORT)) throw Error('SNMP browser verification needs private fixture settings and a loopback port');
 if (mspOnly && !process.env.DDK_BROWSER_SMB_PORT) throw Error('MSP browser verification needs its loopback fixture port');
 
 if (!/^[a-fA-F0-9]{32}$/.test(session)) {
@@ -192,13 +194,13 @@ async function verifyFlows(sid) {
 		createdJobs.add(id);
 		return id;
 	}
-	if (!mspOnly) {
+	if (!mspOnly && !snmpOnly) {
 	if (process.env.DDK_BROWSER_QUICK !== '1') {
 		for (const width of (orbit ? [1440, 440, 390, 320] : [1440, 390, 320])) {
 			for (const page of ['overview', 'tools', 'jobs', 'settings', 'packages']) {
 				await openPage(sid, page, width, 900);
 				const result = await inspect(
-					"({version:document.body.innerText.includes('X750 / v4.2.0'),overflow:document.documentElement.scrollWidth>innerWidth,coerced:/\\[object (?:HTML|Object)|^null$/m.test(document.body.innerText),logo:document.querySelector('.ddk-nav-home img')?.naturalWidth})"
+					"({version:document.body.innerText.includes('X750 / v4.2.1'),overflow:document.documentElement.scrollWidth>innerWidth,coerced:/\\[object (?:HTML|Object)|^null$/m.test(document.body.innerText),logo:document.querySelector('.ddk-nav-home img')?.naturalWidth})"
 				);
 				if (!result.version || result.overflow || result.coerced || !result.logo)
 					throw Error(page + ' at ' + width + ': ' + JSON.stringify(result));
@@ -227,6 +229,7 @@ async function verifyFlows(sid) {
 			if (action.id === 'network.snmp') {
 				await set('version', '3'); await set('level', 'authPriv');
 				if (!await inspect("!document.querySelector('[name=privpass]').closest('label').hidden && document.querySelector('[name=community]').closest('label').hidden")) throw Error('SNMPv3 privacy fields did not follow protocol selection');
+				if (!await inspect("document.querySelector('[name=privacy]').value === 'AES' && ['AES','AES-192','AES-256','AES-192-C','AES-256-C','DES'].every(v => Array.from(document.querySelector('[name=privacy]').options).some(o => o.value === v))")) throw Error('SNMP encryption choices missing or default changed');
 				await set('level', 'noAuthNoPriv');
 				if (!await inspect("document.querySelector('[name=authpass]').closest('label').hidden && document.querySelector('[name=privpass]').closest('label').hidden")) throw Error('SNMP no-auth form retained irrelevant secret fields');
 			}
@@ -466,6 +469,38 @@ async function verifyFlows(sid) {
 		'Native Nmap, observed-host handoff, live fping, stable polling, stop, save, export, file reuse and inline upload passed'
 	);
 	}
+	if (snmpOnly) {
+		const fixture = JSON.parse(readFileSync(process.env.DDK_BROWSER_SNMP_SETTINGS, 'utf8'));
+		const user = fixture.users.find(u => u.auth === 'SHA-256' && u.privacy === 'AES');
+		const port = Number(process.env.DDK_BROWSER_SNMP_PORT);
+		if (!user || !Number.isInteger(port) || port < 1 || port > 65535) throw Error('Invalid SNMP loopback fixture');
+		await openPage(sid, 'tools', 440, 956);
+		await openAction('network.snmp');
+		await label('Encrypted SNMPv3');
+		if (!await inspect("document.querySelector('[name=version]').value==='3' && document.querySelector('[name=level]').value==='authPriv' && document.querySelector('[name=privacy]').value==='AES'")) throw Error('Encrypted preset did not populate protocol and privacy');
+		await set('host', '127.0.0.1'); await set('port', port);
+		await set('username', user.username); await set('auth', user.auth);
+		await set('authpass', user.authpass); await set('privpass', user.privpass);
+		await set('timeout', 3); await set('retries', 0);
+		if (!await inspect("document.querySelector('[name=authpass]').type==='password' && document.querySelector('[name=privpass]').type==='password' && document.querySelector('.ddk-modal-panel').scrollWidth<=document.querySelector('.ddk-modal-panel').clientWidth")) throw Error('SNMP secret masking or mobile layout failed');
+		await screenshot(sid, 'ddk-v4-snmp-aes-form-440.png');
+		await startReviewed();
+		await waitUntil(() => inspect("document.querySelector('.ddk-job-detail .ddk-state')?.textContent==='complete'"), 60000, 'Encrypted SNMP browser job did not complete');
+		await label('Summary');
+		if (!await inspect("document.querySelector('.ddk-result-summary').innerText.includes('Orbit AES acceptance fixture') && document.querySelector('.ddk-result-summary').innerText.includes('AES-128')")) throw Error('Encrypted result did not show native measurements and selected privacy');
+		await screenshot(sid, 'ddk-v4-snmp-aes-results-440.png');
+		await label('Save as case');
+		await wait('!!document.querySelector(\'[aria-label="Case name"]\')');
+		await inspect("document.querySelector('[aria-label=\"Case name\"]').value='Orbit encrypted SNMP fixture'");
+		await label('Save case');
+		await wait("document.querySelector('.ddk-result-head').innerText.includes('SAVED CASE')", 'Encrypted case was not saved');
+		await label('Summary');
+		await click('.ddk-next-steps .ddk-search-result');
+		await wait("!!document.querySelector('.ddk-modal [name]')");
+		if (!await inspect("Array.from(document.querySelectorAll('.ddk-modal [name]')).some(n=>n.value==='127.0.0.1')")) throw Error('SNMP next step lost the equipment address');
+		await key('Escape');
+		console.log('PASS mobile AES preset, masked credentials, encrypted native results, saved case and target handoff');
+	}
 	if (process.env.DDK_BROWSER_SMB_PORT) {
 		const port = Number(process.env.DDK_BROWSER_SMB_PORT);
 		if (!Number.isInteger(port) || port < 1 || port > 65535) throw Error('Invalid loopback SMB fixture port');
@@ -583,7 +618,7 @@ try {
 	);
 	if (unexpected.length) throw new Error('Browser errors: ' + unexpected.join('; '));
 	if (externalRequests.length) throw new Error('Unexpected external requests');
-	console.log(mspOnly ? 'DDK_BROWSER_MSP_OK: native shares, mobile result tables and directory handoff' : layoutOnly ? 'DDK_BROWSER_LAYOUT_OK: authenticated responsive pages' :
+	console.log(snmpOnly ? 'DDK_BROWSER_SNMP_AES_OK: encrypted native query, mobile results, saved case and handoff' : mspOnly ? 'DDK_BROWSER_MSP_OK: native shares, mobile result tables and directory handoff' : layoutOnly ? 'DDK_BROWSER_LAYOUT_OK: authenticated responsive pages' :
 		'DDK_BROWSER_V4_OK: responsive pages, tool forms, native loopback lifecycle, partial save/download/reuse, input upload, retention, authentication');
 } finally {
 	if (activeSession) {

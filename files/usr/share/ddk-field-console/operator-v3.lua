@@ -106,7 +106,7 @@ local function credential(p,o,key)
 	local path=p.private("msp-"..key,o[key]):gsub("@PRIVATE@","@PRIVATE_FILE@")
 	o[key]="[REDACTED]";return path
 end
-define("network.snmp", "SNMP equipment check", "INFO", {network_helper,"/usr/bin/snmpget","/usr/bin/snmpwalk"}, common({
+define("network.snmp", "SNMP equipment check", "INFO", {network_helper,"/usr/libexec/ddk-snmp/snmpget","/usr/libexec/ddk-snmp/snmpwalk"}, common({
 	text("host","Equipment address","127.0.0.1","host"),integer("port","UDP port",161,1,65535),
 	choice("profile","Check",{"system","interfaces","interfaces64","printer","ups","get","walk"}),
 	text("oid","Custom numeric OIDs (space separated)",".1.3.6.1.2.1.1"),
@@ -114,7 +114,7 @@ define("network.snmp", "SNMP equipment check", "INFO", {network_helper,"/usr/bin
 	text("username","SNMPv3 user"),choice("level","SNMPv3 security",{"authNoPriv","authPriv","noAuthNoPriv"}),
 	choice("auth","Authentication",{"SHA","SHA-256","SHA-512","SHA-224","SHA-384","MD5"}),
 	field("authpass","Authentication passphrase","secret",""),
-	choice("privacy","Encryption (installed build: DES only)",{"DES"}),field("privpass","Privacy passphrase","secret",""),
+	field("privacy","Encryption","enum","AES",{options={"AES","AES-192","AES-256","AES-192-C","AES-256-C","DES"},help="AES is standard AES-128. For 192/256-bit encryption, match the device's variant: plain names use Blumenthal key extension; -C uses the Cisco/Reeder variant. DES supports older equipment."}),field("privpass","Privacy passphrase","secret",""),
 	text("context","SNMPv3 context"),integer("timeout","Reply timeout (seconds)",3,1,120),integer("retries","Retries",1,0,20)
 }), function(o,c,p)
 	local oids={};for oid in o.oid:gmatch("%S+") do assert(oid:match("^%.?%d+[.%d]*$") and not oid:find("..",1,true) and oid:sub(-1)~=".","Use numeric OIDs such as .1.3.6.1.2.1.1.1.0");oids[#oids+1]=oid end
@@ -125,9 +125,9 @@ define("network.snmp", "SNMP equipment check", "INFO", {network_helper,"/usr/bin
 		if o.level~="noAuthNoPriv" then assert(#o.authpass>=8,"SNMPv3 authentication needs at least 8 passphrase characters") end
 		if o.level=="authPriv" then assert(#o.privpass>=8,"SNMPv3 privacy needs at least 8 passphrase characters") end
 	else assert(o.community~="","Enter the device's SNMP community") end
-	network_workspace(p,"snmp");p.required_executables={"/usr/bin/python3",(o.profile=="system" or o.profile=="get") and "/usr/bin/snmpget" or "/usr/bin/snmpwalk"}
+	network_workspace(p,"snmp");p.required_executables={"/usr/bin/python3",(o.profile=="system" or o.profile=="get") and "/usr/libexec/ddk-snmp/snmpget" or "/usr/libexec/ddk-snmp/snmpwalk"}
 	-- All credentials are files; they never appear in native process arguments.
-	return {network_helper,"snmp","--workspace","@WORK@/msp","--private-dir","@MSP_JOB@","--host",o.host,"--port",tostring(o.port),"--profile",o.profile,"--oid",table.concat(oids," "),"--version",o.version,"--community",credential(p,o,"community"),"--username="..o.username,"--level",o.level,"--auth",o.auth,"--authpass",credential(p,o,"authpass"),"--privpass",credential(p,o,"privpass"),"--context="..o.context,"--timeout",tostring(o.timeout),"--retries",tostring(o.retries)}
+	return {network_helper,"snmp","--workspace","@WORK@/msp","--private-dir","@MSP_JOB@","--host",o.host,"--port",tostring(o.port),"--profile",o.profile,"--oid",table.concat(oids," "),"--version",o.version,"--community",credential(p,o,"community"),"--username="..o.username,"--level",o.level,"--auth",o.auth,"--privacy",o.privacy,"--authpass",credential(p,o,"authpass"),"--privpass",credential(p,o,"privpass"),"--context="..o.context,"--timeout",tostring(o.timeout),"--retries",tostring(o.retries)}
 end)
 
 define("network.compare_scans", "Compare saved scans", "INFO", {network_helper,"/usr/bin/ndiff"}, common({

@@ -23,6 +23,7 @@ allowed_target() {
 		# Retained only so backups from pre-template DDK builds remain removable.
 		/www/luci-static/resources/view/ddk/*) return 0 ;;
 		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker|/usr/libexec/ddk-phase4-worker|/usr/libexec/ddk-v3-worker|/usr/libexec/ddk-compare-range|/usr/libexec/ddk-modbus-client|/usr/libexec/ddk-usbip-client|/usr/libexec/ddk-device-session|/usr/libexec/ddk-input-sealer|/usr/libexec/ddk-network-tools) return 0 ;;
+		/usr/libexec/ddk-snmp/snmpget|/usr/libexec/ddk-snmp/snmpwalk) return 0 ;;
 		/usr/share/ddk-field-console/*) return 0 ;;
 		*) return 1 ;;
 	esac

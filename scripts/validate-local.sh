@@ -11,9 +11,9 @@ fail() {
 }
 
 git diff --check
-[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '4.2.0' ]] || fail 'source version is not 4.2.0'
-rg -F "X750 / v4.2.0" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 4.2.0'
-rg -F "Field Console version 4.2.0" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 4.2.0'
+[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '4.2.1' ]] || fail 'source version is not 4.2.1'
+rg -F "X750 / v4.2.1" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 4.2.1'
+rg -F "Field Console version 4.2.1" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 4.2.1'
 bash -n deploy.sh verify.sh rollback.sh configure-swap-autostart.sh rollback-swap-autostart.sh post-reboot-verify.sh scripts/verify-browser-authenticated.sh scripts/audit-operator-release.sh
 sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh \
 	scripts/router-configure-swap-autostart.sh scripts/router-rollback-swap-autostart.sh \
@@ -592,6 +592,7 @@ while IFS= read -r file; do
 	size="$(wc -c < "$file")"
 	maximum=131072
 	[[ "$file" != files/usr/libexec/ddk-console ]] || maximum=262144
+	case "$file" in files/usr/libexec/ddk-snmp/snmpget|files/usr/libexec/ddk-snmp/snmpwalk) maximum=8388608 ;; esac
 	[[ "$size" -le "$maximum" ]] || fail "oversized router asset: $file ($size bytes)"
 done < <(find files -type f | sort)
 
@@ -610,3 +611,5 @@ python3 scripts/test-usbip.py
 node --test scripts/test-console-guide.cjs
 
 python3 scripts/test-network-tools.py
+python3 files/usr/share/ddk-field-console/snmp-aes/verify.py files
+python3 -c 'import ast,pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("scripts/build-snmp-aes.py", "scripts/snmp-aes-fixture.py", "scripts/test-snmp-aes-router.py")]'

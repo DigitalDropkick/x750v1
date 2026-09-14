@@ -1,0 +1,38 @@
+{
+  "net_snmp": "5.9.5.2",
+  "openssl": "3.5.8",
+  "libc": "musl 1.2.3",
+  "target": "mips_24kc, MIPS32r2 big-endian soft-float, static",
+  "sources": [
+    {
+      "url": "https://downloads.openwrt.org/releases/22.03.4/targets/ath79/nand/openwrt-sdk-22.03.4-ath79-nand_gcc-11.2.0_musl.Linux-x86_64.tar.xz",
+      "sha256": "25eb5618f05facf173f8890df2d84b95f0e0e4ca5ed8dbde0b4af3c953defe2e"
+    },
+    {
+      "url": "https://www.openssl.org/source/openssl-3.5.8.tar.gz",
+      "sha256": "a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2"
+    },
+    {
+      "url": "https://downloads.sourceforge.net/project/net-snmp/net-snmp/5.9.5.2/net-snmp-5.9.5.2.tar.gz",
+      "sha256": "16707719f833184a4b72835dac359ae188123b06b5e42817c00790d7dc1384bf"
+    }
+  ],
+  "privacy": [
+    "AES",
+    "AES-192",
+    "AES-256",
+    "AES-192-C",
+    "AES-256-C",
+    "DES"
+  ],
+  "binaries": {
+    "snmpget": {
+      "sha256": "ec7b97ae308ff1e5aea5721967ebbf118a9f10c093306d2575f4e063704f1f02",
+      "bytes": 2884952
+    },
+    "snmpwalk": {
+      "sha256": "d3846d3357a3114bdf6dd47bf4fae3a7c4db8e8951daeb8da8f6c501abac9cc0",
+      "bytes": 2888056
+    }
+  }
+}

@@ -25,6 +25,7 @@ allowed_target() {
 		/www/luci-static/resources/ddk/*) return 0 ;;
 		/www/ddk/gl_home.html) return 0 ;;
 		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker|/usr/libexec/ddk-phase4-worker|/usr/libexec/ddk-v3-worker|/usr/libexec/ddk-compare-range|/usr/libexec/ddk-modbus-client|/usr/libexec/ddk-usbip-client|/usr/libexec/ddk-device-session|/usr/libexec/ddk-input-sealer|/usr/libexec/ddk-network-tools) return 0 ;;
+		/usr/libexec/ddk-snmp/snmpget|/usr/libexec/ddk-snmp/snmpwalk) return 0 ;;
 		/usr/share/ddk-field-console/*) return 0 ;;
 		*) return 1 ;;
 	esac
@@ -100,6 +101,7 @@ DDK_USB_TOPOLOGY="$source_root/usr/share/ddk-field-console/usb-topology.lua" lua
 DDK_PYTHON_ROOT="$source_root" python3 -c 'import ast,os,pathlib; root=pathlib.Path(os.environ["DDK_PYTHON_ROOT"]); [ast.parse((root/"usr/libexec"/name).read_text()) for name in ["ddk-device-session","ddk-usbip-client","ddk-modbus-client","ddk-compare-range","ddk-input-sealer","ddk-network-tools"]]'
 DDK_IDENTITY_FILE="$source_root/usr/share/ddk-field-console/usb-identity.lua" lua -e 'assert(loadfile(os.getenv("DDK_IDENTITY_FILE")))'
 DDK_TEMPLATE_FILE="$source_root/usr/lib/lua/luci/view/ddk/shell.htm" lua -e 'local parser = require "luci.template.parser"; assert(parser.parse(os.getenv("DDK_TEMPLATE_FILE")))'
+python3 "$source_root/usr/share/ddk-field-console/snmp-aes/verify.py" "$source_root" --native
 sh -n "$source_root/usr/libexec/ddk-job-worker"
 sh -n "$source_root/usr/libexec/ddk-apple-worker"
 sh -n "$source_root/usr/libexec/ddk-phase3-worker"
@@ -157,6 +159,7 @@ find "$source_root" -type f | sort | while IFS= read -r source_file; do
 	cp "$source_file" "$temporary"
 	case "$target" in
 		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker|/usr/libexec/ddk-phase4-worker|/usr/libexec/ddk-v3-worker|/usr/libexec/ddk-compare-range|/usr/libexec/ddk-modbus-client|/usr/libexec/ddk-usbip-client|/usr/libexec/ddk-device-session|/usr/libexec/ddk-input-sealer|/usr/libexec/ddk-network-tools) chmod 755 "$temporary" ;;
+		/usr/libexec/ddk-snmp/snmpget|/usr/libexec/ddk-snmp/snmpwalk) chmod 755 "$temporary" ;;
 		*) chmod 644 "$temporary" ;;
 	esac
 	mv "$temporary" "$target"
