@@ -8,13 +8,16 @@ struct OrbitApp: App {
         WindowGroup {
             ZStack {
                 Color.orbitNight.ignoresSafeArea()
-                // The native connection screen owns interaction until sign-in finishes.
-                ConsoleWebView(model:model).ignoresSafeArea(.container).privacySensitive()
-                    .opacity(model.connected && !model.pageLoading ? 1 : 0)
-                    .allowsHitTesting(model.connected && !model.pageLoading && !model.locked && !model.obscured)
-                    .accessibilityHidden(!model.connected || model.pageLoading || model.locked || model.obscured)
+                // Attach only once there is a verified router origin. Keep the
+                // browser renderable behind the native connection/loading cover.
+                if model.endpoint != nil {
+                    ConsoleWebView(model:model).ignoresSafeArea(.container)
+                        .allowsHitTesting(model.connected && !model.pageLoading && !model.locked && !model.obscured)
+                        .accessibilityHidden(!model.connected || model.pageLoading || model.locked || model.obscured)
+                }
                 if model.connected {
                     if model.pageLoading && !model.locked {
+                        Color.orbitNight.ignoresSafeArea()
                         VStack(spacing:14) { ProgressView(); Text("Opening your workspace…").font(.callout) }
                             .padding(24).background(Color.orbitPanel,in:RoundedRectangle(cornerRadius:20))
                     }
@@ -27,7 +30,10 @@ struct OrbitApp: App {
                             Button("Unlock workspace") { model.resume() }.buttonStyle(OrbitButton())
                         }.padding(28)
                     }
-                } else { ConnectionView(model:model) }
+                } else {
+                    Color.orbitNight.ignoresSafeArea()
+                    ConnectionView(model:model)
+                }
             }
             .preferredColorScheme(.dark)
             .sheet(isPresented:$model.connectionSheet) { ConnectionView(model:model).presentationDragIndicator(.visible) }
