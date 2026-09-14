@@ -136,6 +136,14 @@ def smb_base(a):
     return result
 
 
+def smb_run(a, arguments):
+    env = dict(os.environ)
+    env.pop("PASSWD", None)
+    env.pop("PASSWD_FD", None)
+    env["PASSWD_FILE"] = str(Path(a.private_dir) / "smb.password")
+    return run(smb_base(a) + arguments, env=env)
+
+
 def smb_target(a):
     host = "[" + a.host + "]" if ":" in a.host else a.host
     return ["//" + host + "/" + a.share, "-D", a.path]
@@ -154,7 +162,7 @@ def smb_cleanup(workspace, private_dir):
     a.private_dir = private_dir
     # Honor the selected request timeout; cellular/forwarded links need the same
     # allowance during cleanup as they do during the original transfer.
-    code = run(smb_base(a) + smb_target(a) + ["-c", "del " + name])
+    code = smb_run(a, smb_target(a) + ["-c", "del " + name])
     if code == 0:
         path.unlink()
         print("Transfer test file removed: " + name, flush=True)
@@ -177,19 +185,19 @@ def smb(a):
     password = "" if a.guest == "yes" else secret(a.password)
     username = "guest" if a.guest == "yes" else a.username
     domain = "" if a.guest == "yes" else a.domain
-    # smbclient's authentication file parser takes the literal remainder of each
-    # line; do not shell-quote passwords or silently trim significant whitespace.
+    # Account/domain use the identity file. PASSWD_FILE preserves significant
+    # password whitespace that the authentication-file parser would trim.
     if any(c in username + domain + password for c in "\r\n\x00"):
         raise ValueError("Invalid SMB credentials")
-    if password != password.strip() or username != username.strip() or domain != domain.strip():
-        raise ValueError("This smbclient credentials-file format cannot preserve leading/trailing whitespace in credentials")
+    if username != username.strip() or domain != domain.strip():
+        raise ValueError("This smbclient identity-file format cannot preserve leading/trailing whitespace in account or domain names")
     Path(a.private_dir).mkdir(mode=0o700, exist_ok=True)
-    private_write(Path(a.private_dir) / "smb.auth", "username = " + username + "\npassword = " + password + "\ndomain = " + domain + "\n")
-    base = smb_base(a)
+    private_write(Path(a.private_dir) / "smb.auth", "username = " + username + "\ndomain = " + domain + "\n")
+    private_write(Path(a.private_dir) / "smb.password", password + "\n")
     if a.operation == "shares":
-        return run(base + ["-g", "-L", a.host])
+        return smb_run(a, ["-g", "-L", a.host])
     if a.operation == "directory":
-        return run(base + smb_target(a) + ["-c", "ls"])
+        return smb_run(a, smb_target(a) + ["-c", "ls"])
     # Only generated names enter smbclient's command interpreter. Share/folder
     # inputs are literal argv values, never concatenated into -c commands.
     name = "orbit-test-" + os.urandom(16).hex() + ".bin"
@@ -203,11 +211,11 @@ def smb(a):
             out.write(os.urandom(65536))
     started = time.monotonic()
     print("Temporary test file: " + name + " (worker will attempt cleanup even if stopped)", flush=True)
-    code = run(base + smb_target(a) + ["-c", "put " + str(upload) + " " + name])
+    code = smb_run(a, smb_target(a) + ["-c", "put " + str(upload) + " " + name])
     if code:
         return code
     uploaded = time.monotonic()
-    code = run(base + smb_target(a) + ["-c", "get " + name + " " + str(download)])
+    code = smb_run(a, smb_target(a) + ["-c", "get " + name + " " + str(download)])
     if code:
         return code
     downloaded = time.monotonic()

@@ -39,8 +39,11 @@ results; this release does not require a new IPA or signing profile.
   server disconnects or power is lost, use the exact filename in Output to check
   for a remaining file. Cleanup failure is never reported as success. Timing
   includes connection/authentication overhead and is not a line-rate benchmark.
-- This smbclient authentication-file parser does not preserve leading/trailing
-  credential whitespace; the workflow reports that constraint explicitly.
+- SMB passwords use a separate private `PASSWD_FILE`, preserving significant
+  leading/trailing spaces and punctuation. Account/domain identity files still
+  reject surrounding whitespace instead of silently changing an account name.
+- SMB defaults to a 30-second request timeout. Cleanup honors that timeout and
+  can continue for up to three request windows plus ten seconds after Stop.
 
 ## Packages and installation
 

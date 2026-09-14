@@ -5,6 +5,7 @@ import contextlib
 import importlib.machinery
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -84,6 +85,30 @@ class NetworkTests(unittest.TestCase):
             p=Path(tmp)/'secret';p.write_text('value\ndefVersion 1')
             with self.assertRaises(ValueError):helper.secret(str(p))
         with self.assertRaises(ValueError):helper.quoted('value\nincludeFile /etc/passwd')
+
+    def test_smb_password_preserves_whitespace_without_inherited_credentials(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            password = root / 'input-secret'
+            value = '  fixture % "quoted" \\ value  '
+            password.write_text(value)
+            a = argparse.Namespace(workspace=str(root/'workspace'), private_dir=str(root/'private'),
+                host='192.0.2.4', port=445, operation='directory', share='Job files',
+                path='Folder with spaces', username='orbit-fixture', domain='WORKGROUP',
+                password=str(password), guest='no', protocol='SMB2', timeout=30)
+            with patch.dict(os.environ, {'PASSWD': 'stale', 'PASSWD_FD': '9', 'PASSWD_FILE': '/stale'}), \
+                    patch.object(helper, 'run', return_value=0) as native:
+                self.assertEqual(helper.smb(a), 0)
+            argv = native.call_args.args[0]
+            env = native.call_args.kwargs['env']
+            self.assertNotIn(value, ' '.join(argv))
+            self.assertNotIn('PASSWD', env)
+            self.assertNotIn('PASSWD_FD', env)
+            self.assertEqual(env['PASSWD_FILE'], str(root/'private/smb.password'))
+            self.assertNotIn(value, (root/'private/smb.auth').read_text())
+            self.assertEqual((root/'private/smb.password').read_text(), value + '\n')
+            for name in ('smb.auth', 'smb.password'):
+                self.assertEqual((root/'private'/name).stat().st_mode & 0o777, 0o600)
 
 
 if __name__ == '__main__':
