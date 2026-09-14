@@ -107,10 +107,18 @@ unresolved observation; this encryption update does not claim to fix its cause.
 - All 73 deployed project files and permissions match the published payload.
   All 895 package versions and 16 checked stock/configuration files are
   unchanged. The boot ID is unchanged; extroot and swap remain active.
-- Owned fixture jobs, saved cases, temporary agents, loopback bridges, the SSH
-  test forward and private fixture directories were removed. Accepted release
+- Owned fixture jobs, saved cases, temporary agents, UDP bridges and private
+  fixture directories were removed. Accepted release
   staging was removed from RAM; the persistent rollback backup is retained.
-  The user's authenticated SSH connection remains available.
+  The user's authenticated SSH connection remains available. The laptop's
+  test-forward registration was canceled, but the stock Dropbear session still
+  holds `127.0.0.1:2461` and `[::1]:2461` listening sockets. This matches the
+  [upstream forward-cancellation bug](https://github.com/mkj/dropbear/pull/414).
+  No fixture server or credentials remain behind that port, and it is not bound
+  to LAN/WAN. Ending this SSH connection releases the sockets. The active user
+  terminal was preserved instead of disconnecting it to perform cleanup.
+  Future tests should use a separate forwarding SSH connection and close that
+  connection entirely afterward on this firmware.
 
 Acceptance logs and phone screenshots are in
 `/home/astro/Downloads/Orbit-4.2.1-AES-Acceptance-2026-09-14/` on the laptop.
@@ -120,6 +128,14 @@ To roll back this update from the repository, using the existing SSH connection:
 DDK_TARGET=root@100.122.115.85 \
 DDK_SSH_CONTROL_PATH=/run/user/1000/ddk-router-1000/control \
 ./rollback.sh /root/ddk-backups/20260914T161842Z-field-console-v4
+```
+
+When finished with the current router SSH terminal, this laptop command ends
+that SSH connection and releases its stale test-forward sockets. It disconnects
+the terminal, without restarting the SSH service or router:
+
+```sh
+ssh -S /run/user/1000/ddk-router-1000/control -O exit root@100.122.115.85
 ```
 
 ## Upstream references
