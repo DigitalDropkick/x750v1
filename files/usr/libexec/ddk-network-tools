@@ -152,7 +152,8 @@ def smb_cleanup(workspace, private_dir):
     a = argparse.Namespace(**state)
     a.workspace = workspace
     a.private_dir = private_dir
-    a.timeout = min(a.timeout, 5)
+    # Honor the selected request timeout; cellular/forwarded links need the same
+    # allowance during cleanup as they do during the original transfer.
     code = run(smb_base(a) + smb_target(a) + ["-c", "del " + name])
     if code == 0:
         path.unlink()

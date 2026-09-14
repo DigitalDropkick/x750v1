@@ -486,8 +486,9 @@ local function run()
 		if code~=0 then outcome="failed" else remove_workspace(root.."/workspace-android-directory") end
 	end
 	if runtime.msp_workspace=="smb" then
-		local code=helper_run({"/usr/libexec/ddk-network-tools","smb-cleanup","--workspace",root.."/workspace-msp","--private-dir",dir.."/private-msp"},12,true)
-		local report=read(dir.."/helper.out",131072) or ""
+		write(dir.."/stdout","Checking the SMB test-file cleanup; results will follow.\n")
+		local code=helper_run({"/usr/libexec/ddk-network-tools","smb-cleanup","--workspace",root.."/workspace-msp","--private-dir",dir.."/private-msp"},options.timeout*3+10,true)
+		local report=(read(dir.."/helper.out",131072) or "")..(read(dir.."/helper.err",131072) or "")
 		local log=assert(io.open(stdout_path,"ab"));log:write("\n"..redacted(report));log:close()
 		if code~=0 then
 			local note=assert(io.open(stdout_path,"ab"));note:write("Cleanup could not be confirmed; check the temporary test filename shown above.\n");note:close()
@@ -513,7 +514,7 @@ end
 local ok, err = pcall(run)
 if not ok and runtime.msp_workspace=="smb" then
 	stop_child()
-	pcall(helper_run,{"/usr/libexec/ddk-network-tools","smb-cleanup","--workspace",root.."/workspace-msp","--private-dir",dir.."/private-msp"},12,true)
+	pcall(helper_run,{"/usr/libexec/ddk-network-tools","smb-cleanup","--workspace",root.."/workspace-msp","--private-dir",dir.."/private-msp"},options.timeout*3+10,true)
 end
 cleanup()
 if runtime.msp_workspace then pcall(remove_workspace,root.."/workspace-msp");pcall(remove_workspace,dir.."/private-msp") end

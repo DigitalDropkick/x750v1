@@ -120,7 +120,7 @@ def main():
         assert call('job','save',state['id'])['saved']
         print('PASS real saved Nmap open/closed port comparison and case preservation',flush=True)
         if args.smb_port:
-            options={'host':'127.0.0.1','port':args.smb_port,'share':'Orbit-Test','guest':True,'timeout':5,'duration':90,'output_mib':1}
+            options={'host':'127.0.0.1','port':args.smb_port,'share':'Orbit-Test','guest':True,'timeout':30,'duration':180,'output_mib':1}
             for operation in ['shares','directory','transfer']:
                 state=finish(start('network.smb',dict(options,operation=operation,transfer_mib=2)))
                 if operation=='transfer':assert 'Transfer verified: PASS' in state['stdout'] and 'Transfer test file removed:' in state['stdout']

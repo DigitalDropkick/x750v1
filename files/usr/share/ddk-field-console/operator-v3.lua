@@ -149,7 +149,7 @@ define("network.smb", "Windows and NAS shares", "ACTION", {network_helper,"/usr/
 	text("host","Server","127.0.0.1","host"),integer("port","SMB port",445,1,65535),
 	choice("operation","Operation",{"shares","directory","transfer"}),text("share","Share name"),text("path","Folder within share","\\"),
 	field("guest","Connect as guest","boolean",true),text("username","Username"),text("domain","Domain (optional)"),field("password","Password","secret",""),
-	choice("protocol","Minimum SMB protocol",{"SMB2","SMB3","NT1"}),integer("timeout","Request timeout (seconds)",10,1,120),
+	choice("protocol","Minimum SMB protocol",{"SMB2","SMB3","NT1"}),integer("timeout","Request timeout (seconds)",30,1,120),
 	integer("transfer_mib","Test file size (MiB)",1,1,1024)
 }), function(o,c,p)
 	if o.operation~="shares" then assert(o.share~="" and not o.share:find("[/\\]"),"Enter a share name without a server or folder path") end
