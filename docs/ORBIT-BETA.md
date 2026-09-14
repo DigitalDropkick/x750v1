@@ -71,13 +71,21 @@ The committed router application from `d1f0808` was deployed and verified live:
 Local evidence: `/tmp/ddk-orbit-audit/release-local.log`, `browser-live.log`,
 `browser-standard-layout.log`, `deploy.log`, and `final-router-audit.log`.
 
-The native SwiftUI/WKWebView source has been prepared with HTTPS certificate
-binding, Keychain sign-in, device unlocking and streamed download sharing.
-Native compilation is **pending**: GitHub rejected its workflow upload because
-the current OAuth login lacks `workflow` scope. Device installation additionally
-needs an Apple signing arrangement. Browser emulation does not establish native
-compilation, Face ID, iOS permissions, actual iPhone file handling or physical
-peripheral compatibility.
+The native SwiftUI/WKWebView app compiles in GitHub's macOS runner with Xcode
+26.6. The simulator is an iPhone 17 Pro Max running iOS 26.4. HTTPS pairing,
+sign-in, exact-origin redirects and WebKit download integration checks passed,
+including a streamed 17 MiB artifact verified by SHA-256. The visible app's
+sign-in/share-sheet UI test is still being repaired; device packaging is gated
+on the complete suite passing. GitHub workflow authorization is resolved.
+
+![Native Orbit connection screen from the iPhone simulator](screenshots/orbit-native-connection.png)
+
+The [iPhone installation guide](ORBIT-IPHONE-INSTALL.md) covers the prepared
+Linux installer and both free and paid signing routes. Paid Apple membership
+is optional for a private sideloaded beta. No Apple account has been entered,
+membership purchased or physical iPhone installation performed. Simulator
+checks do not establish real-device Face ID, iOS permissions, phone file
+handling or physical peripheral compatibility.
 
 ## Router certificate identity
 
@@ -89,7 +97,7 @@ laptop on September 14, 2026 UTC. Both Wi-Fi and Tailscale addresses serve it:
 
 This is a public certificate fingerprint, not a password or private key.
 It lets the operator verify the native app's first HTTPS pairing. Nginx serves
-port 443 and proxies LuCI; `/etc/uhttpd.crt` is a different internal certificate
+port 443 and forwards LuCI CGI requests; `/etc/uhttpd.crt` is a different internal certificate
 and must not be used for this pairing. Read the active public certificate through
 the trusted SSH connection when checking it again:
 
@@ -122,11 +130,9 @@ DDK_SSH_CONTROL_PATH=/run/user/1000/ddk-router-1000/control \
 
 ## Remaining native steps
 
-1. Reauthorize GitHub's existing CLI login with `gh auth refresh -h github.com
-   -s workflow`. The rejected workflow upload did not create a cloud build.
-2. Publish the native work branch and run its macOS compiler, unit tests and
-   simulator UI test. Resolve any SDK-specific failures before signing.
-3. Establish the user's Apple signing arrangement and create a beta restricted
-   to the intended iPhone. No enrollment or paid service was purchased.
-4. Verify real-device sign-in, Face ID/passcode, local and Tailscale routes,
+1. Finish the native UI test and unsigned iPhone packaging checks on the
+   published `feature/orbit-companion` branch.
+2. Connect the intended iPhone by USB and follow the installation guide. Apple
+   sign-in, computer trust and Developer Mode prompts require the owner.
+3. Verify real-device sign-in, Face ID/passcode, local and Tailscale routes,
    interrupted sessions, Files imports/exports and hardware workflows.

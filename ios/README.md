@@ -6,10 +6,12 @@ tool library, schemas, native jobs, input uploads and results. Native code adds
 HTTPS certificate binding, iPhone Keychain sign-in, workspace unlocking and
 download sharing. It does not run the Linux tools on the phone.
 
-Status: simulator compilation and initial UI/unit checks passed; expanded
-native integration and device packaging checks are being added. A successful simulator run does not
-establish real-device Face ID, local-network permissions, Wi-Fi/Tailscale
-roaming, or attached-hardware compatibility. No signed install is included yet.
+Status: compilation and all ten unit/integration tests passed on Xcode 26.6,
+iPhone 17 Pro Max simulator, iOS 26.4. The connection-screen UI test passed;
+the visible sign-in/share-sheet flow is still under repair. Device packaging
+is gated on the full suite. Simulator checks do not establish real-device
+Face ID, local-network permissions, Wi-Fi/Tailscale roaming, or attached-hardware
+compatibility. No signed install is included yet.
 
 ## Build without owning a Mac
 
@@ -45,8 +47,10 @@ Confirm its exact version in Settings → General → About before acceptance.
 
 The local HTTPS fixture uses synthetic sign-in data and a temporary certificate.
 Integration tests exercise unknown/changed certificate handling, sign-in
-failure, exact-origin redirects, session transfer to WebKit, and normal, POST
-and browser-blob downloads. They do not invoke router tools. CI exports XCTest
+failure, exact-origin redirects, session transfer to WebKit, normal GET and
+target-blank POST downloads, a hidden-frame POST streaming 17 MiB with SHA-256
+verification, the router's actual browser-blob export helper, and disconnect
+document cleanup. They do not invoke router tools. CI exports XCTest
 results, screenshot attachments and build logs separately from the unsigned IPA.
 The IPA contains the app and privacy manifest, not tests or signing credentials.
 

@@ -69,7 +69,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == CONSOLE:
             # Deliberately synthetic credentials exercise literal form encoding.
             if form == {"luci_username": ["orbit-test+operator"], "luci_password": ["test &+ unicode ü"]}:
-                self.send(200, PAGE, Set_Cookie=COOKIE + "; Path=/; HttpOnly; Secure; SameSite=Strict")
+                # LuCI sets its cookie and redirects to the route without query.
+                self.send(302, b"", Location=CONSOLE,
+                          Set_Cookie=COOKIE + "; Path=/cgi-bin/luci; HttpOnly; Secure; SameSite=Strict")
             else:
                 self.send(403, b"Sign in")
         elif path == "/cgi-bin/luci/admin/ddk/export" and self.authorized() and form == {"format": ["text"]}:
@@ -87,10 +89,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 with tempfile.TemporaryDirectory(prefix="orbit-fixture-") as directory:
-    cert, key = (Path(directory) / name for name in ("cert.pem", "key.pem"))
+    initial, cert, key = (Path(directory) / name for name in ("initial.pem", "cert.pem", "key.pem"))
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
                     "-subj", "/CN=Orbit simulator fixture", "-addext", "subjectAltName=IP:127.0.0.1",
-                    "-keyout", str(key), "-out", str(cert)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    "-keyout", str(key), "-out", str(initial)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # Match the appliance's legacy expired, self-signed certificate. Only an
+    # explicitly paired fingerprint may authorize this otherwise untrusted TLS.
+    subprocess.run(["openssl", "x509", "-in", str(initial), "-signkey", str(key), "-days", "-1",
+                    "-out", str(cert)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    expired = subprocess.run(["openssl", "x509", "-in", str(cert), "-checkend", "0", "-noout"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    assert expired.returncode == 1, "Test certificate must be expired"
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert, key)
     server = ThreadingHTTPServer(("127.0.0.1", 18443), Handler)

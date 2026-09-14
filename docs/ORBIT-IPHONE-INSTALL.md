@@ -44,6 +44,10 @@ Sources: [Apple free account limits](https://developer.apple.com/help/account/ba
    GitHub's release asset digest. It was extracted beside the launcher to avoid
    requiring FUSE or a system installation. The laptop already has `usbmuxd`
    and `libimobiledevice-utils`; USB discovery still needs the connected phone.
+   The installer window was verified to open on this laptop. If opened before
+   connecting the phone, it reports **Unable to load devices / usbmuxd**. The
+   installed USB rules start that service when a supported Apple device is
+   plugged in. Connect and unlock the phone first, then reopen the installer.
 5. In iloader, sign in with an Apple Account **inside its window**, complete
    Apple's verification prompts, and select your phone. A separate free Apple
    Account may be used. Choose **Install SideStore (Stable)**.
