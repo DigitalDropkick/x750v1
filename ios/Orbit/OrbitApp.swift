@@ -121,16 +121,19 @@ struct ConnectionView: View {
                         VStack(alignment:.leading,spacing:7) {
                             Text("LuCI username").font(.caption).foregroundStyle(.secondary)
                             TextField("root",text:$model.username).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled().focused($editing)
+                                .accessibilityIdentifier("router-username")
                         }.frame(maxWidth:100)
                         VStack(alignment:.leading,spacing:7) {
                             Text("Password").font(.caption).foregroundStyle(.secondary)
                             SecureField("Saved or enter password",text:$model.password).textContentType(.password).focused($editing)
+                                .accessibilityIdentifier("router-password")
                                 .onSubmit { editing = false; model.connect() }
                         }
                     }
                     Toggle(isOn:$model.saveLogin) {
                         Label("Save sign-in with Face ID / passcode",systemImage:"faceid").font(.caption)
                     }.tint(.orbitCyan)
+                        .accessibilityIdentifier("save-login")
                 }
                 .padding(20).background(Color.orbitPanel,in:RoundedRectangle(cornerRadius:24))
                 .overlay(RoundedRectangle(cornerRadius:24).stroke(.white.opacity(0.09)))
@@ -141,6 +144,7 @@ struct ConnectionView: View {
                         Text("Match this SHA-256 certificate fingerprint with the router’s trusted installation record before continuing.").font(.caption).foregroundStyle(.secondary)
                         Text(fingerprint).font(.system(size:12,design:.monospaced)).textSelection(.enabled).fixedSize(horizontal:false,vertical:true)
                         Button("Fingerprint verified · trust router") { model.trustCertificate() }.buttonStyle(OrbitButton())
+                            .accessibilityIdentifier("trust-router")
                         Button("Cancel") { model.candidateFingerprint = nil }.frame(maxWidth:.infinity,minHeight:44)
                     }.padding(20).background(Color.orbitPanel,in:RoundedRectangle(cornerRadius:24))
                 }

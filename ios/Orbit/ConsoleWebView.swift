@@ -49,7 +49,10 @@ final class ConsoleCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WK
     func webView(_ webView:WKWebView,didFailProvisionalNavigation navigation:WKNavigation!,withError error:Error) { failed(error) }
     func webView(_ webView:WKWebView,didFail navigation:WKNavigation!,withError error:Error) { failed(error) }
     private func failed(_ error:Error) {
-        if (error as NSError).code == NSURLErrorCancelled { return }
+        let failure = error as NSError
+        // WebKit interrupts page navigation when its response becomes a download.
+        if (failure.domain == NSURLErrorDomain && failure.code == NSURLErrorCancelled)
+            || (failure.domain == "WebKitErrorDomain" && failure.code == 102) { return }
         model?.pageLoading = false
         model?.message = "The console connection was interrupted. Reconnect to resume your router workspace."
         model?.connectionSheet = true
@@ -77,6 +80,7 @@ final class ConsoleCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WK
         child.navigationDelegate = self; child.uiDelegate = self
         children.append(child); return child
     }
+    func webViewDidClose(_ webView:WKWebView) { children.removeAll { $0 === webView } }
     func webView(_ webView:WKWebView,navigationAction:WKNavigationAction,didBecome download:WKDownload) { download.delegate = self }
     func webView(_ webView:WKWebView,navigationResponse:WKNavigationResponse,didBecome download:WKDownload) { download.delegate = self }
     func download(_ download:WKDownload,decideDestinationUsing response:URLResponse,suggestedFilename:String,

@@ -68,7 +68,15 @@ final class RouterIntegrationTests: XCTestCase {
     @MainActor
     func testNativeSessionReachesWebKitAndStreamsAllDownloadTypes() async throws {
         let model = OrbitModel()
+        // Synthetic JavaScript clicks have no UIKit user gesture. The UI suite
+        // separately tests real taps with the app's default popup preference.
+        model.webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = try XCTUnwrap(scene.windows.first { $0.isKeyWindow })
+        model.webView.frame = window.bounds
+        window.addSubview(model.webView)
         defer {
+            model.webView.removeFromSuperview()
             model.disconnect()
             UserDefaults.standard.removeObject(forKey:"orbit.endpoint")
             UserDefaults.standard.removeObject(forKey:"orbit.certificate."+address)
@@ -92,9 +100,10 @@ final class RouterIntegrationTests: XCTestCase {
         ] {
             model.sharedFile = nil
             _ = try await model.webView.evaluateJavaScript(script + "; true")
-            try await waitUntil("Authenticated download should stream into a shareable file") { model.sharedFile != nil }
+            try await waitUntil("Download \(expected.trimmingCharacters(in:.whitespacesAndNewlines)) should stream; status: \(model.message ?? "none")") { model.sharedFile != nil }
             let file = try XCTUnwrap(model.sharedFile?.url)
             XCTAssertEqual(try String(contentsOf:file,encoding:.utf8),expected)
+            XCTAssertFalse(model.connectionSheet,"A normal download should not show a connection failure")
             try FileManager.default.removeItem(at:file.deletingLastPathComponent())
         }
         _ = try await model.webView.evaluateJavaScript("window.webkit.messageHandlers.orbit.postMessage({type:'connection'}); true")
