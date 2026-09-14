@@ -7,6 +7,11 @@ These are third-party tools, separate from Apple's TestFlight. No Mac is needed
 on your desk: GitHub's macOS runner compiles the app and signing happens during
 installation. Apple credentials never belong in this repository or GitHub CI.
 
+**Orbit 0.1.0 is built and ready for signing.** All 13 simulator tests and the
+arm64 iPhone build passed. The verified IPA is already on this laptop at
+`/home/astro/Downloads/Orbit-Beta/Orbit-unsigned.ipa`, beside `SHA256SUMS` and
+`START-HERE.md`. It has not yet been installed on the physical iPhone.
+
 ## Choose the installation route
 
 | Route | Cost | What you maintain |
@@ -59,17 +64,21 @@ Sources: [Apple free account limits](https://developer.apple.com/help/account/ba
    then go to **My Apps** and refresh **SideStore itself first** using its day
    counter. Complete any signing-certificate prompt in SideStore.
 8. Get Orbit's build from the successful
-   [Orbit iPhone validation run](https://github.com/DigitalDropkick/x750v1/actions).
+   [Orbit iPhone validation run](https://github.com/DigitalDropkick/x750v1/actions/runs/34808273128).
    Download the **orbit-unsigned-iphone** artifact. GitHub may ask you to sign in
    to download an Actions artifact. In iPhone Files, extract the downloaded ZIP;
    the app file inside is **Orbit-unsigned.ipa**.
+   Alternatively, transfer the verified laptop copy to the iPhone's Files app.
+   The cloud artifact is retained for 30 days; keep the laptop copy for later
+   installation or refresh.
 9. In SideStore's **My Apps**, use **+** to choose that IPA from Files. SideStore
    signs it for your account and installs it. The IPA is intentionally unsigned
    when it leaves GitHub; simply tapping it in Safari will not install it.
 10. Open **Orbit** from your Home Screen and follow the first connection below.
 
 If you prefer an initial USB-only trial, iloader can directly install the Orbit
-IPA without SideStore. That simpler route requires returning to the laptop to
+IPA from `/home/astro/Downloads/Orbit-Beta/Orbit-unsigned.ipa` without SideStore.
+That route does not need LocalDevVPN. It requires returning to the laptop to
 sign/install it again before its free profile expires.
 
 When refreshing with SideStore, temporarily use LocalDevVPN. Afterwards turn it

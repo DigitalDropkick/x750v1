@@ -6,12 +6,14 @@ tool library, schemas, native jobs, input uploads and results. Native code adds
 HTTPS certificate binding, iPhone Keychain sign-in, workspace unlocking and
 download sharing. It does not run the Linux tools on the phone.
 
-Status: compilation and all ten unit/integration tests passed on Xcode 26.6,
-iPhone 17 Pro Max simulator, iOS 26.4. The connection-screen UI test passed;
-the visible sign-in/share-sheet flow is still under repair. Device packaging
-is gated on the full suite. Simulator checks do not establish real-device
+Status: **all 13 tests passed**, including visible native sign-in and four
+download/share flows, on Xcode 26.6 and an iPhone 17 Pro Max simulator running
+iOS 26.4. The Release arm64 iPhone build and unsigned IPA packaging also passed.
+[Successful run and IPA](https://github.com/DigitalDropkick/x750v1/actions/runs/34808273128)
+for source `d7f5c06b23fabb9f5b834ab2502a8bb9475a0659`. The app is ready for
+private signing and installation. Simulator checks do not establish real-device
 Face ID, local-network permissions, Wi-Fi/Tailscale roaming, or attached-hardware
-compatibility. No signed install is included yet.
+compatibility. No physical iPhone installation has been performed yet.
 
 ## Build without owning a Mac
 
@@ -45,13 +47,17 @@ the app uses Apple frameworks without third-party packages. Minimum target is
 iOS 18; the intended acceptance device is Addam's iPhone 17 Pro Max on iOS 26.
 Confirm its exact version in Settings → General → About before acceptance.
 
-The local HTTPS fixture uses synthetic sign-in data and a temporary certificate.
+The local HTTPS fixture uses synthetic sign-in data, a temporary expired
+self-signed certificate, and LuCI-style secure cookies and 302 redirects.
 Integration tests exercise unknown/changed certificate handling, sign-in
-failure, exact-origin redirects, session transfer to WebKit, normal GET and
-target-blank POST downloads, a hidden-frame POST streaming 17 MiB with SHA-256
+failure, exact-origin redirects, session transfer to WebKit, a missing cookie
+callback timeout, normal GET and target-blank POST downloads, a hidden-frame
+POST streaming 17 MiB with SHA-256
 verification, the router's actual browser-blob export helper, and disconnect
-document cleanup. They do not invoke router tools. CI exports XCTest
-results, screenshot attachments and build logs separately from the unsigned IPA.
+document cleanup. UI tests exercise the native connection screen and tap all
+four download controls through to the iOS share sheet. They do not invoke
+router tools. CI exports XCTest results, screenshot attachments and build logs
+separately from the unsigned IPA.
 The IPA contains the app and privacy manifest, not tests or signing credentials.
 
 ## Connection design

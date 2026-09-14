@@ -1,7 +1,8 @@
 # Orbit companion beta
 
-Router presentation: **4.1.0-beta.1**. Native companion source: **0.1.0**,
-published in `feature/orbit-companion` with cloud validation.
+Router presentation: **4.1.0-beta.1**. Native companion: **0.1.0**, build **1**,
+published in `feature/orbit-companion`. The unsigned iPhone IPA is ready for
+private signing and installation.
 Baseline: verified router/dashboard v4.0.1 at `be0cf24`.
 
 ## Use the phone preview
@@ -71,14 +72,36 @@ The committed router application from `d1f0808` was deployed and verified live:
 Local evidence: `/tmp/ddk-orbit-audit/release-local.log`, `browser-live.log`,
 `browser-standard-layout.log`, `deploy.log`, and `final-router-audit.log`.
 
-The native SwiftUI/WKWebView app compiles in GitHub's macOS runner with Xcode
-26.6. The simulator is an iPhone 17 Pro Max running iOS 26.4. HTTPS pairing,
-sign-in, exact-origin redirects and WebKit download integration checks passed,
-including a streamed 17 MiB artifact verified by SHA-256. The visible app's
-sign-in/share-sheet UI test is still being repaired; device packaging is gated
-on the complete suite passing. GitHub workflow authorization is resolved.
+The native SwiftUI/WKWebView app passed its complete cloud suite on September
+14, 2026: **11 unit/integration tests and two UI tests, zero failures**, using
+Xcode 26.6 and an iPhone 17 Pro Max simulator running iOS 26.4. The same run
+successfully built and packaged the Release arm64 iPhone app. Tested source:
+`d7f5c06b23fabb9f5b834ab2502a8bb9475a0659`.
+[Build, tests and downloadable artifacts](https://github.com/DigitalDropkick/x750v1/actions/runs/34808273128).
+
+The tests cover unknown/changed certificate handling, an expired self-signed
+certificate matching the router's trust model, LuCI-style sign-in redirects,
+exact-origin redirects, bounded cookie transfer and disconnect cleanup.
+The visible native app signs in, opens its workspace and presents the iOS share
+sheet after actual taps on all four download paths: GET report, POST case
+export, hidden-frame streamed artifact and browser-created report. Integration
+checks verify the downloaded bytes, including a **17 MiB artifact by SHA-256**
+and the router's existing browser-blob helper.
+
+The downloaded IPA passed ZIP integrity, iPhoneOS/arm64 identity and checksum
+checks. It contains the app and privacy manifest, with no test bundles or Apple
+signing credentials. The cloud artifact `orbit-unsigned-iphone` is retained for
+30 days; the laptop copy is `/home/astro/Downloads/Orbit-Beta/Orbit-unsigned.ipa`.
+Its SHA-256 is:
+
+`55193e3767ffe45d159d765e43b04b2d457fd80a74e258157973301a69b37510`
 
 ![Native Orbit connection screen from the iPhone simulator](screenshots/orbit-native-connection.png)
+
+![Native iOS share sheet for a synthetic report in the passing UI test](screenshots/orbit-native-share.png)
+
+The share-sheet screenshot uses a synthetic test report; it is evidence of the
+native file handoff, not a scan performed on a customer network.
 
 The [iPhone installation guide](ORBIT-IPHONE-INSTALL.md) covers the prepared
 Linux installer and both free and paid signing routes. Paid Apple membership
@@ -130,9 +153,7 @@ DDK_SSH_CONTROL_PATH=/run/user/1000/ddk-router-1000/control \
 
 ## Remaining native steps
 
-1. Finish the native UI test and unsigned iPhone packaging checks on the
-   published `feature/orbit-companion` branch.
-2. Connect the intended iPhone by USB and follow the installation guide. Apple
+1. Connect the intended iPhone by USB and follow the installation guide. Apple
    sign-in, computer trust and Developer Mode prompts require the owner.
-3. Verify real-device sign-in, Face ID/passcode, local and Tailscale routes,
+2. Verify real-device sign-in, Face ID/passcode, local and Tailscale routes,
    interrupted sessions, Files imports/exports and hardware workflows.

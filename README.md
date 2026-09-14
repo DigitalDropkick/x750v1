@@ -7,8 +7,9 @@ Open **http://192.168.8.1/ddk** from the router LAN, or **http://100.122.115.85/
 [Screenshots and verified release record](docs/V4-USABILITY.md#verified-screenshots).
 
 The [Orbit phone companion beta](docs/ORBIT-BETA.md) adds an opt-in space-themed
-phone interface while sharing every existing tool workflow. Its native iPhone
-build and signing status are tracked separately from the working browser preview.
+phone interface while sharing every existing tool workflow. The native iPhone
+beta passed all 13 simulator tests and its arm64 build; an unsigned IPA is ready
+for private signing and installation. Physical iPhone acceptance remains pending.
 The [iPhone installation guide](docs/ORBIT-IPHONE-INSTALL.md) covers the Linux
 setup and a free signing route; a paid Apple membership is optional.
 
