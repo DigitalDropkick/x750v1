@@ -94,6 +94,16 @@ needed for this release.
 
 ## Installed acceptance: September 14, 2026
 
+- Local validation passed after the final application change. Authenticated
+  browser checks exercised all 83 forms, all five pages at 1440/440/390/320 px,
+  SNMP/SMB field transitions, Orbit connection/offline behavior, native Nmap and
+  fping, target handoff, Stop, case save/export, downloads, file reuse and upload.
+  All five new forms were also checked at phone widths, with screenshots.
+- The focused installed-browser SMB run passed after correcting the test's
+  share-name casing assumption: native share rows displayed, the observed data
+  share/server/port carried into Browse, and native directory contents displayed
+  at 440 px. The suggestion avoids the special IPC$ service share. Its transient
+  LuCI session and owned browser jobs were removed.
 - `scripts/test-msp-router.py --smb-port 2445` passed on the installed router:
   all five native schemas, LLDP JSON, IPv4/IPv6 loopback tracepath, SNMP GET/walk
   and bad-community timeout, two real saved Nmap scans with an open/closed-port
@@ -113,11 +123,22 @@ needed for this release.
   remote leftovers were removed explicitly. The boot log reports a previous
   watchdog reset, but no persisted crash record established the cause. The
   monitored 32 MiB repeat passed without a restart. This remains an unresolved
-  stability observation, not a claimed software fix.
+  stability observation, not a claimed software fix. Its 60 recorded uptime
+  samples were monotonic; available RAM stayed at or above 44,692 KiB in that
+  monitoring window, with at least 249,532 KiB of swap free.
 - Package backup: `/root/ddk-backups/msp-packages-20260914T141023Z`.
   To return to the pre-MSP dashboard, use application backup
   `/root/ddk-backups/20260914T141417Z-field-console-v4` with `rollback.sh`.
   Later backups contain earlier revisions of 4.2 itself.
+- Final application deployment backup:
+  `/root/ddk-backups/20260914T150227Z-field-console-v4`. This deployment reloaded
+  rpcd ACLs without restarting a service or rebooting the appliance.
+- Final verification matched all 63 deployed project files and permissions to
+  local source. There are 895 installed packages: all 887 original versions
+  remain, plus the eight pinned additions. Protected configuration hashes match
+  the pre-MSP backup; extroot and swap remain active. No SMB server listener or
+  MSP private credential directory remained. Temporary fixture servers and SSH
+  test forwards were removed, preserving the user's authenticated SSH terminal.
 
 The physical field checks still belong on the actual equipment: an advertising
 switch, an SNMPv3 device, printer/UPS MIB support, and the customer's Windows/NAS
