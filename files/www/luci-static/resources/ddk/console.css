@@ -979,7 +979,7 @@ select[multiple] {
 	top: 16px;
 	color: #9bacbc;
 }
-.ddk-library-search input {
+.ddk-library-search input.ddk-input {
 	min-height: 54px;
 	padding-left: 48px;
 	font-size: 14px;
@@ -1995,7 +1995,7 @@ select[multiple] {
 	.ddk-button {
 		min-height: 44px;
 	}
-	.ddk-library-search input {
+	.ddk-library-search input.ddk-input {
 		min-height: 50px;
 		font-size: 13px;
 	}

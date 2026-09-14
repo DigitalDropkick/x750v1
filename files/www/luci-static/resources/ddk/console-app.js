@@ -362,7 +362,7 @@
 				h('h1', {}, section),
 				h('p', {}, description)
 			),
-			h('span', { class: 'ddk-appliance-tag' }, 'X750 / v4.0.0')
+			h('span', { class: 'ddk-appliance-tag' }, 'X750 / v4.0.1')
 		);
 	}
 	function sectionHeading(title, detail) {

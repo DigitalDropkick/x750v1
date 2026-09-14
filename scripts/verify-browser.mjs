@@ -193,10 +193,11 @@ async function verifyFlows(sid) {
 			for (const page of ['overview', 'tools', 'jobs', 'settings', 'packages']) {
 				await openPage(sid, page, width, 900);
 				const result = await inspect(
-					"({version:document.body.innerText.includes('X750 / v4.0.0'),overflow:document.documentElement.scrollWidth>innerWidth,coerced:/\\[object (?:HTML|Object)|^null$/m.test(document.body.innerText),logo:document.querySelector('.ddk-nav-home img')?.naturalWidth})"
+					"({version:document.body.innerText.includes('X750 / v4.0.1'),overflow:document.documentElement.scrollWidth>innerWidth,coerced:/\\[object (?:HTML|Object)|^null$/m.test(document.body.innerText),logo:document.querySelector('.ddk-nav-home img')?.naturalWidth})"
 				);
 				if (!result.version || result.overflow || result.coerced || !result.logo)
 					throw Error(page + ' at ' + width + ': ' + JSON.stringify(result));
+                if(page==='tools' && !await inspect("(()=>{const input=document.querySelector('.ddk-library-search input'),icon=document.querySelector('.ddk-library-search svg');return input.getBoundingClientRect().left+parseFloat(getComputedStyle(input).paddingLeft)>=icon.getBoundingClientRect().right+8;})()"))throw Error('Tool search text overlaps its icon');
 				if (width === 1440 || width === 390) await screenshot(sid, 'ddk-v4-' + page + '-' + width + '.png');
 			}
 			console.log('Five responsive pages passed at ' + width + 'px');
@@ -414,7 +415,7 @@ async function verifyFlows(sid) {
 	);
 	createdInputs.add(await inspect("document.querySelector('[name=input]').value"));
 	await key('Escape');
-	await screenshot(sid, 'ddk-v4-tools-1440.png');
+	await screenshot(sid, 'ddk-v4-tools-after-upload.png');
 	if (!nmap || !exported) throw Error('Job fixture IDs missing');
 	console.log(
 		'Native Nmap, observed-host handoff, live fping, stable polling, stop, save, export, file reuse and inline upload passed'

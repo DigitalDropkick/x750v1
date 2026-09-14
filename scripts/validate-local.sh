@@ -11,9 +11,9 @@ fail() {
 }
 
 git diff --check
-[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '4.0.0' ]] || fail 'source version is not 4.0.0'
-rg -F "X750 / v4.0.0" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 4.0.0'
-rg -F "Field Console version 4.0.0" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 4.0.0'
+[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '4.0.1' ]] || fail 'source version is not 4.0.1'
+rg -F "X750 / v4.0.1" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 4.0.1'
+rg -F "Field Console version 4.0.1" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 4.0.1'
 bash -n deploy.sh verify.sh rollback.sh configure-swap-autostart.sh rollback-swap-autostart.sh post-reboot-verify.sh scripts/verify-browser-authenticated.sh scripts/audit-operator-release.sh
 sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh \
 	scripts/router-configure-swap-autostart.sh scripts/router-rollback-swap-autostart.sh \
