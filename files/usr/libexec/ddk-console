@@ -1923,10 +1923,19 @@ local function operator_context(action_id)
 	local bluetooth_all, can_devices = {}, {}
 	local recovery_jobs = {{value="new",label="New recovery"}}
 	local saved_cases={}
+	local nmap_scans,nmap_scans_newest={},{}
 	local clone_jobs={{value="new",label="New clone"}}
 	for name in (fs.dir(SAVED_ROOT) or function() end) do
 		if valid_job_id(name) then
 			local record = parse_json(fs.readfile(SAVED_ROOT .. "/" .. name .. "/metadata.json"))
+			if record and action_id=="network.compare_scans" and record.action_id=="network.nmap_lan_discovery" and trim(fs.readfile(SAVED_ROOT.."/"..name.."/status"))=="complete" then
+				for _,artifact in ipairs(record.artifacts or {}) do
+					if artifact.name=="nmap.xml" and artifact.storage=="extroot" then
+						local stat=fs.lstat(ARTIFACT_ROOT.."/"..name.."/nmap.xml")
+						if runtime_policy.artifact_valid(stat,artifact.max_size,true) then nmap_scans[#nmap_scans+1]={value=name,label=(record.case_label or record.label or name).." / "..name,size=stat.size,ino=stat.ino} end
+					end
+				end
+			end
 			if record and action_id=="cases.export" then
 				local files,bytes={},1048576
 				for _,artifact in ipairs(record.artifacts or {}) do
@@ -1951,12 +1960,15 @@ local function operator_context(action_id)
 		if node and trim(fs.readfile("/sys/class/net/" .. node .. "/type")) == "280" then can_devices[#can_devices + 1] = node end
 	end
 	local cellular_interface = family=="cellular" and trim(capture("uci -q show network | sed -n 's/^network[.]\\([A-Za-z0-9_]*\\)[.]proto=.qmi.$/\\1/p'", 256, 5)) or ""
+	table.sort(nmap_scans,function(a,b) return a.value<b.value end)
+	for i=#nmap_scans,1,-1 do nmap_scans_newest[#nmap_scans_newest+1]=nmap_scans[i] end
 	local uploads=list_uploads()
 	local service_addresses={}
 	for _,item in ipairs(local_addresses) do if item.family=="inet" and (item.interface=="lo" or item.interface=="br-lan" or item.interface=="tailscale0") then service_addresses[#service_addresses+1]={value=item.address,label=item.address.." / "..item.interface} end end
 	if action_id=="gps.receiver_control" or action_id=="gps.session" then gps_devices=serial_devices end
 	return {
 		service_addresses=service_addresses,
+		nmap_scans=nmap_scans,nmap_scans_newest=nmap_scans_newest,
 		validators = operator_actions,
 		ftdi_devices = ftdi_devices, flashrom_devices = flashrom_devices, usb_hubs = usb_inventory.hubs, usb_inventory = usb_inventory, usb_policy = usb_topology, usbip_ports = usbip_ports,
 		nmap_scripts = nmap_scripts, processes = processes,
@@ -2238,7 +2250,7 @@ local function prepare_operator_action(action_id, encoded)
 		end
 	end
 	if operator_v3.actions[action_id] or action_id=="network.nmap_lan_discovery" then
-		plan.native_runtime = { window = plan.window, success_codes = plan.success_codes, stdin = plan.stdin, sensitive = plan.sensitive, hardware = plan.hardware, output_mib = plan.options.output_mib, recovery = plan.recovery, device_identity = plan.device_identity, recovery_identity = plan.recovery_identity, adb = plan.adb, adb_connect = plan.adb_connect, apk_inputs = plan.apk_inputs, archive_directory = plan.archive_directory, interactive = plan.interactive, monitor = plan.monitor, stdin_upload = plan.stdin_upload, stdout_artifact = plan.stdout_artifact, process_identity = plan.process_identity, usb_identity = plan.usb_identity, usb_unique = plan.usb_unique, ftdi = plan.ftdi, source_case = plan.source_case, case_files = plan.case_files, rtk=plan.rtk, rtk_corrections=plan.rtk_corrections, debugserver=plan.debugserver, cellular=plan.cellular, rtl_identity=plan.rtl_identity, clone_target=plan.clone_target, clone_resume=plan.clone_resume }
+		plan.native_runtime = { window = plan.window, success_codes = plan.success_codes, stdin = plan.stdin, sensitive = plan.sensitive, hardware = plan.hardware, output_mib = plan.options.output_mib, recovery = plan.recovery, device_identity = plan.device_identity, recovery_identity = plan.recovery_identity, adb = plan.adb, adb_connect = plan.adb_connect, apk_inputs = plan.apk_inputs, archive_directory = plan.archive_directory, interactive = plan.interactive, monitor = plan.monitor, stdin_upload = plan.stdin_upload, stdout_artifact = plan.stdout_artifact, process_identity = plan.process_identity, usb_identity = plan.usb_identity, usb_unique = plan.usb_unique, ftdi = plan.ftdi, source_case = plan.source_case, source_scans = plan.source_scans, msp_workspace = plan.msp_workspace, case_files = plan.case_files, rtk=plan.rtk, rtk_corrections=plan.rtk_corrections, debugserver=plan.debugserver, cellular=plan.cellular, rtl_identity=plan.rtl_identity, clone_target=plan.clone_target, clone_resume=plan.clone_resume }
 	end
 	plan.created_at = os.time()
 	plan.expires_at = plan.created_at + PREPARED_MAX_AGE
@@ -2889,6 +2901,7 @@ local function start_job(action_id, operator_plan)
 	end
 	local upload_lock_keys = {}
 	if operator_plan and operator_plan.source_case then upload_lock_keys[#upload_lock_keys+1]="save-"..operator_plan.source_case end
+	for _,scan in ipairs(operator_plan and operator_plan.source_scans or {}) do upload_lock_keys[#upload_lock_keys+1]="save-"..scan.id end
 	if operator_plan and operator_plan.clone_target then upload_lock_keys[#upload_lock_keys+1]="resource-storage-"..operator_plan.clone_target.disk end
 	if operator_plan and operator_plan.clone_resume then upload_lock_keys[#upload_lock_keys+1]="save-"..operator_plan.clone_resume end
 	if action_id=="can.configure" then

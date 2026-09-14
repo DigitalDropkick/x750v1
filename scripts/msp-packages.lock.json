@@ -1,0 +1,86 @@
+{
+  "firmware": "22.03.4",
+  "architecture": "mips_24kc",
+  "packages": [
+    {
+      "package": "python3-xml",
+      "version": "3.10.9-1",
+      "architecture": "mips_24kc",
+      "filename": "python3-xml_3.10.9-1_mips_24kc.ipk",
+      "sha256": "e2b5bee939bb3e3dd57df334ef3294ef58b1b54bd7cb31e7d233193d9d106b20",
+      "url": "https://fw.gl-inet.com/releases/v22.03.4/packages-4.2/ath79/packages/python3-xml_3.10.9-1_mips_24kc.ipk",
+      "bytes": 205077,
+      "depends": "libc, python3-light, python3-urllib"
+    },
+    {
+      "package": "ndiff",
+      "version": "7.91-1",
+      "architecture": "mips_24kc",
+      "filename": "ndiff_7.91-1_mips_24kc.ipk",
+      "sha256": "0a210094e34229e30c69fdeb2e7fa1912483ff688a08e7323f1e9357e7956bd9",
+      "url": "https://fw.gl-inet.com/releases/v22.03.4/packages-4.2/ath79/packages/ndiff_7.91-1_mips_24kc.ipk",
+      "bytes": 19652,
+      "depends": "libc, python3-light, python3-xml"
+    },
+    {
+      "package": "iputils-tracepath",
+      "version": "20211215-1",
+      "architecture": "mips_24kc",
+      "filename": "iputils-tracepath_20211215-1_mips_24kc.ipk",
+      "sha256": "0cd23e906480b6a32beee9b3ecb6206ef2837519dfdc394a350eca9b44860ff1",
+      "url": "https://fw.gl-inet.com/releases/v22.03.4/packages-4.2/ath79/packages/iputils-tracepath_20211215-1_mips_24kc.ipk",
+      "bytes": 6378,
+      "depends": "libc"
+    },
+    {
+      "package": "attr",
+      "version": "2.5.1-1",
+      "architecture": "mips_24kc",
+      "filename": "attr_2.5.1-1_mips_24kc.ipk",
+      "sha256": "83fa9ddadf9953b55834028ce307217ba0032e04a9f9d55915e0254063fa53ad",
+      "url": "https://fw.gl-inet.com/releases/v22.03.4/packages-4.2/ath79/packages/attr_2.5.1-1_mips_24kc.ipk",
+      "bytes": 11740,
+      "depends": "libc, libattr"
+    },
+    {
+      "package": "liburing",
+      "version": "2.3-1",
+      "architecture": "mips_24kc",
+      "filename": "liburing_2.3-1_mips_24kc.ipk",
+      "sha256": "a51cfb0e168a304ec4d7973743fbe51ef0b9ab131cff59d01be6145f46434d51",
+      "url": "https://fw.gl-inet.com/releases/v22.03.4/packages-4.2/ath79/packages/liburing_2.3-1_mips_24kc.ipk",
+      "bytes": 6642,
+      "depends": "libc"
+    },
+    {
+      "package": "libgnutls",
+      "version": "3.7.1-2",
+      "architecture": "mips_24kc",
+      "filename": "libgnutls_3.7.1-2_mips_24kc.ipk",
+      "sha256": "d93743b02192fba73cde858c72226d97204fbd212fb716a6865de9653ebbedec",
+      "url": "https://fw.gl-inet.com/releases/v22.03.4/packages-4.2/ath79/packages/libgnutls_3.7.1-2_mips_24kc.ipk",
+      "bytes": 797284,
+      "depends": "libc, libnettle8, libgmp10, libatomic1"
+    },
+    {
+      "package": "samba4-libs",
+      "version": "4.14.12-3",
+      "architecture": "mips_24kc",
+      "filename": "samba4-libs_4.14.12-3_mips_24kc.ipk",
+      "sha256": "cd021e59595f3572060393fe1be844a3aef17c609f553925b927964623b056d8",
+      "url": "https://fw.gl-inet.com/releases/v22.03.4/packages-4.2/ath79/packages/samba4-libs_4.14.12-3_mips_24kc.ipk",
+      "bytes": 7111067,
+      "depends": "libc, libtirpc, libreadline8, libpopt0, libcap, zlib, libgnutls, libtasn1, libuuid1, libopenssl1.1, libpthread, liburing, libpam, attr, libavahi-client"
+    },
+    {
+      "package": "samba4-client",
+      "version": "4.14.12-3",
+      "architecture": "mips_24kc",
+      "filename": "samba4-client_4.14.12-3_mips_24kc.ipk",
+      "sha256": "94a0ca2dc3fc40d9d99d1123b05d382efd7029b91d65c1c5414dc3a76d8d5495",
+      "url": "https://fw.gl-inet.com/releases/v22.03.4/packages-4.2/ath79/packages/samba4-client_4.14.12-3_mips_24kc.ipk",
+      "bytes": 93775,
+      "depends": "libc, samba4-libs"
+    }
+  ]
+}

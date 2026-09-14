@@ -2,18 +2,109 @@
   "id": "network-discovery",
   "name": "Network Discovery",
   "category": "Network Diagnostics",
-  "description": "Network mapping, ARP discovery, DNS queries, and continuous loss and latency monitoring.",
-  "package_names": ["nmap-full", "netdiscover", "arp-scan", "fping", "mtr-nojson", "httping", "bind-dig", "lldpd", "snmp-utils"],
-  "expected_binaries": ["nmap", "arp-scan", "fping", "dig"],
+  "description": "Discover devices, identify switch ports, inspect SNMP equipment, compare saved scans, diagnose path MTU, and test Windows/NAS shares.",
+  "package_names": [
+    "nmap-full",
+    "netdiscover",
+    "arp-scan",
+    "fping",
+    "mtr-nojson",
+    "httping",
+    "bind-dig",
+    "lldpd",
+    "snmp-utils",
+    "ndiff",
+    "iputils-tracepath",
+    "samba4-client"
+  ],
+  "expected_binaries": [
+    "nmap",
+    "arp-scan",
+    "fping",
+    "dig",
+    "lldpcli",
+    "snmpget",
+    "snmpwalk",
+    "ndiff",
+    "tracepath",
+    "smbclient"
+  ],
   "required_hardware": [],
   "status_probe": "software",
   "risk_level": "SECURITY",
   "enabled": true,
   "actions": [
-    {"id": "network.dns", "label": "DNS query", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "network.fping", "label": "Loss and latency monitor", "class": "INFO", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "network.arp_scan", "label": "ARP discovery", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true},
-    {"id": "network.nmap_lan_discovery", "class": "SECURITY", "execution": "job", "parameter_schema": "operator-v1", "enabled": true}
+    {
+      "id": "network.dns",
+      "label": "DNS query",
+      "class": "INFO",
+      "execution": "job",
+      "parameter_schema": "operator-v1",
+      "enabled": true
+    },
+    {
+      "id": "network.fping",
+      "label": "Loss and latency monitor",
+      "class": "INFO",
+      "execution": "job",
+      "parameter_schema": "operator-v1",
+      "enabled": true
+    },
+    {
+      "id": "network.arp_scan",
+      "label": "ARP discovery",
+      "class": "SECURITY",
+      "execution": "job",
+      "parameter_schema": "operator-v1",
+      "enabled": true
+    },
+    {
+      "id": "network.nmap_lan_discovery",
+      "class": "SECURITY",
+      "execution": "job",
+      "parameter_schema": "operator-v1",
+      "enabled": true
+    },
+    {
+      "id": "network.lldp",
+      "label": "Connected switch and port",
+      "class": "INFO",
+      "execution": "job",
+      "parameter_schema": "operator-v1",
+      "enabled": true
+    },
+    {
+      "id": "network.snmp",
+      "label": "SNMP equipment check",
+      "class": "INFO",
+      "execution": "job",
+      "parameter_schema": "operator-v1",
+      "enabled": true
+    },
+    {
+      "id": "network.compare_scans",
+      "label": "Compare saved scans",
+      "class": "INFO",
+      "execution": "job",
+      "parameter_schema": "operator-v1",
+      "enabled": true
+    },
+    {
+      "id": "network.tracepath",
+      "label": "Path and MTU test",
+      "class": "INFO",
+      "execution": "job",
+      "parameter_schema": "operator-v1",
+      "enabled": true
+    },
+    {
+      "id": "network.smb",
+      "label": "Windows and NAS shares",
+      "class": "ACTION",
+      "execution": "job",
+      "parameter_schema": "operator-v1",
+      "enabled": true
+    }
   ],
-  "help_text": "Nmap exposes scan types, installed NSE scripts and arguments, output files, and reusable browser presets. ARP, DNS and fping have separate controls. Select the network interface and targets; save job results as cases."
+  "help_text": "Nmap exposes scan types, installed NSE scripts and arguments, output files, and reusable browser presets. ARP, DNS and fping have separate controls. Select the network interface and targets; save job results as cases. Save two completed Nmap jobs with XML output to compare cases. LLDP needs an advertising neighbor. SNMP uses the device credentials. SMB transfer tests create, verify and remove a uniquely named test file."
 }

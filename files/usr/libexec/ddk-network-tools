@@ -1,0 +1,256 @@
+#!/usr/bin/python3
+"""Fixed network workflows. Credentials stay in private files, never subprocess argv.
+
+The job worker owns cancellation, filesystem budgets and post-cancellation SMB
+cleanup. No command string or executable can be supplied by a browser.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+
+
+def private_write(path, value):
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as out:
+        out.write(value)
+
+
+def secret(path):
+    if path == "none":
+        return ""
+    value = Path(path).read_text()
+    if any(c in value for c in "\r\n\x00") or len(value.encode()) > 8192:
+        raise ValueError("Invalid credential file")
+    return value
+
+
+def quoted(value):
+    # Net-SNMP read_config_read_octet_string uses copy_nword quote/backslash rules.
+    if any(c in value for c in "\r\n\x00"):
+        raise ValueError("Invalid configuration value")
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def run(argv, **kwargs):
+    # Inherit the worker's bounded output descriptors and process group.
+    return subprocess.call(argv, stdin=subprocess.DEVNULL, **kwargs)
+
+
+def snmp(a):
+    workspace = Path(a.private_dir)
+    workspace.mkdir(mode=0o700, exist_ok=True)
+    config = ["dontLoadHostConfig yes", "persistentDir " + str(workspace),
+              "defVersion " + a.version]
+    if a.version != "3":
+        config.append("defCommunity " + quoted(secret(a.community)))
+    else:
+        config += ["defSecurityName " + quoted(a.username),
+                   "defSecurityLevel " + a.level, "defAuthType " + a.auth,
+                   "defPrivType DES"]
+        if a.context:
+            config.append("defContext " + quoted(a.context))
+        if a.level != "noAuthNoPriv":
+            config.append("defAuthPassphrase " + quoted(secret(a.authpass)))
+        if a.level == "authPriv":
+            config.append("defPrivPassphrase " + quoted(secret(a.privpass)))
+    private_write(workspace / "snmp.conf", "\n".join(config) + "\n")
+    env = dict(os.environ, SNMPCONFPATH=str(workspace), SNMP_PERSISTENT_DIR=str(workspace), MIBS="")
+    profiles = {
+        "system": [".1.3.6.1.2.1.1." + n + ".0" for n in ("1", "2", "3", "4", "5", "6", "7")],
+        "interfaces": [".1.3.6.1.2.1.2"],
+        "interfaces64": [".1.3.6.1.2.1.31.1.1"],
+        "printer": [".1.3.6.1.2.1.43"],
+        "ups": [".1.3.6.1.2.1.33"],
+    }
+    oids = profiles.get(a.profile, a.oid.split())
+    if not oids or any(not re.fullmatch(r"\.?\d+(?:\.\d+)+", oid) for oid in oids):
+        raise ValueError("Use numeric OIDs")
+    executable = "/usr/bin/snmpget" if a.profile in ("system", "get") else "/usr/bin/snmpwalk"
+    endpoint = ("udp6:[" + a.host + "]:" if ":" in a.host else "udp:" + a.host + ":") + str(a.port)
+    return run([executable, "-On", "-t", str(a.timeout), "-r", str(a.retries), endpoint] + oids, env=env)
+
+
+def validate_scan(path):
+    # Nmap's simple <!DOCTYPE nmaprun> is fine. Reject entities/external DTDs
+    # before handing XML to Ndiff's SAX parser. Scan in chunks on this 128MB box.
+    from xml.etree import ElementTree
+    carry = b""
+    with open(path, "rb") as src:
+        while True:
+            chunk = src.read(65536)
+            if not chunk:
+                break
+            data = carry + chunk
+            # ASCII XML is what Nmap emits. NUL also rules out UTF-16 bypasses.
+            if b"\x00" in data or re.search(br"<!ENTITY", data, re.I):
+                raise ValueError("Scan XML contains an unsupported DTD or entity declaration")
+            for match in re.finditer(br"<!DOCTYPE", data, re.I):
+                declaration = data[match.start():]
+                end = declaration.find(b">")
+                if (end >= 0 and not re.fullmatch(br"<!DOCTYPE\s+nmaprun\s*>", declaration[:end+1])) or (end < 0 and len(declaration) > 512):
+                    raise ValueError("Scan XML contains an unsupported DTD or entity declaration")
+            carry = data[-512:]
+    root = None
+    finished = False
+    for event, element in ElementTree.iterparse(path, events=("start", "end")):
+        if root is None:
+            root = element
+            if root.tag != "nmaprun":
+                raise ValueError("Input is not Nmap XML")
+        if event == "end":
+            if element.tag == "finished":
+                finished = element.get("exit") == "success"
+            if element.tag == "host":
+                root.clear()
+    if not finished:
+        raise ValueError("Save two completed Nmap scans with XML output; this scan is incomplete")
+
+
+def compare(a):
+    validate_scan(a.baseline)
+    validate_scan(a.current)
+    print("Earlier scan -> later scan. '-' removed or previous; '+' added or current.", flush=True)
+    code = run(["/usr/bin/ndiff", "--text", a.baseline, a.current])
+    if code == 0:
+        print("No differences reported by Ndiff.", flush=True)
+    elif code == 1:
+        print("Differences reported by Ndiff. Check scan scope and settings before treating missing results as a device change.", flush=True)
+    return code
+
+
+def smb_base(a):
+    result = ["/usr/bin/smbclient", "-s", "/dev/null", "-A", str(Path(a.private_dir) / "smb.auth"),
+              "-p", str(a.port), "-t", str(a.timeout),
+              "--option=client min protocol=" + {"SMB2":"SMB2_02", "SMB3":"SMB3_00", "NT1":"NT1"}[a.protocol],
+              "--option=client max protocol=SMB3"]
+    # Guest still uses an explicit credentials file, so stdin never prompts.
+    return result
+
+
+def smb_target(a):
+    host = "[" + a.host + "]" if ":" in a.host else a.host
+    return ["//" + host + "/" + a.share, "-D", a.path]
+
+
+def smb_cleanup(workspace, private_dir):
+    path = Path(workspace) / "smb-probe.json"
+    if not path.exists():
+        return 0
+    state = json.loads(path.read_text())
+    name = state.pop("probe")
+    if not re.fullmatch(r"orbit-test-[a-f0-9]{32}\.bin", name):
+        raise ValueError("Invalid owned transfer probe")
+    a = argparse.Namespace(**state)
+    a.workspace = workspace
+    a.private_dir = private_dir
+    a.timeout = min(a.timeout, 5)
+    code = run(smb_base(a) + smb_target(a) + ["-c", "del " + name])
+    if code == 0:
+        path.unlink()
+        print("Transfer test file removed: " + name, flush=True)
+    else:
+        print("Cleanup could not be confirmed. Check and remove only this test file: " + name, flush=True)
+    return code
+
+
+def digest(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as src:
+        for chunk in iter(lambda: src.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def smb(a):
+    workspace = Path(a.workspace)
+    workspace.mkdir(mode=0o700, exist_ok=True)
+    password = "" if a.guest == "yes" else secret(a.password)
+    username = "guest" if a.guest == "yes" else a.username
+    domain = "" if a.guest == "yes" else a.domain
+    # smbclient's authentication file parser takes the literal remainder of each
+    # line; do not shell-quote passwords or silently trim significant whitespace.
+    if any(c in username + domain + password for c in "\r\n\x00"):
+        raise ValueError("Invalid SMB credentials")
+    if password != password.strip() or username != username.strip() or domain != domain.strip():
+        raise ValueError("This smbclient credentials-file format cannot preserve leading/trailing whitespace in credentials")
+    Path(a.private_dir).mkdir(mode=0o700, exist_ok=True)
+    private_write(Path(a.private_dir) / "smb.auth", "username = " + username + "\npassword = " + password + "\ndomain = " + domain + "\n")
+    base = smb_base(a)
+    if a.operation == "shares":
+        return run(base + ["-g", "-L", a.host])
+    if a.operation == "directory":
+        return run(base + smb_target(a) + ["-c", "ls"])
+    # Only generated names enter smbclient's command interpreter. Share/folder
+    # inputs are literal argv values, never concatenated into -c commands.
+    name = "orbit-test-" + os.urandom(16).hex() + ".bin"
+    state = {key: getattr(a, key) for key in ("host", "port", "share", "path", "protocol", "timeout")}
+    state["probe"] = name
+    private_write(workspace / "smb-probe.json", json.dumps(state))
+    upload = workspace / "probe-upload.bin"
+    download = workspace / "probe-download.bin"
+    with open(upload, "xb") as out:
+        for _ in range(a.transfer_mib * 16):
+            out.write(os.urandom(65536))
+    started = time.monotonic()
+    print("Temporary test file: " + name + " (worker will attempt cleanup even if stopped)", flush=True)
+    code = run(base + smb_target(a) + ["-c", "put " + str(upload) + " " + name])
+    if code:
+        return code
+    uploaded = time.monotonic()
+    code = run(base + smb_target(a) + ["-c", "get " + name + " " + str(download)])
+    if code:
+        return code
+    downloaded = time.monotonic()
+    matched = download.stat().st_size == upload.stat().st_size and digest(download) == digest(upload)
+    print("Transfer verified: " + ("PASS" if matched else "FAIL"), flush=True)
+    print("Bytes verified: " + str(upload.stat().st_size), flush=True)
+    print("Upload seconds: %.3f\nDownload seconds: %.3f" % (uploaded-started, downloaded-uploaded), flush=True)
+    print("Timing includes SMB connection/authentication overhead; this is a field transfer check.", flush=True)
+    return 0 if matched else 1
+
+
+def parser():
+    p = argparse.ArgumentParser(description=__doc__)
+    sub = p.add_subparsers(dest="command", required=True)
+    s = sub.add_parser("snmp")
+    for name in ("workspace", "private-dir", "host", "profile", "oid", "version", "community", "username", "level", "auth", "authpass", "privpass", "context"):
+        s.add_argument("--" + name, required=True)
+    for name in ("port", "timeout", "retries"):
+        s.add_argument("--" + name, type=int, required=True)
+    c = sub.add_parser("compare")
+    c.add_argument("--baseline", required=True)
+    c.add_argument("--current", required=True)
+    s = sub.add_parser("smb")
+    for name in ("workspace", "private-dir", "host", "operation", "share", "path", "username", "domain", "password", "guest", "protocol"):
+        s.add_argument("--" + name, required=True)
+    for name in ("port", "timeout", "transfer-mib"):
+        s.add_argument("--" + name, type=int, required=True)
+    c = sub.add_parser("smb-cleanup")
+    c.add_argument("--workspace", required=True)
+    c.add_argument("--private-dir", required=True)
+    return p
+
+
+def main():
+    os.umask(0o077)
+    a = parser().parse_args()
+    try:
+        return {"snmp": snmp, "compare": compare, "smb": smb,
+                "smb-cleanup": lambda args: smb_cleanup(args.workspace, args.private_dir)}[a.command](a)
+    except (OSError, ValueError) as exc:
+        # Do not echo private config parser errors or arbitrary command arguments.
+        if isinstance(exc, ValueError):
+            print(str(exc), file=sys.stderr)
+        else:
+            print("Network helper could not access a required native tool or job file.", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -6,6 +6,11 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
 	'use strict';
 	var catalog = {
+		'network.lldp': { name: 'Switch & port', summary: 'Identify the connected switch, remote port and advertised management address.', output: 'Neighbor and switch-port inventory', module: 'network-discovery', group: 'network', requires: 'Connect the Ethernet cable to an LLDP/CDP-advertising switch. No neighbors means no advertisement was observed; it does not prove the cable is disconnected.', native: ['lldpcli'] },
+		'network.snmp': { name: 'Equipment check', summary: 'Read switch interfaces, printer supplies, UPS status or a custom SNMP OID.', output: 'Numeric OIDs with equipment values', module: 'network-discovery', group: 'network', requires: 'Enter the target and its SNMP credentials. System checks use GET; other profiles walk the selected MIB subtree. The installed SNMPv3 build supports DES encryption only; AES-only devices need a compatible client build.', native: ['snmpget', 'snmpwalk'] },
+		'network.compare_scans': { name: 'Compare scans', summary: 'See what changed between two saved Nmap cases.', output: 'Host, port and service differences', module: 'network-discovery', group: 'network', requires: 'Run and save two completed Nmap jobs with XML or All artifact output. Choose earlier and later cases. Match targets and scan settings for a meaningful before/after comparison.', native: ['ndiff'] },
+		'network.tracepath': { name: 'Path & MTU', summary: 'Locate path hops and packet-size constraints behind VPN or application failures.', output: 'Hop responses and reported path MTU', module: 'network-discovery', group: 'network', requires: 'Enter the destination. UDP probes and ICMP replies must pass along the route. Missing replies can indicate filtering; they do not prove a hop is down.', native: ['tracepath'] },
+		'network.smb': { name: 'Windows & NAS shares', summary: 'List shares, browse a folder, or verify an upload/download round trip.', output: 'Share access, directory listing and verified transfer results', module: 'network-discovery', group: 'network', requires: 'Choose guest or enter credentials. Transfer tests create a unique orbit-test file in the selected folder, compare SHA-256 and attempt deletion even after Stop. Review cleanup results. SMB2 is the default; select NT1 only when the server requires SMB1.', native: ['smbclient'] },
 		'network.nmap_lan_discovery': {
 			name: 'Network discovery',
 			summary: 'Find hosts, ports and services with Nmap.',
@@ -972,6 +977,16 @@
 		'cellular.diagnostics'
 	];
 	var presets = {
+		'network.lldp': [{ name: 'All ports', detail: 'Inspect every advertising neighbor', options: { interface: '' } }],
+		'network.snmp': [
+			{ name: 'Identity & uptime', detail: 'System name, description and uptime', options: { profile: 'system' } },
+			{ name: 'Switch interfaces', detail: 'Status, errors and octet counters', options: { profile: 'interfaces' } },
+			{ name: '64-bit counters', detail: 'High-capacity interface counters', options: { profile: 'interfaces64' } },
+			{ name: 'Printer', detail: 'Printer-MIB supplies and status, if supported', options: { profile: 'printer' } },
+			{ name: 'UPS', detail: 'UPS-MIB battery and power, if supported', options: { profile: 'ups' } }
+		],
+		'network.tracepath': [{ name: 'IPv4 path', detail: 'Start with a 1500-byte probe', options: { family: 'ipv4', length: 1500 } }, { name: 'IPv6 path', detail: 'Start with a 1500-byte probe', options: { family: 'ipv6', length: 1500 } }],
+		'network.smb': [{ name: 'List shares', detail: 'Check access to the server', options: { operation: 'shares' } }, { name: 'Browse folder', detail: 'Read a directory listing', options: { operation: 'directory' } }, { name: 'Transfer check', detail: 'Upload, download, verify and clean up 1 MiB', options: { operation: 'transfer', transfer_mib: 1 } }],
 		'network.nmap_lan_discovery': [
 			{
 				name: 'Find hosts',
@@ -1071,7 +1086,12 @@
 		system: ['monitoring.resources', 'monitoring.bandwidth', 'network.interfaces']
 	};
 	var specificNext = {
-		'network.nmap_lan_discovery': ['network.fping', 'network.dns', 'capture.ring'],
+		'network.nmap_lan_discovery': ['network.fping', 'network.snmp', 'network.compare_scans'],
+		'network.lldp': ['network.snmp', 'network.nmap_lan_discovery'],
+		'network.snmp': ['network.fping', 'network.nmap_lan_discovery', 'network.snmp'],
+		'network.compare_scans': ['network.nmap_lan_discovery', 'network.fping'],
+		'network.tracepath': ['network.fping', 'throughput.iperf3', 'capture.ring'],
+		'network.smb': ['network.smb', 'network.tracepath', 'network.nmap_lan_discovery'],
 		'network.arp_scan': ['network.nmap_lan_discovery', 'network.fping'],
 		'network.fping': ['capture.ring', 'network.dns', 'throughput.iperf3'],
 		'network.dns': ['network.fping', 'capture.ring'],
@@ -1278,7 +1298,66 @@
 			result.note = '';
 			return result;
 		}
-		if (id === 'network.nmap_lan_discovery') {
+		if (id === 'network.lldp') {
+			function objects(value) { return Array.isArray(value) ? value : value ? [value] : []; }
+			try {
+				objects((JSON.parse(text).lldp || {}).interface).forEach(function (interfaces) {
+					Object.keys(interfaces).forEach(function (localPort) {
+						objects(interfaces[localPort]).forEach(function (neighbor) {
+							var chassisMap = neighbor.chassis || {}, key = Object.keys(chassisMap)[0], chassis = chassisMap[key] || {}, port = neighbor.port || {};
+							var address = chassis['mgmt-ip'] || '', addresses = Array.isArray(address) ? address : [address];
+							addresses.forEach(host);
+							result.rows.push([localPort, chassis.name || key || '', (port.id || {}).value || port.descr || '', addresses.join(', '), chassis.descr || '']);
+						});
+					});
+				});
+				result.metrics.push({ label: 'Neighbors advertised', value: String(result.rows.length) });
+				result.columns = ['Router port', 'Switch', 'Switch port', 'Management address', 'Description'];
+				result.description = result.rows.length ? 'Neighbor data advertised to this router.' : 'No neighbor advertisement is currently visible. Check LLDP/CDP on the connected switch and allow time for its next advertisement.';
+			} catch (_) { result.note = 'Inspect native LLDP output; the JSON response is incomplete or unrecognized.'; }
+		} else if (id === 'network.snmp') {
+			host(options.host);
+			var systemNames = { 1: 'Description', 2: 'Object ID', 3: 'Uptime', 4: 'Contact', 5: 'System name', 6: 'Location', 7: 'Services' };
+			var interfaceNames = { 1: 'Index', 2: 'Description', 3: 'Type', 4: 'MTU', 5: 'Speed (bits/s)', 6: 'MAC', 7: 'Admin state', 8: 'Operational state', 9: 'Last change', 10: 'Inbound octets', 13: 'Inbound discards', 14: 'Inbound errors', 16: 'Outbound octets', 19: 'Outbound discards', 20: 'Outbound errors' };
+			text.split(/\r?\n/).forEach(function (line) {
+				var m = line.match(/^(\.\d+(?:\.\d+)*)\s*=\s*(.*)$/); if (!m) return;
+				var sys = m[1].match(/^\.1\.3\.6\.1\.2\.1\.1\.(\d+)\.0$/), iface = m[1].match(/^\.1\.3\.6\.1\.2\.1\.2\.2\.1\.(\d+)\.(\d+)$/);
+				var label = sys ? systemNames[sys[1]] : iface ? 'Interface ' + iface[2] + ': ' + (interfaceNames[iface[1]] || 'column ' + iface[1]) : '';
+				result.rows.push([label || 'OID', m[1], m[2]]);
+			});
+			result.columns = ['Measurement', 'OID', 'Value'];
+			result.metrics.push({ label: 'Values in preview', value: String(result.rows.length) });
+			if (/No Such (?:Object|Instance)|End of MIB/i.test(text)) result.note = 'The agent does not expose some requested OIDs. Check its MIB support and access view; try System or a custom OID.';
+			if (/Timeout|Authentication|authorization|Unknown user|pass phrase|decryption/i.test(text + error)) result.errorHint = 'Check UDP reachability, SNMP version, credentials and the agent access view. For v3, match authentication and privacy settings; this router build cannot use AES.';
+		} else if (id === 'network.compare_scans') {
+			text.split(/\r?\n/).forEach(function (line) { if (/^[+-][^+-]/.test(line)) result.rows.push([line[0] === '+' ? 'Added / current' : 'Removed / previous', line.slice(1)]); });
+			result.columns = ['Change', 'Native difference'];
+			result.metrics.push({ label: 'Changed lines in preview', value: String(result.rows.length) });
+			result.description = /No differences reported/.test(text) ? 'Ndiff found no differences between these scans.' : 'Earlier scan compared with later scan. Native output preserves host and port context.';
+			result.note = 'Different targets, scan settings or blocked probes can change results without an equipment change.';
+		} else if (id === 'network.tracepath') {
+			host(options.host);
+			var mtus = Array.from(text.matchAll(/pmtu\s+(\d+)/g));
+			if (mtus.length) result.metrics.push({ label: 'Reported path MTU', value: mtus[mtus.length - 1][1] + ' bytes' });
+			result.metrics.push({ label: 'Destination', value: /\breached\b/.test(text) ? 'Reached' : active ? 'Probing' : 'Not confirmed' });
+			text.split(/\r?\n/).forEach(function (line) { var m = line.match(/^\s*(\d+)[?:]\s+(.*)$/); if (m) result.rows.push([m[1], m[2]]); });
+			result.columns = ['Hop', 'Response']; result.note = 'No reply may reflect UDP/ICMP filtering. Reported MTU describes this path and these probes; test the affected destination and address family.';
+		} else if (id === 'network.smb') {
+			host(options.host);
+			if (options.operation === 'shares') {
+				text.split(/\r?\n/).forEach(function (line) { var m = line.match(/^(Disk|IPC|Printer)\|([^|]*)\|(.*)$/); if (m) result.rows.push([m[2], m[1], m[3]]); });
+				result.columns = ['Share', 'Type', 'Description']; result.metrics.push({ label: 'Shares listed', value: String(result.rows.length) });
+			} else if (options.operation === 'directory') {
+				text.split(/\r?\n/).forEach(function (line) { var m = line.match(/^\s{2}(.+?)\s+([DANSHR]+)\s+(\d+)\s+(.+)$/); if (m) result.rows.push([m[1], m[2], m[3], m[4]]); });
+				result.columns = ['Name', 'Attributes', 'Bytes', 'Modified'];
+			} else {
+				var verified = text.match(/Transfer verified: (PASS|FAIL)/), bytes = text.match(/Bytes verified: (\d+)/);
+				if (verified) result.metrics.push({ label: 'Content verification', value: verified[1] });
+				if (bytes) result.metrics.push({ label: 'Bytes verified', value: bytes[1] });
+				result.metrics.push({ label: 'Test file cleanup', value: /Transfer test file removed:/.test(text) ? 'Confirmed' : 'Review output' });
+			}
+			if (/NT_STATUS_LOGON_FAILURE|NT_STATUS_ACCESS_DENIED/.test(text + error)) result.errorHint = 'The server rejected authentication or permissions. Check the account/domain and share plus filesystem permissions; a read-only account cannot run the transfer test.';
+		} else if (id === 'network.nmap_lan_discovery') {
 			var current = '';
 			text.split(/\r?\n/).forEach(function (line) {
 				var m = line.match(/^Nmap scan report for (.+)$/);
@@ -1445,6 +1524,13 @@
 			.slice(0, 3)
 			.map(function (nextId) {
 				var initial = {};
+				if (['network.snmp','network.tracepath','network.smb'].indexOf(nextId) >= 0 && result.hosts.length) initial.host = result.hosts[0];
+				if (nextId === 'network.compare_scans' && job.saved && id === 'network.nmap_lan_discovery') initial.current = job.id;
+				if (nextId === 'network.smb' && id === 'network.smb') {
+					['host','port','share','path','guest','username','domain','protocol'].forEach(function (key) { if (options[key] !== undefined) initial[key] = options[key]; });
+					initial.operation = options.operation === 'shares' ? 'directory' : 'transfer';
+					if (options.operation === 'shares') { var disk = result.rows.find(function (row) { return row[1] === 'Disk'; }); if (disk) initial.share = disk[0]; }
+				}
 				if ((nextId === 'network.fping' || nextId === 'network.nmap_lan_discovery') && result.hosts.length)
 					initial.targets = result.hosts.slice();
 				if (nextId === 'capture.ring' && options.interface) initial.interface = options.interface;

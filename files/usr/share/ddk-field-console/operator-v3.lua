@@ -78,6 +78,89 @@ define("network.dns", "DNS query", "INFO", {"/usr/bin/dig"}, common({
 	return a
 end)
 
+-- MSP workflows use the same job ownership, output budgets and case lifecycle.
+define("network.lldp", "Connected switch and port", "INFO", {"/usr/sbin/lldpcli"}, common({
+	optional_live("interface", "Interface (empty = all ports)", "interfaces")
+}), function(o,c,p)
+	local a={"/usr/sbin/lldpcli","-f","json","show","neighbors"}
+	if o.interface~="" then add(a,"ports",o.interface) end
+	add(a,"details");return a
+end)
+
+define("network.tracepath", "Path and MTU test", "INFO", {"/usr/bin/tracepath"}, common({
+	text("host","Destination","127.0.0.1","host"),choice("family","Address family",{"ipv4","ipv6"}),
+	integer("port","UDP destination port",44444,1,65535),integer("hops","Maximum hops",30,1,255),
+	integer("length","Initial packet bytes",1500,28,65535),field("resolve","Resolve hop names","boolean",false)
+}), function(o,c,p)
+	assert(o.family~="ipv6" or o.length>=48,"IPv6 probes need at least 48 bytes")
+	local a={"/usr/bin/tracepath",o.family=="ipv6" and "-6" or "-4","-m",tostring(o.hops),"-l",tostring(o.length),"-p",tostring(o.port)}
+	if not o.resolve then add(a,"-n") end;add(a,o.host);return a
+end)
+
+local network_helper="/usr/libexec/ddk-network-tools"
+local function network_workspace(p,kind,bytes)
+	p.msp_workspace=kind;p.workspaces={{name="msp",storage="extroot",reserve_size=bytes or 1048576}}
+end
+local function credential(p,o,key)
+	if o[key]=="" then return "none" end
+	local path=p.private("msp-"..key,o[key]):gsub("@PRIVATE@","@PRIVATE_FILE@")
+	o[key]="[REDACTED]";return path
+end
+define("network.snmp", "SNMP equipment check", "INFO", {network_helper,"/usr/bin/snmpget","/usr/bin/snmpwalk"}, common({
+	text("host","Equipment address","127.0.0.1","host"),integer("port","UDP port",161,1,65535),
+	choice("profile","Check",{"system","interfaces","interfaces64","printer","ups","get","walk"}),
+	text("oid","Custom numeric OIDs (space separated)",".1.3.6.1.2.1.1"),
+	choice("version","SNMP version",{"2c","3","1"}),field("community","Community","secret",""),
+	text("username","SNMPv3 user"),choice("level","SNMPv3 security",{"authNoPriv","authPriv","noAuthNoPriv"}),
+	choice("auth","Authentication",{"SHA","SHA-256","SHA-512","SHA-224","SHA-384","MD5"}),
+	field("authpass","Authentication passphrase","secret",""),
+	choice("privacy","Encryption (installed build: DES only)",{"DES"}),field("privpass","Privacy passphrase","secret",""),
+	text("context","SNMPv3 context"),integer("timeout","Reply timeout (seconds)",3,1,120),integer("retries","Retries",1,0,20)
+}), function(o,c,p)
+	local oids={};for oid in o.oid:gmatch("%S+") do assert(oid:match("^%.?%d+[.%d]*$") and not oid:find("..",1,true) and oid:sub(-1)~=".","Use numeric OIDs such as .1.3.6.1.2.1.1.1.0");oids[#oids+1]=oid end
+	assert(#oids>0,"Enter a numeric OID")
+	if o.profile=="walk" then assert(#oids==1,"Walk one OID subtree per job") end
+	if o.version=="3" then
+		assert(o.username~="","Enter the SNMPv3 user")
+		if o.level~="noAuthNoPriv" then assert(#o.authpass>=8,"SNMPv3 authentication needs at least 8 passphrase characters") end
+		if o.level=="authPriv" then assert(#o.privpass>=8,"SNMPv3 privacy needs at least 8 passphrase characters") end
+	else assert(o.community~="","Enter the device's SNMP community") end
+	network_workspace(p,"snmp");p.required_executables={"/usr/bin/python3",(o.profile=="system" or o.profile=="get") and "/usr/bin/snmpget" or "/usr/bin/snmpwalk"}
+	-- All credentials are files; they never appear in native process arguments.
+	return {network_helper,"snmp","--workspace","@WORK@/msp","--private-dir","@MSP_JOB@","--host",o.host,"--port",tostring(o.port),"--profile",o.profile,"--oid",table.concat(oids," "),"--version",o.version,"--community",credential(p,o,"community"),"--username="..o.username,"--level",o.level,"--auth",o.auth,"--authpass",credential(p,o,"authpass"),"--privpass",credential(p,o,"privpass"),"--context="..o.context,"--timeout",tostring(o.timeout),"--retries",tostring(o.retries)}
+end)
+
+define("network.compare_scans", "Compare saved scans", "INFO", {network_helper,"/usr/bin/ndiff"}, common({
+	live("baseline","Earlier saved scan","nmap_scans"),live("current","Later saved scan","nmap_scans_newest")
+}), function(o,c,p)
+	assert(o.baseline~=o.current,"Choose two different saved scans containing nmap.xml")
+	p.source_scans={};p.resource="ndiff"
+	for _,selected in ipairs({o.baseline,o.current}) do
+		local found;for _,scan in ipairs(c.nmap_scans or {}) do if scan.value==selected then found=scan end end
+		assert(found and selected:match("^job%-%d+%-%d+$"),"Selected saved scan is unavailable")
+		p.source_scans[#p.source_scans+1]={id=selected,size=found.size,ino=found.ino}
+	end
+	p.required_executables={"/usr/bin/python3","/usr/bin/ndiff"};p.success_codes={0,1}
+	p.target_summary=o.baseline.." -> "..o.current
+	return {network_helper,"compare","--baseline","@SCAN_BASELINE@","--current","@SCAN_CURRENT@"}
+end)
+
+define("network.smb", "Windows and NAS shares", "ACTION", {network_helper,"/usr/bin/smbclient"}, common({
+	text("host","Server","127.0.0.1","host"),integer("port","SMB port",445,1,65535),
+	choice("operation","Operation",{"shares","directory","transfer"}),text("share","Share name"),text("path","Folder within share","\\"),
+	field("guest","Connect as guest","boolean",true),text("username","Username"),text("domain","Domain (optional)"),field("password","Password","secret",""),
+	choice("protocol","Minimum SMB protocol",{"SMB2","SMB3","NT1"}),integer("timeout","Request timeout (seconds)",10,1,120),
+	integer("transfer_mib","Test file size (MiB)",1,1,1024)
+}), function(o,c,p)
+	if o.operation~="shares" then assert(o.share~="" and not o.share:find("[/\\]"),"Enter a share name without a server or folder path") end
+	if not o.guest then assert(o.username~="" and not o.username:find("[%%]"),"Enter a username without an embedded %password") end
+	assert(not o.path:find("[%z\r\n]"),"Invalid share folder")
+	network_workspace(p,"smb",(o.operation=="transfer" and o.transfer_mib*2+1 or 1)*1048576)
+	p.required_executables={"/usr/bin/python3","/usr/bin/smbclient"}
+	if o.operation=="transfer" then p.confirm="TEST TRANSFER "..o.host.."/"..o.share end
+	return {network_helper,"smb","--workspace","@WORK@/msp","--private-dir","@MSP_JOB@","--host",o.host,"--port",tostring(o.port),"--operation",o.operation,"--share="..o.share,"--path="..(o.path~="" and o.path or "\\"),"--username="..(o.guest and "guest" or o.username),"--domain="..o.domain,"--password",credential(p,o,"password"),"--guest",o.guest and "yes" or "no","--protocol",o.protocol,"--timeout",tostring(o.timeout),"--transfer-mib",tostring(o.transfer_mib)}
+end)
+
 define("automation.mqtt_subscribe", "MQTT topic monitor", "ACTION", {"/usr/bin/mosquitto_sub"}, common({
 	text("host","Broker","127.0.0.1","host"),integer("port","Port",1883,1,65535),
 	field("topics","Topics (wildcards supported)","target_list",{"#"},{validation="topics"}),
@@ -660,6 +743,16 @@ local function show_fields(id, names, source, values)
  for _,f in ipairs(M.actions[id].fields) do if wanted[f.name] then f.show_when={field=source,values=values} end end
 end
 show_fields("wireless.file_analysis","wordlist","operation",{"wpa_wordlist"})
+show_fields("network.snmp","oid","profile",{"get","walk"})
+show_fields("network.snmp","community","version",{"1","2c"})
+show_fields("network.snmp","username,level,auth,authpass,privacy,privpass,context","version",{"3"})
+for _,f in ipairs(M.actions["network.snmp"].fields) do
+	if f.name=="auth" or f.name=="authpass" then f.show_when={all={{field="version",equals="3"},{field="level",values={"authNoPriv","authPriv"}}}} end
+	if f.name=="privacy" or f.name=="privpass" then f.show_when={all={{field="version",equals="3"},{field="level",equals="authPriv"}}} end
+end
+show_fields("network.smb","share,path","operation",{"directory","transfer"})
+show_fields("network.smb","transfer_mib","operation",{"transfer"})
+show_fields("network.smb","username,domain,password","guest",{false})
 show_fields("wireless.file_analysis","key_type,key,keep_header,capture_mib","operation",{"decrypt"})
 show_fields("android.operator","device","transport",{"usb"})
 show_fields("android.operator","host,port","transport",{"tcp"})

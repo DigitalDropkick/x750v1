@@ -1,6 +1,6 @@
 # Digital Dropkick Field Console v4
 
-An authenticated LuCI dashboard for the GL.iNet GL-X750 field appliance. Version 4 provides a redesigned dark workspace with action-level search, guided setup, live results, case management, and direct file handoffs. It retains the native tool coverage introduced in v3. The registry contains 24 modules and 92 enabled actions, including 78 structured workflows. These counts describe controls, not attached-hardware compatibility.
+An authenticated LuCI dashboard for the GL.iNet GL-X750 field appliance. Version 4 provides a redesigned dark workspace with action-level search, guided setup, live results, case management, and direct file handoffs. It retains the native tool coverage introduced in v3. The registry contains 24 modules and 97 enabled actions, including 83 structured workflows. These counts describe controls, not attached-hardware compatibility.
 
 Open **http://192.168.8.1/ddk** from the router LAN, or **http://100.122.115.85/ddk** through the configured Tailscale connection. Sign in with LuCI. The GL.iNet administration interface remains at the address root.
 
@@ -9,13 +9,13 @@ Open **http://192.168.8.1/ddk** from the router LAN, or **http://100.122.115.85/
 The [Orbit phone companion beta](docs/ORBIT-BETA.md) adds an opt-in space-themed
 phone interface while sharing every existing tool workflow. The native iPhone
 beta passed all 13 simulator tests and its arm64 build; an unsigned IPA is ready
-for private signing and installation. Physical iPhone acceptance remains pending.
+for private signing and installation. Addam has installed this beta on his iPhone and confirmed that it works.
 The [iPhone installation guide](docs/ORBIT-IPHONE-INSTALL.md) covers the Linux
 setup and a free signing route; a paid Apple membership is optional.
 
 ## Using v4
 
-1. Start with a workflow on **Overview**, or search all 92 actions in **Tool library** by task, tool name or hardware. Filter by family, favorite frequent tools, or press **Ctrl/Cmd K** from any page.
+1. Start with a workflow on **Overview**, or search all 97 actions in **Tool library** by task, tool name or hardware. Filter by family, favorite frequent tools, or press **Ctrl/Cmd K** from any page.
 2. Select the target and operation. Use a quick setup or saved preset, expand advanced options as needed, and **Refresh devices & files** after connecting hardware. Upload compatible inputs directly beside the file selector.
 3. Choose **Review setup**, inspect the target and native invocation, then **Start job**. **Edit setup** preserves your choices. Consequential operations still require the displayed target phrase.
 4. The job opens in **Jobs & cases**. **Summary** interprets recognized native output and suggests next tools; **Output** provides live text, filtering, copying and downloads; **Files** provides artifacts and direct input reuse. Observed hosts can carry forward into another reviewed test.
@@ -80,3 +80,5 @@ export DDK_SSH_CONTROL_PATH=/run/user/1000/ddk-router-1000/control
 The installer validates this exact appliance, backs up every replaced file, installs only project paths and reloads rpcd ACLs. It compares current protected configuration hashes before/after; it does not require historical configuration values or optional services to remain disabled. No reboot or network restart is required. The narrowly scoped `scripts/install-can-tools.sh` installs the three matching CAN userspace payloads with verified checksums; it performs no bulk upgrades.
 
 Use the fresh backup path printed by deployment with `./rollback.sh /root/ddk-backups/<timestamp>-field-console-v4`. Rollback restores application files, removes newly introduced helpers and reloads ACLs. Saved case/input data remain on extroot. Earlier release evidence is retained in [V2-DEPLOYMENT-HISTORY.md](docs/V2-DEPLOYMENT-HISTORY.md) and the Phase acceptance documents.
+
+The 4.2 MSP additions are documented in [MSP-TOOLS.md](docs/MSP-TOOLS.md), including package installation, validation and rollback. The existing Orbit iPhone app loads these router workflows directly; reopen it after deployment.

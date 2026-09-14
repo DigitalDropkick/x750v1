@@ -99,7 +99,7 @@ local function tree_size(path,maximum)
 end
 local function remove_workspace(path)
 	-- Only a job-owned workspace, and never follow symlinks into the source device.
-	assert(path:sub(1,#root+11)==root.."/workspace-","Invalid workspace cleanup")
+	assert(path:sub(1,#root+11)==root.."/workspace-" or path==dir.."/private-msp","Invalid workspace cleanup")
 	local function remove(current)
 		for name in (fs.dir(current) or function() end) do
 			if name~="." and name~=".." then
@@ -267,6 +267,20 @@ local function run()
 	limit = limit * 1048576
 	write(dir .. "/pid", tostring(n.getpid()) .. "\n"); status("running")
 	hardware_check()
+	if runtime.msp_workspace then for i,value in ipairs(argv) do if value=="@MSP_JOB@" then argv[i]=dir.."/private-msp" end end end
+	if runtime.source_scans then
+		assert(#runtime.source_scans==2,"A comparison requires two saved scans")
+		for index,scan in ipairs(runtime.source_scans) do
+			assert(scan.id:match("^job%-%d+%-%d+$"),"Invalid saved scan")
+			local saved="/overlay/ddk-field-console/saved/"..scan.id
+			local record=json.parse(read(saved.."/metadata.json") or "")
+			assert(record and record.action_id=="network.nmap_lan_discovery" and read(saved.."/status")=="complete\n","Saved scan is no longer complete")
+			local path="/overlay/ddk-field-console/artifacts/"..scan.id.."/nmap.xml"
+			local stat=fs.lstat(path)
+			assert(stat and stat.type=="reg" and stat.size==scan.size and stat.ino==scan.ino,"Saved scan changed before comparison")
+			for i,value in ipairs(argv) do if value==(index==1 and "@SCAN_BASELINE@" or "@SCAN_CURRENT@") then argv[i]=path end end
+		end
+	end
 	if runtime.cellular then for i,value in ipairs(argv) do if value=="@CELLULAR_JOB@" then argv[i]=dir end end end
 	if runtime.source_case then
 		assert(runtime.source_case:match("^job%-%d+%-%d+$"),"Invalid saved case")
@@ -354,6 +368,7 @@ local function run()
 	end
 	local native_file_limit=limit
 	for _,definition in ipairs(metadata.artifacts or {}) do native_file_limit=math.max(native_file_limit,tonumber(definition.max_size) or 0) end
+	for _,workspace in ipairs(metadata.workspaces or {}) do native_file_limit=math.max(native_file_limit,tonumber(workspace.reserve_size) or 0) end
 	assert(native_file_limit<=8796093022208,"Invalid artifact quota")
 	if runtime.clone_resume then
   assert(runtime.clone_resume:match("^job%-%d+%-%d+$"),"Invalid clone case")
@@ -470,6 +485,15 @@ local function run()
 		local code=helper_run({"/bin/tar","-cf",root.."/android-files.tar","-C",root.."/workspace-android-directory","."},600,true,options.artifact_mib*1048576)
 		if code~=0 then outcome="failed" else remove_workspace(root.."/workspace-android-directory") end
 	end
+	if runtime.msp_workspace=="smb" then
+		local code=helper_run({"/usr/libexec/ddk-network-tools","smb-cleanup","--workspace",root.."/workspace-msp","--private-dir",dir.."/private-msp"},12,true)
+		local report=read(dir.."/helper.out",131072) or ""
+		local log=assert(io.open(stdout_path,"ab"));log:write("\n"..redacted(report));log:close()
+		if code~=0 then
+			local note=assert(io.open(stdout_path,"ab"));note:write("Cleanup could not be confirmed; check the temporary test filename shown above.\n");note:close()
+			if outcome=="complete" then outcome="failed" end
+		end
+	end
 	-- Redact the whole stream with overlap across read boundaries. Preserve full
 	-- output for long authenticated sessions rather than replacing it with a tail.
 	redact_file(stdout_path);redact_file(dir.."/native.err")
@@ -487,7 +511,12 @@ local function run()
 	final_outcome=outcome
 end
 local ok, err = pcall(run)
+if not ok and runtime.msp_workspace=="smb" then
+	stop_child()
+	pcall(helper_run,{"/usr/libexec/ddk-network-tools","smb-cleanup","--workspace",root.."/workspace-msp","--private-dir",dir.."/private-msp"},12,true)
+end
 cleanup()
+if runtime.msp_workspace then pcall(remove_workspace,root.."/workspace-msp");pcall(remove_workspace,dir.."/private-msp") end
 if runtime.source_case then pcall(remove_workspace,root.."/workspace-case-export") end
 if not ok then
 	-- Do not include argv or private native exceptions in failure messages.

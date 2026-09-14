@@ -10,6 +10,20 @@ const manifests = fs
 	.filter((name) => name.endsWith('.json'))
 	.map((name) => JSON.parse(fs.readFileSync(path.join(root, name))));
 const actions = manifests.flatMap((module) => module.actions);
+test('MSP summaries keep evidence, missing replies and next-step targets distinct', () => {
+	const lldp = result('network.lldp', JSON.stringify({lldp:{interface:[{eth0:{chassis:{'fixture-switch':{name:'fixture-switch','mgmt-ip':'192.0.2.8',descr:'Test switch'}},port:{id:{value:'Gi1/0/7'}}}}]}}));
+	assert.equal(lldp.rows[0][2],'Gi1/0/7');assert.equal(lldp.suggestions[0].options.host,'192.0.2.8');
+	const none=result('network.lldp','{"lldp":{}}');assert.equal(none.metrics[0].value,'0');assert.match(none.description,/No neighbor/);
+	const trace=result('network.tracepath',' 1?: [LOCALHOST] pmtu 1500\n 1: no reply\n Resume: pmtu 1380');
+	assert.equal(trace.metrics[0].value,'1380 bytes');assert.equal(trace.metrics[1].value,'Not confirmed');
+	const snmp=result('network.snmp','.1.3.6.1.2.1.1.5.0 = STRING: Fixture\n.1.3.6.1.2.1.2.2.1.8.7 = INTEGER: 1');
+	assert.equal(snmp.rows[0][0],'System name');assert.equal(snmp.rows[1][0],'Interface 7: Operational state');
+	const diff=result('network.compare_scans','-22/tcp open ssh\n+22/tcp closed ssh');assert.equal(diff.rows.length,2);
+	const shares=result('network.smb','Disk|Field files|Fixture share\nIPC|IPC$|Service','',{metadata:{action_id:'network.smb',options:{host:'192.0.2.9',operation:'shares'}}});
+	assert.equal(shares.suggestions[0].options.share,'Field files');assert.equal(shares.suggestions[0].options.operation,'directory');assert(!('password' in shares.suggestions[0].options));
+	const transfer=result('network.smb','Transfer verified: PASS\nBytes verified: 1048576\nCleanup could not be confirmed.','',{metadata:{action_id:'network.smb',options:{operation:'transfer'}}});
+	assert.equal(transfer.metrics[0].value,'PASS');assert.equal(transfer.metrics[2].value,'Review output');
+});
 function result(id, stdout = '', stderr = '', extra = {}) {
 	return guide.analyze({ metadata: { action_id: id }, status: 'complete', stdout, stderr, ...extra });
 }

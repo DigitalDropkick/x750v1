@@ -195,7 +195,7 @@ async function verifyFlows(sid) {
 			for (const page of ['overview', 'tools', 'jobs', 'settings', 'packages']) {
 				await openPage(sid, page, width, 900);
 				const result = await inspect(
-					"({version:document.body.innerText.includes('X750 / v4.1.0-beta.1'),overflow:document.documentElement.scrollWidth>innerWidth,coerced:/\\[object (?:HTML|Object)|^null$/m.test(document.body.innerText),logo:document.querySelector('.ddk-nav-home img')?.naturalWidth})"
+					"({version:document.body.innerText.includes('X750 / v4.2.0'),overflow:document.documentElement.scrollWidth>innerWidth,coerced:/\\[object (?:HTML|Object)|^null$/m.test(document.body.innerText),logo:document.querySelector('.ddk-nav-home img')?.naturalWidth})"
 				);
 				if (!result.version || result.overflow || result.coerced || !result.logo)
 					throw Error(page + ' at ' + width + ': ' + JSON.stringify(result));
@@ -207,7 +207,7 @@ async function verifyFlows(sid) {
 		}
         if (layoutOnly) return;
 		await openPage(sid, 'tools', 1440, 1000);
-		if ((await inspect("document.querySelectorAll('[data-action]').length")) !== 92)
+		if ((await inspect("document.querySelectorAll('[data-action]').length")) !== 97)
 			throw Error('Tool coverage changed');
 		const modules = await backend(['capabilities']);
 		const actions = modules
@@ -251,7 +251,7 @@ async function verifyFlows(sid) {
 						throw Error('Invalid input handoff ' + item.id + ' ' + name);
 				}
 			}
-		console.log('All 78 tool forms and typed input handoffs passed');
+		console.log('All 83 tool forms and typed input handoffs passed');
 	}
     if (orbit) {
         await openPage(sid, 'overview', 440, 956);

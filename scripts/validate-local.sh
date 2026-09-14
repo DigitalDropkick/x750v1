@@ -11,9 +11,9 @@ fail() {
 }
 
 git diff --check
-[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '4.1.0-beta.1' ]] || fail 'source version is not 4.1.0-beta.1'
-rg -F "X750 / v4.1.0-beta.1" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 4.1.0-beta.1'
-rg -F "Field Console version 4.1.0-beta.1" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 4.1.0-beta.1'
+[[ "$(tr -d '\r\n' < files/usr/share/ddk-field-console/VERSION)" == '4.2.0' ]] || fail 'source version is not 4.2.0'
+rg -F "X750 / v4.2.0" files/www/luci-static/resources/ddk/console-app.js >/dev/null || fail 'frontend appliance version is not 4.2.0'
+rg -F "Field Console version 4.2.0" scripts/router-verify.sh >/dev/null || fail 'router verifier version is not 4.2.0'
 bash -n deploy.sh verify.sh rollback.sh configure-swap-autostart.sh rollback-swap-autostart.sh post-reboot-verify.sh scripts/verify-browser-authenticated.sh scripts/audit-operator-release.sh
 sh -n scripts/router-install.sh scripts/router-verify.sh scripts/router-rollback.sh \
 	scripts/router-configure-swap-autostart.sh scripts/router-rollback-swap-autostart.sh \
@@ -597,7 +597,7 @@ done < <(find files -type f | sort)
 
 printf 'Local validation passed: shell, JavaScript, JSON, allowlist, mutation, and size checks.\n'
 
-python3 -c 'import ast,pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("files/usr/libexec/ddk-modbus-client", "files/usr/libexec/ddk-compare-range", "files/usr/libexec/ddk-usbip-client", "files/usr/libexec/ddk-device-session", "files/usr/libexec/ddk-input-sealer")]'
+python3 -c 'import ast,pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("files/usr/libexec/ddk-modbus-client", "files/usr/libexec/ddk-compare-range", "files/usr/libexec/ddk-usbip-client", "files/usr/libexec/ddk-device-session", "files/usr/libexec/ddk-input-sealer", "files/usr/libexec/ddk-network-tools")]'
 python3 scripts/run-lua-tests.py
 
 python3 scripts/test-compare-range.py
@@ -608,3 +608,5 @@ python3 scripts/test-input-sealer.py
 python3 scripts/test-usbip.py
 
 node --test scripts/test-console-guide.cjs
+
+python3 scripts/test-network-tools.py

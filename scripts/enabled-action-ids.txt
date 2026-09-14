@@ -24,3 +24,4 @@ serial.console
 serial.transfer
 gps.session
 bluetooth.pairing
+network.smb

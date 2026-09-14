@@ -24,7 +24,7 @@ allowed_target() {
 		/usr/lib/lua/luci/view/ddk/*) return 0 ;;
 		/www/luci-static/resources/ddk/*) return 0 ;;
 		/www/ddk/gl_home.html) return 0 ;;
-		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker|/usr/libexec/ddk-phase4-worker|/usr/libexec/ddk-v3-worker|/usr/libexec/ddk-compare-range|/usr/libexec/ddk-modbus-client|/usr/libexec/ddk-usbip-client|/usr/libexec/ddk-device-session|/usr/libexec/ddk-input-sealer) return 0 ;;
+		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker|/usr/libexec/ddk-phase4-worker|/usr/libexec/ddk-v3-worker|/usr/libexec/ddk-compare-range|/usr/libexec/ddk-modbus-client|/usr/libexec/ddk-usbip-client|/usr/libexec/ddk-device-session|/usr/libexec/ddk-input-sealer|/usr/libexec/ddk-network-tools) return 0 ;;
 		/usr/share/ddk-field-console/*) return 0 ;;
 		*) return 1 ;;
 	esac
@@ -97,7 +97,7 @@ DDK_V3_WORKER="$source_root/usr/libexec/ddk-v3-worker" lua -e 'assert(loadfile(o
 DDK_V3_OPERATOR="$source_root/usr/share/ddk-field-console/operator-v3.lua" lua -e 'assert(loadfile(os.getenv("DDK_V3_OPERATOR")))'
 DDK_RUNTIME_POLICY="$source_root/usr/share/ddk-field-console/runtime-policy.lua" lua -e 'assert(loadfile(os.getenv("DDK_RUNTIME_POLICY")))'
 DDK_USB_TOPOLOGY="$source_root/usr/share/ddk-field-console/usb-topology.lua" lua -e 'assert(loadfile(os.getenv("DDK_USB_TOPOLOGY")))'
-DDK_PYTHON_ROOT="$source_root" python3 -c 'import ast,os,pathlib; root=pathlib.Path(os.environ["DDK_PYTHON_ROOT"]); [ast.parse((root/"usr/libexec"/name).read_text()) for name in ["ddk-device-session","ddk-usbip-client","ddk-modbus-client","ddk-compare-range","ddk-input-sealer"]]'
+DDK_PYTHON_ROOT="$source_root" python3 -c 'import ast,os,pathlib; root=pathlib.Path(os.environ["DDK_PYTHON_ROOT"]); [ast.parse((root/"usr/libexec"/name).read_text()) for name in ["ddk-device-session","ddk-usbip-client","ddk-modbus-client","ddk-compare-range","ddk-input-sealer","ddk-network-tools"]]'
 DDK_IDENTITY_FILE="$source_root/usr/share/ddk-field-console/usb-identity.lua" lua -e 'assert(loadfile(os.getenv("DDK_IDENTITY_FILE")))'
 DDK_TEMPLATE_FILE="$source_root/usr/lib/lua/luci/view/ddk/shell.htm" lua -e 'local parser = require "luci.template.parser"; assert(parser.parse(os.getenv("DDK_TEMPLATE_FILE")))'
 sh -n "$source_root/usr/libexec/ddk-job-worker"
@@ -156,7 +156,7 @@ find "$source_root" -type f | sort | while IFS= read -r source_file; do
 	mkdir -p "$target_dir"
 	cp "$source_file" "$temporary"
 	case "$target" in
-		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker|/usr/libexec/ddk-phase4-worker|/usr/libexec/ddk-v3-worker|/usr/libexec/ddk-compare-range|/usr/libexec/ddk-modbus-client|/usr/libexec/ddk-usbip-client|/usr/libexec/ddk-device-session|/usr/libexec/ddk-input-sealer) chmod 755 "$temporary" ;;
+		/usr/libexec/ddk-console|/usr/libexec/ddk-job-worker|/usr/libexec/ddk-apple-worker|/usr/libexec/ddk-phase3-worker|/usr/libexec/ddk-phase4-worker|/usr/libexec/ddk-v3-worker|/usr/libexec/ddk-compare-range|/usr/libexec/ddk-modbus-client|/usr/libexec/ddk-usbip-client|/usr/libexec/ddk-device-session|/usr/libexec/ddk-input-sealer|/usr/libexec/ddk-network-tools) chmod 755 "$temporary" ;;
 		*) chmod 644 "$temporary" ;;
 	esac
 	mv "$temporary" "$target"
