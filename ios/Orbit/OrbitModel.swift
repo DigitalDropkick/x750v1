@@ -42,6 +42,8 @@ final class OrbitModel: ObservableObject {
         webView.uiDelegate = coordinator
         webView.configuration.userContentController.add(coordinator, name:"orbit")
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        // Start WebKit's data process before the first authenticated cookie handoff.
+        webView.loadHTMLString("<!doctype html><html><body></body></html>",baseURL:nil)
     }
     func connect() {
         guard !connecting else { return }
@@ -126,6 +128,9 @@ final class OrbitModel: ObservableObject {
     func disconnect() {
         attempt += 1; transport?.close(); transport = nil; connected = false; connecting = false
         webView.stopLoading(); savedPath = nil; password = ""; connectionSheet = false
+        endpoint = nil; candidateFingerprint = nil; pageLoading = false; locked = false
+        // Replacing the document also stops its JavaScript polling after sign-out.
+        webView.loadHTMLString("<!doctype html><html><body></body></html>",baseURL:nil)
         // Remove this app's router session cookie, retaining preferences and presets.
         let store = webView.configuration.websiteDataStore.httpCookieStore
         Task { for cookie in await store.allCookies() where cookie.name.hasPrefix("sysauth") { await store.deleteCookie(cookie) } }

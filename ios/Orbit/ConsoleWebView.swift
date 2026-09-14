@@ -33,7 +33,8 @@ final class ConsoleCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WK
         guard let url = action.request.url else { decisionHandler(.cancel); return }
         let allowed = model?.endpoint?.contains(url) == true
         let ownBlob = url.scheme == "blob" && model?.endpoint?.contains(URL(string:String(url.absoluteString.dropFirst(5)))) == true
-        guard allowed || ownBlob else {
+        let emptyWorkspace = url.absoluteString == "about:blank" && webView === model?.webView && model?.connected == false
+        guard allowed || ownBlob || emptyWorkspace else {
             if action.navigationType == .linkActivated && action.targetFrame?.isMainFrame != false {
                 model?.message = "This link leaves the router. Open external websites separately in Safari."
                 model?.connectionSheet = true

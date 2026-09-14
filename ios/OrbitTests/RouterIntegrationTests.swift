@@ -119,5 +119,9 @@ final class RouterIntegrationTests: XCTestCase {
         }
         _ = try await model.webView.evaluateJavaScript("window.webkit.messageHandlers.orbit.postMessage({type:'connection'}); true")
         try await waitUntil("Trusted console bridge should open connection settings") { model.connectionSheet }
+        model.disconnect()
+        try await waitUntil("Disconnect should replace the document and stop its polling") { model.webView.url?.absoluteString == "about:blank" }
+        XCTAssertFalse(model.connected)
+        XCTAssertNil(model.endpoint)
     }
 }
